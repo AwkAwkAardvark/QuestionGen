@@ -1,351 +1,102 @@
-# QuestionGen Refactor Plan v4
+# QuestionGen Implementation Plan
 
-  ## Summary
+## Core Direction
 
-  Refactor the current notebook-derived prototype into an installable package built around a **planning → deterministic rendering → validation** pipeline with an
-  explicit split between shallow row validation and prepared-source eligibility.
+- [x] Keep the backend centered on `planning -> deterministic rendering -> validation`.
+- [x] Keep `src/questiongen/` notebook-agnostic and Drive-agnostic.
+- [x] Keep model construction outside the batch layer through an injected runner.
+- [x] Treat Colab as the primary user-facing launcher surface.
+- [x] Treat Google Drive as the user-controlled storage layer for inputs, outputs, and `api_key.txt`.
+- [x] Keep Gradio out of the current implementation scope.
+- [x] Design the user-facing flow around "run all registered question types" rather than manual type selection.
+- [x] Preserve failed type/passage combinations as exported results with readable `status` and `errors`.
+- [x] Use CSV and JSON as the primary debug artifacts once orchestration/export work is complete.
 
-  Wave 1 is strictly limited to:
-  - `sentence_insertion`
-  - real batch execution
-  - CSV and Markdown export
-  - notebook runner
-  - Gradio placeholder only, with no real UI implementation
+## Wave 1: Backend Foundation
 
-  Core rule:
-  - **LLM selects / annotates**
-  - **code renders**
-  - **validators enforce**
+### Package and pipeline
 
-  ## Key Changes
+- [x] Create the installable package skeleton and `pyproject.toml`.
+- [x] Define typed schemas for source units, gaps, plans, generated questions, batch rows, and pipeline state.
+- [x] Implement sentence parsing, normalization, and explicit gap construction.
+- [x] Implement shallow input validation and prepared-source eligibility checks.
+- [x] Implement `sentence_insertion` planning with structured output.
+- [x] Implement deterministic `sentence_insertion` rendering.
+- [x] Implement final output validation for `sentence_insertion`.
+- [x] Build a generic graph runner driven by question type metadata.
+- [x] Expose question graph compilation with injected structured LLM creation.
 
-  ### Architecture and package layout
+### Batch and exports
 
-  Use this structure:
+- [x] Implement row-based batch execution with an injected runner.
+- [x] Implement DataFrame and file-based batch adapters.
+- [x] Implement CSV export for batch results.
+- [x] Implement Markdown export for human review.
+- [x] Add script-level demo and real-batch runner entrypoints.
 
-  ```text
-  QuestionGen/
-  ├── pyproject.toml
-  ├── src/questiongen/
-  │   ├── __init__.py
-  │   ├── config.py
-  │   ├── schemas.py
-  │   ├── question_types.py
-  │   ├── prompts.py
-  │   ├── parsers.py
-  │   ├── planners.py
-  │   ├── renderers.py
-  │   ├── validators.py
-  │   ├── graph.py
-  │   ├── batch.py
-  │   ├── exporters.py
-  │   └── ui/
-  │       ├── __init__.py
-  │       └── gradio_app.py
-  ├── scripts/run_demo.py
-  ├── notebooks/runner.ipynb
-  └── tests/
-  ```
+### Verification
 
-  Responsibilities:
-  - `schemas.py`: typed models, statuses, and state helpers
-  - `question_types.py`: `sentence_insertion` registry metadata only in wave 1
-  - `prompts.py`: planner prompts only
-  - `parsers.py`: sentence parsing, gap construction, normalization
-  - `planners.py`: structured planner calls for `sentence_insertion`
-  - `renderers.py`: deterministic rendering for `sentence_insertion`
-  - `validators.py`: source eligibility and final output validation
-  - `graph.py`: graph construction and runner wiring only
-  - `batch.py`: row-based batch execution plus DataFrame/file adapters
-  - `exporters.py`: CSV/Markdown serialization
-  - `ui/gradio_app.py`: placeholder only
+- [x] Add unit coverage for parser behavior.
+- [x] Add unit coverage for planner behavior.
+- [x] Add unit coverage for renderer behavior.
+- [x] Add unit coverage for validator behavior.
+- [x] Add unit coverage for batch behavior and per-row failure capture.
 
-  ### Graph design
+## Wave 2: Colab Product Launcher
 
-  Use this graph:
+### Launcher responsibilities
 
-  ```text
-  input_check
-  → source_prep
-  → source_check
-  → plan_question
-  → render_question
-  → validate_question
-  ```
+- [x] Create the canonical Colab notebook launcher.
+- [x] Mount Google Drive from the notebook layer only.
+- [x] Load `api_key.txt` from Drive and populate environment variables in the notebook layer only.
+- [x] Define notebook-level input and output Drive paths.
+- [x] Construct the structured LLM-backed runner from the notebook layer.
 
-  Stage meanings:
-  - `input_check`: shallow row/type validation only
-  - `source_prep`: parse the paragraph into sentence and gap units
-  - `source_check`: eligibility checks that require `PreparedSource`
-  - `plan_question`: call planner LLM with a type-specific plan schema
-  - `render_question`: deterministically build the final question
-  - `validate_question`: verify consistency between source, plan, and rendered output
+### Separation guarantees
 
-  Required statuses:
+- [x] Keep `google.colab` imports out of `src/questiongen/`.
+- [x] Keep Drive path assumptions out of `src/questiongen/`.
+- [x] Keep secret-file loading out of `src/questiongen/`.
+- [x] Document the launcher contract so the Drive-backed secret model is explicit.
 
-  ```python
-  PipelineStatus = Literal[
-      "pending",
-      "input_error",
-      "input_passed",
-      "source_prepared",
-      "source_error",
-      "source_passed",
-      "planning_error",
-      "planned",
-      "rendering_error",
-      "rendered",
-      "validation_error",
-      "validation_passed",
-  ]
-  ```
+## Wave 3: User-Facing Orchestration and Debug Exports
 
-  Routing rules:
-  - `input_check` failure ends the graph
-  - `source_check` failure ends the graph
-  - `plan_question` failure ends the graph
-  - `render_question` failure ends the graph
-  - `validate_question` always ends the graph
+### Orchestration
 
-  Keep `graph.py` generic and driven by `QuestionTypeSpec`, but only register `sentence_insertion` in wave 1.
+- [x] Add a thin orchestration layer that derives all registered question types automatically.
+- [x] Run every registered question type for every input passage.
+- [x] Preserve unsupported or poor-fit type/passage combinations as explicit failed results.
+- [x] Keep the low-level batch API explicit even after the higher-level launcher flow exists.
 
-  ### Core schemas and interfaces
+### Export surface
 
-  Use these wave-1 models:
+- [x] Add JSON export using the same `BatchResultRow` payloads used for CSV.
+- [x] Keep CSV as the operator-friendly spreadsheet artifact.
+- [x] Keep Markdown optional and secondary during debugging.
+- [x] Ensure failed rows remain diagnosable from exported artifacts without hidden filtering.
 
-  ```python
-  class SourceUnit(BaseModel):
-      id: str
-      kind: Literal["sentence"]
-      text: str
-      index: int
+## Wave 4: Multi-Type Expansion
 
-  class GapUnit(BaseModel):
-      id: str
-      kind: Literal["gap"]
-      index: int
-      before_unit_id: str | None
-      after_unit_id: str | None
+- [ ] Add additional registered question types beyond `sentence_insertion`.
+- [ ] Reuse the same planner-renderer-validator architecture per new type.
+- [ ] Ensure "all registered types" automatically expands as the registry grows.
+- [ ] Keep type-specific failure modes readable in shared exports.
 
-  class PreparedSource(BaseModel):
-      sentence_units: list[SourceUnit]
-      gap_units: list[GapUnit]
+## Acceptance Checklist
 
-  class SentenceInsertionPlan(BaseModel):
-      target_unit_ids: list[str]
-      selected_gap_ids: list[str]
-      correct_gap_id: str
-      explanation: str
-  ```
+- [x] The backend package can execute a full question pipeline with an injected runner.
+- [x] Batch execution can emit machine-readable review artifacts.
+- [x] Batch execution captures per-row failure without aborting the full run.
+- [ ] A Colab user can run the system end-to-end using Drive-backed inputs and `api_key.txt`.
+- [x] The launcher attempts all registered question types without manual type selection.
+- [x] CSV and JSON are both produced for debugging runs.
+- [ ] Failed type/passage combinations remain visible and readable in exported results.
 
-  Wave 1 `SentenceInsertionPlan` rules:
-  - exactly one sentence ID in `target_unit_ids`
-  - exactly 5 unique gap IDs in `selected_gap_ids`
-  - `correct_gap_id` must be one of `selected_gap_ids`
-  - `explanation` must be Korean
+## Stable Interface Commitments
 
-  Rendered artifact:
-
-  ```python
-  class GeneratedQuestion(BaseModel):
-      OriginalQuestionNumber: int
-      QuestionType: str
-      student_paragraph: str
-      question_stem: str
-      given_sentence: str | None = None
-      choices: list[str] | None = None
-      answer: str
-      explanation: str | None = None
-  ```
-
-  State:
-
-  ```python
-  class QuestionState(TypedDict):
-      source_paragraph: str
-      OriginalQuestionNumber: int
-      QuestionTypeKey: str
-      prepared_source: PreparedSource | None
-      plan: BaseModel | None
-      generated: GeneratedQuestion | None
-      status: PipelineStatus
-      errors: list[str]
-  ```
-
-  Add:
-
-  ```python
-  def make_initial_state(
-      source_paragraph: str,
-      original_question_number: int,
-      question_type_key: str,
-  ) -> QuestionState:
-      ...
-  ```
-
-  Use `Field(default_factory=list)` for all list defaults.
-
-  ### Question type registry and config
-
-  Use:
-
-  ```python
-  @dataclass(frozen=True)
-  class QuestionTypeSpec:
-      label_ko: str
-      planner_prompt: str
-      question_stem: str
-      unit_level: str
-      renderer_key: str
-      validator_key: str
-      plan_schema: type[BaseModel]
-      min_source_units: int | None = None
-      choice_count: int | None = None
-  ```
-
-  Wave 1 `sentence_insertion` metadata must include:
-  - Korean label
-  - static Korean stem
-  - planner prompt
-  - renderer key
-  - validator key
-  - `SentenceInsertionPlan`
-  - minimum sentence count
-  - choice count = 5
-
-  `config.py` must expose:
-  - `create_llm(...)`
-  - `create_structured_llm(output_schema, model_name=None, temperature=None)`
-
-  Do not:
-  - import `google.colab`
-  - hardcode Drive paths
-  - create runtime-dependent model globals at import time
-
-  ### Batch and export surface
-
-  Use typed row models:
-
-  ```python
-  class BatchInputRow(BaseModel):
-      OriginalQuestionNumber: int
-      source_paragraph: str
-
-  class BatchResultRow(BaseModel):
-      OriginalQuestionNumber: int
-      QuestionTypeKey: str
-      QuestionType: str | None = None
-      status: PipelineStatus
-      errors: list[str] = Field(default_factory=list)
-      source_paragraph: str
-      student_paragraph: str | None = None
-      question_stem: str | None = None
-      given_sentence: str | None = None
-      choices: list[str] | None = None
-      answer: str | None = None
-      explanation: str | None = None
-  ```
-
-  Batch execution must accept a compiled graph or runner dependency. It must not construct model state implicitly inside the batch API.
-
-  Required shape:
-  - `run_batch_rows(rows, question_type_keys, runner) -> list[BatchResultRow]`
-  - `run_batch_dataframe(df, question_type_keys, runner) -> pd.DataFrame`
-  - `run_batch_files(input_csv, output_csv, question_type_keys, runner, output_markdown=None) -> list[BatchResultRow]`
-
-  Runner contract:
-  - accept a fully initialized dependency capable of executing one item for one question type
-  - the simplest wave-1 form is a compiled LangGraph object with `.invoke(state)`
-  - alternatively allow a callable adapter with equivalent behavior, but pick one contract and use it consistently across all batch APIs
-
-  Recommended wave-1 choice:
-  - standardize on a compiled graph object as `runner`
-  - `batch.py` builds initial state and invokes `runner.invoke(...)`
-  - model creation and graph compilation happen outside batch execution, in the notebook/script layer or a thin factory helper in `graph.py`
-
-  `run_batch_files(...)` must:
-  - read CSV
-  - convert rows into typed input models
-  - run execution through the provided runner
-  - write CSV output
-  - optionally write Markdown output
-  - return typed result rows
-
-  Exporters must consume `BatchResultRow` objects and provide:
-  - CSV serialization
-  - Markdown serialization for staff review
-
-  ## Implementation Sequence
-
-  1. Create package skeleton and `pyproject.toml`.
-  2. Extract `schemas.py`, `question_types.py`, and `parsers.py`.
-  3. Fix notebook-order artifacts during the extraction.
-  4. Add `PreparedSource`, `SentenceInsertionPlan`, batch row models, `PipelineStatus`, and `make_initial_state(...)`.
-  5. Implement sentence parsing and explicit gap construction in `parsers.py`.
-  6. Implement `input_check` for shallow row/type validation only.
-  7. Implement `source_check` for sentence/gap eligibility after `PreparedSource` exists.
-  8. Implement the sentence-insertion planner schema and planner call.
-  9. Implement deterministic sentence-insertion rendering.
-  10. Implement sentence-insertion validation.
-  11. Build generic graph wiring with the six-stage flow and metadata-based dispatch.
-  12. Expose graph compilation from `graph.py`, with dependencies injected from `config.py`.
-  13. Implement row-based batch execution that requires a provided compiled graph/runner.
-  14. Add DataFrame and file-based adapters.
-  15. Add CSV and Markdown exporters.
-  16. Move sample execution into `scripts/run_demo.py`.
-  17. Create a thin Colab notebook that clones, installs, creates the runner, and calls demo or batch entry points.
-  18. Add `ui/gradio_app.py` as a placeholder module only, with no substantive UI logic.
-
-  ## Test Plan
-
-  Parser tests:
-  - sentences become ordered `S0...Sn`
-  - gaps become `G0...Gn`
-  - gap adjacency is correct at start, middle, and end
-  - normalization is stable
-
-  Source check tests:
-  - too few sentences fails after `PreparedSource` exists
-  - malformed sentence/gap structures fail with `source_error`
-  - valid prepared source transitions to `source_passed`
-
-  Planner tests:
-  - planner output validates against `SentenceInsertionPlan`
-  - invalid planner payloads fail as `planning_error`
-
-  Renderer tests:
-  - selected sentence becomes `given_sentence`
-  - target sentence is removed from `student_paragraph`
-  - all non-target sentences are preserved exactly once and in order
-  - exactly five selected gaps are rendered as markers
-  - each marker appears exactly once
-  - answer marker maps correctly from `correct_gap_id`
-  - `QuestionType`, `question_stem`, and `choices` come from metadata
-
-  Validator tests:
-  - unknown target sentence ID fails
-  - unknown gap IDs fail
-  - duplicate selected gap IDs fail
-  - `correct_gap_id` outside `selected_gap_ids` fails
-  - missing preserved sentence fails
-  - marker count mismatch fails
-  - invalid answer or choice set fails
-
-  Batch tests:
-  - one row × one type produces one result
-  - one row × multiple types produces multiple results
-  - per-row failure is captured without aborting the whole batch
-  - DataFrame adapter matches row-based execution
-  - file-based runner writes CSV and optional Markdown consistently
-  - batch APIs fail clearly if no valid runner/compiled graph is provided
-
-  ## Assumptions and defaults
-
-  - Wave 1 supports only `sentence_insertion`.
-  - `SourceUnit` is sentence-only; gaps are first-class parallel units.
-  - The planner returns IDs and explanation only, never final student-facing text.
-  - Batch APIs are dependency-injected and must not create their own model/graph state.
-  - The runner dependency will be a compiled graph object in wave 1 unless repo exploration reveals a better existing abstraction.
-  - Colab is a launcher only; package code remains notebook-agnostic.
-  - pandas is an adapter dependency, not the core execution contract.
-  - Gradio remains a placeholder and is explicitly out of implementation scope for wave 1.
+- [x] `run_batch_rows(rows, question_type_keys, runner) -> list[BatchResultRow]`
+- [x] `run_batch_dataframe(df, question_type_keys, runner) -> DataFrame`
+- [x] `run_batch_files(input_csv, output_csv, question_type_keys, runner, output_markdown=None) -> list[BatchResultRow]`
+- [x] `BatchResultRow` remains the canonical exported result model.
+- [x] Environment variables remain the final runtime interface to the LLM client.
+- [x] Secret acquisition remains a launcher concern, not a package concern.
