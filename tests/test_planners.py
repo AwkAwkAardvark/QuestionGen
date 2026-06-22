@@ -58,6 +58,12 @@ class PlannerTests(unittest.TestCase):
             structured_llm_factory=lambda schema: _InvalidPlanner(),
         )
         self.assertEqual(result["status"], "planning_error")
+        self.assertTrue(
+            any(
+                "SentenceInsertionPlan requires exactly one target_unit_id." in error
+                for error in result["errors"]
+            )
+        )
 
 
 if __name__ == "__main__":

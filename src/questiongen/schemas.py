@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal, TypedDict
 
-from ._compat import BaseModel, Field, ValidationError, model_validator
+from ._compat import BaseModel, Field, model_validator
 
 PipelineStatus = Literal[
     "pending",
@@ -32,13 +32,13 @@ class SourceUnit(BaseModel):
     @model_validator(mode="after")
     def _validate_source_unit(self) -> SourceUnit:
         if self.kind != "sentence":
-            raise ValidationError("SourceUnit.kind must be 'sentence'.")
+            raise ValueError("SourceUnit.kind must be 'sentence'.")
         if not self.id:
-            raise ValidationError("SourceUnit.id is required.")
+            raise ValueError("SourceUnit.id is required.")
         if self.index < 0:
-            raise ValidationError("SourceUnit.index must be non-negative.")
+            raise ValueError("SourceUnit.index must be non-negative.")
         if not self.text or not self.text.strip():
-            raise ValidationError("SourceUnit.text is required.")
+            raise ValueError("SourceUnit.text is required.")
         return self
 
 
@@ -52,11 +52,11 @@ class GapUnit(BaseModel):
     @model_validator(mode="after")
     def _validate_gap_unit(self) -> GapUnit:
         if self.kind != "gap":
-            raise ValidationError("GapUnit.kind must be 'gap'.")
+            raise ValueError("GapUnit.kind must be 'gap'.")
         if not self.id:
-            raise ValidationError("GapUnit.id is required.")
+            raise ValueError("GapUnit.id is required.")
         if self.index < 0:
-            raise ValidationError("GapUnit.index must be non-negative.")
+            raise ValueError("GapUnit.index must be non-negative.")
         return self
 
 
@@ -74,17 +74,17 @@ class SentenceInsertionPlan(BaseModel):
     @model_validator(mode="after")
     def _validate_plan(self) -> SentenceInsertionPlan:
         if len(self.target_unit_ids) != 1:
-            raise ValidationError("SentenceInsertionPlan requires exactly one target_unit_id.")
+            raise ValueError("SentenceInsertionPlan requires exactly one target_unit_id.")
         if len(self.selected_gap_ids) != 5:
-            raise ValidationError("SentenceInsertionPlan requires exactly five selected_gap_ids.")
+            raise ValueError("SentenceInsertionPlan requires exactly five selected_gap_ids.")
         if len(set(self.selected_gap_ids)) != 5:
-            raise ValidationError("SentenceInsertionPlan selected_gap_ids must be unique.")
+            raise ValueError("SentenceInsertionPlan selected_gap_ids must be unique.")
         if self.correct_gap_id not in self.selected_gap_ids:
-            raise ValidationError("SentenceInsertionPlan correct_gap_id must be in selected_gap_ids.")
+            raise ValueError("SentenceInsertionPlan correct_gap_id must be in selected_gap_ids.")
         if not self.explanation or not self.explanation.strip():
-            raise ValidationError("SentenceInsertionPlan explanation is required.")
+            raise ValueError("SentenceInsertionPlan explanation is required.")
         if not _HANGUL_RE.search(self.explanation):
-            raise ValidationError("SentenceInsertionPlan explanation must contain Korean text.")
+            raise ValueError("SentenceInsertionPlan explanation must contain Korean text.")
         return self
 
 
@@ -106,9 +106,9 @@ class BatchInputRow(BaseModel):
     @model_validator(mode="after")
     def _validate_input_row(self) -> BatchInputRow:
         if not isinstance(self.OriginalQuestionNumber, int):
-            raise ValidationError("OriginalQuestionNumber must be an integer.")
+            raise ValueError("OriginalQuestionNumber must be an integer.")
         if not isinstance(self.source_paragraph, str) or not self.source_paragraph.strip():
-            raise ValidationError("source_paragraph must be a non-empty string.")
+            raise ValueError("source_paragraph must be a non-empty string.")
         return self
 
 
