@@ -28,6 +28,15 @@ class _FailingRunner:
         raise RuntimeError("boom")
 
 
+class _IncompatibleRunner:
+    def invoke(self, state):
+        return {
+            **state,
+            "status": "qtype_incompatibility_error",
+            "errors": ["Passage is not suitable for this question type."],
+        }
+
+
 class BatchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = compile_question_graph(structured_llm_factory=lambda schema: _StubPlanner(schema))
@@ -48,6 +57,11 @@ class BatchTests(unittest.TestCase):
         results = run_batch_rows(self.rows, ["sentence_insertion"], _FailingRunner())
         self.assertEqual(results[0].status, "planning_error")
         self.assertTrue(results[0].errors)
+
+    def test_qtype_incompatibility_is_preserved(self) -> None:
+        results = run_batch_rows(self.rows, ["sentence_insertion"], _IncompatibleRunner())
+        self.assertEqual(results[0].status, "qtype_incompatibility_error")
+        self.assertTrue(any("not suitable" in error for error in results[0].errors))
 
     def test_file_runner_writes_csv_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

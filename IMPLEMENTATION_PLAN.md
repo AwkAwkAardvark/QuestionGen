@@ -10,6 +10,7 @@
 - [x] Keep Gradio out of the current implementation scope.
 - [x] Design the user-facing flow around "run all registered question types" rather than manual type selection.
 - [x] Preserve failed type/passage combinations as exported results with readable `status` and `errors`.
+- [x] Treat question-type incompatibility as a first-class expected outcome rather than forcing it into generic planner/source failure labels.
 - [x] Use CSV and JSON as the primary debug artifacts once orchestration/export work is complete.
 
 ## Wave 1: Backend Foundation
@@ -78,9 +79,14 @@
 ## Wave 4: Multi-Type Expansion
 
 - [ ] Add additional registered question types beyond `sentence_insertion`.
+- [ ] Add broad registry keys plus `format_key`-level first supported formats for Wave 4 types.
+- [ ] Use `mood_atmosphere` as the registry key for the 심경·분위기 family.
 - [ ] Reuse the same planner-renderer-validator architecture per new type.
+- [ ] Introduce `qtype_incompatibility_error` for passages that are valid inputs but not suitable for a given question type.
 - [ ] Ensure "all registered types" automatically expands as the registry grows.
 - [ ] Keep type-specific failure modes readable in shared exports.
+- [ ] Keep `BatchInputRow` unchanged until a concrete type truly requires extra input fields.
+- [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
 
 ## Acceptance Checklist
 
@@ -91,6 +97,7 @@
 - [x] The launcher attempts all registered question types without manual type selection.
 - [x] CSV and JSON are both produced for debugging runs.
 - [ ] Failed type/passage combinations remain visible and readable in exported results.
+- [ ] `qtype_incompatibility_error` is distinguishable from malformed-source failure and planner malfunction in exported results.
 
 ## Stable Interface Commitments
 
@@ -100,3 +107,5 @@
 - [x] `BatchResultRow` remains the canonical exported result model.
 - [x] Environment variables remain the final runtime interface to the LLM client.
 - [x] Secret acquisition remains a launcher concern, not a package concern.
+- [x] `BatchInputRow` should stay narrow until a future type forces additional source annotations.
+- [x] Future Wave 4 registry entries should keep broad `QuestionTypeKey` values and move exact first supported shapes into `format_key`.

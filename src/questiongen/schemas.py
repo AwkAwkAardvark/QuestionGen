@@ -11,6 +11,7 @@ PipelineStatus = Literal[
     "input_passed",
     "source_prepared",
     "source_error",
+    "qtype_incompatibility_error",
     "source_passed",
     "planning_error",
     "planned",

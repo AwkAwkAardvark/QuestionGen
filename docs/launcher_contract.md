@@ -126,6 +126,7 @@ Rules:
 
 - CSV and JSON must represent the same `BatchResultRow` results.
 - Failed type/passage combinations must remain visible in the exported artifacts.
+- Expected incompatibility between a valid passage and a specific question type should surface as its own status such as `qtype_incompatibility_error`, not be collapsed into generic planner failure.
 - The launcher may write JSON directly from `result.model_dump()` payloads until a dedicated package-level JSON exporter is added.
 
 ## Notebook Shape
