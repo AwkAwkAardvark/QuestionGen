@@ -4,7 +4,7 @@ from typing import Any
 
 from .parsers import normalize_text
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
-from .renderers import MARKER_CHOICES
+from .renderers import MARKER_CHOICES, rendered_gap_positions
 from .schemas import GeneratedQuestion, PreparedSource, QuestionState, SentenceInsertionPlan
 
 
@@ -165,6 +165,14 @@ def validate_sentence_insertion_output(
 
     if plan.correct_gap_id not in plan.selected_gap_ids:
         errors.append("correct_gap_id must be included in selected_gap_ids.")
+
+    if not unknown_gap_ids:
+        rendered_positions = rendered_gap_positions(prepared_source, target_id)
+        unique_positions = {rendered_positions[gap_id] for gap_id in plan.selected_gap_ids}
+        if len(unique_positions) != len(plan.selected_gap_ids):
+            errors.append(
+                "selected_gap_ids collapse into duplicate rendered positions after removing the target sentence."
+            )
 
     expected_choices = MARKER_CHOICES[: type_spec.choice_count]
     if generated.QuestionType != type_spec.label_ko:

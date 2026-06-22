@@ -17,7 +17,7 @@ class _StubPlanner:
     def invoke(self, prompt: str) -> SentenceInsertionPlan:
         return self.output_schema(
             target_unit_ids=["S2"],
-            selected_gap_ids=["G0", "G1", "G2", "G3", "G4"],
+            selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
             correct_gap_id="G2",
             explanation="문맥상 이 위치가 가장 자연스럽습니다.",
         )

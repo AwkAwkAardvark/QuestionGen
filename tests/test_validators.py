@@ -66,7 +66,7 @@ class ValidatorTests(unittest.TestCase):
     def test_final_validator_catches_plan_and_rendering_mismatches(self) -> None:
         plan = SentenceInsertionPlan(
             target_unit_ids=["S2"],
-            selected_gap_ids=["G0", "G1", "G2", "G3", "G4"],
+            selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
             correct_gap_id="G2",
             explanation="문맥상 이 위치가 가장 자연스럽습니다.",
         )
@@ -105,6 +105,31 @@ class ValidatorTests(unittest.TestCase):
             type_spec=self.type_spec,
         )
         self.assertTrue(any("Target sentence still appears" in error for error in errors))
+
+    def test_final_validator_rejects_collapsed_gap_positions(self) -> None:
+        plan = SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G3", "G4"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber=1,
+            QuestionType=self.type_spec.label_ko,
+            student_paragraph="① A. ② B. ③ ④ D. ⑤ E. F.",
+            question_stem=self.type_spec.question_stem,
+            given_sentence="C.",
+            choices=["①", "②", "③", "④", "⑤"],
+            answer="③",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        errors = validate_sentence_insertion_output(
+            prepared_source=self.prepared,
+            plan=plan,
+            generated=generated,
+            type_spec=self.type_spec,
+        )
+        self.assertTrue(any("collapse into duplicate rendered positions" in error for error in errors))
 
 
 if __name__ == "__main__":

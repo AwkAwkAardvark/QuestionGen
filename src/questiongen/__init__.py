@@ -1,5 +1,6 @@
 from .batch import run_batch_dataframe, run_batch_files, run_batch_rows
 from .config import create_llm, create_structured_llm
+from .demo import DEMO_PARAGRAPH
 from .graph import compile_question_graph
 from .schemas import (
     BatchInputRow,
@@ -18,6 +19,7 @@ __all__ = [
     "PreparedSource",
     "QuestionState",
     "SentenceInsertionPlan",
+    "DEMO_PARAGRAPH",
     "compile_question_graph",
     "create_llm",
     "create_structured_llm",

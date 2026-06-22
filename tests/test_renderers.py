@@ -13,7 +13,7 @@ class RendererTests(unittest.TestCase):
         prepared = prepare_source("A. B. C. D. E. F.")
         plan = SentenceInsertionPlan(
             target_unit_ids=["S2"],
-            selected_gap_ids=["G0", "G1", "G2", "G3", "G4"],
+            selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
             correct_gap_id="G2",
             explanation="문맥상 이 위치가 가장 자연스럽습니다.",
         )
@@ -40,6 +40,7 @@ class RendererTests(unittest.TestCase):
             self.assertEqual(generated.student_paragraph.count(marker), 1)
         self.assertEqual(generated.answer, "③")
         self.assertEqual(generated.QuestionType, QUESTION_TYPES["sentence_insertion"].label_ko)
+        self.assertEqual(generated.student_paragraph, "① A. ② B. ③ D. ④ E. ⑤ F.")
 
 
 if __name__ == "__main__":
