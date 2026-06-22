@@ -4,8 +4,12 @@ import unittest
 
 from questiongen.parsers import prepare_source
 from questiongen.question_types import QUESTION_TYPES
-from questiongen.schemas import GeneratedQuestion, SentenceInsertionPlan
-from questiongen.validators import source_check, validate_sentence_insertion_output
+from questiongen.schemas import GeneratedQuestion, ParagraphOrderingPlan, SentenceInsertionPlan
+from questiongen.validators import (
+    source_check,
+    validate_paragraph_ordering_output,
+    validate_sentence_insertion_output,
+)
 
 
 class ValidatorTests(unittest.TestCase):
@@ -130,6 +134,29 @@ class ValidatorTests(unittest.TestCase):
             type_spec=self.type_spec,
         )
         self.assertTrue(any("collapse into duplicate rendered positions" in error for error in errors))
+
+    def test_paragraph_ordering_validator_accepts_valid_output(self) -> None:
+        plan = ParagraphOrderingPlan(
+            intro_unit_ids=["S0"],
+            continuation_blocks=[["S1"], ["S2", "S3"], ["S4", "S5"]],
+            explanation="도입부 이후의 흐름을 세 덩어리로 나누는 것이 자연스럽습니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber=1,
+            QuestionType=QUESTION_TYPES["paragraph_ordering"].label_ko,
+            student_paragraph="[주어진 글] A.\n\n(A) C. D.\n\n(B) E. F.\n\n(C) B.",
+            question_stem=QUESTION_TYPES["paragraph_ordering"].question_stem,
+            choices=["(A)-(C)-(B)", "(B)-(A)-(C)", "(B)-(C)-(A)", "(C)-(A)-(B)", "(C)-(B)-(A)"],
+            answer="②",
+            explanation="원래 흐름대로 이어지도록 배열하면 정답은 다섯 번째입니다.",
+        )
+        errors = validate_paragraph_ordering_output(
+            prepared_source=self.prepared,
+            plan=plan,
+            generated=generated,
+            type_spec=QUESTION_TYPES["paragraph_ordering"],
+        )
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

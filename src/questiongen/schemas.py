@@ -89,6 +89,30 @@ class SentenceInsertionPlan(BaseModel):
         return self
 
 
+class ParagraphOrderingPlan(BaseModel):
+    intro_unit_ids: list[str] = Field(default_factory=list)
+    continuation_blocks: list[list[str]] = Field(default_factory=list)
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_plan(self) -> ParagraphOrderingPlan:
+        if not self.intro_unit_ids:
+            raise ValueError("ParagraphOrderingPlan requires at least one intro_unit_id.")
+        if len(self.continuation_blocks) != 3:
+            raise ValueError("ParagraphOrderingPlan requires exactly three continuation blocks.")
+        if any(not block for block in self.continuation_blocks):
+            raise ValueError("ParagraphOrderingPlan continuation blocks must all be non-empty.")
+
+        flattened = [unit_id for block in [self.intro_unit_ids, *self.continuation_blocks] for unit_id in block]
+        if len(flattened) != len(set(flattened)):
+            raise ValueError("ParagraphOrderingPlan unit IDs must be unique across all blocks.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("ParagraphOrderingPlan explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("ParagraphOrderingPlan explanation must contain Korean text.")
+        return self
+
+
 class GeneratedQuestion(BaseModel):
     OriginalQuestionNumber: int
     QuestionType: str

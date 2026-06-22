@@ -4,8 +4,8 @@ from typing import Any
 
 from .parsers import normalize_text
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
-from .renderers import MARKER_CHOICES, rendered_gap_positions
-from .schemas import GeneratedQuestion, PreparedSource, QuestionState, SentenceInsertionPlan
+from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, ORDERING_CHOICES, rendered_gap_positions
+from .schemas import GeneratedQuestion, ParagraphOrderingPlan, PreparedSource, QuestionState, SentenceInsertionPlan
 
 
 def input_check(state: QuestionState) -> dict[str, Any]:
@@ -103,32 +103,8 @@ def validate_generated_question(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
 ) -> dict[str, Any]:
-    prepared_source = state["prepared_source"]
-    plan = state["plan"]
-    generated = state["generated"]
-
-    if prepared_source is None:
-        return {
-            "status": "validation_error",
-            "errors": ["PreparedSource is missing for validation."],
-        }
-    if not isinstance(plan, SentenceInsertionPlan):
-        return {
-            "status": "validation_error",
-            "errors": ["SentenceInsertionPlan is missing for validation."],
-        }
-    if not isinstance(generated, GeneratedQuestion):
-        return {
-            "status": "validation_error",
-            "errors": ["GeneratedQuestion is missing for validation."],
-        }
-
-    errors = validate_sentence_insertion_output(
-        prepared_source=prepared_source,
-        plan=plan,
-        generated=generated,
-        type_spec=type_spec,
-    )
+    validator = GENERATED_QUESTION_VALIDATORS[type_spec.validator_key]
+    errors = validator(state, type_spec)
     if errors:
         return {
             "status": "validation_error",
@@ -138,6 +114,29 @@ def validate_generated_question(
         "status": "validation_passed",
         "errors": [],
     }
+
+
+def _validate_sentence_insertion_state(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+    generated = state["generated"]
+
+    if prepared_source is None:
+        return ["PreparedSource is missing for validation."]
+    if not isinstance(plan, SentenceInsertionPlan):
+        return ["SentenceInsertionPlan is missing for validation."]
+    if not isinstance(generated, GeneratedQuestion):
+        return ["GeneratedQuestion is missing for validation."]
+
+    return validate_sentence_insertion_output(
+        prepared_source=prepared_source,
+        plan=plan,
+        generated=generated,
+        type_spec=type_spec,
+    )
 
 
 def validate_sentence_insertion_output(
@@ -223,3 +222,106 @@ def validate_sentence_insertion_output(
         errors.append("explanation is required.")
 
     return errors
+
+
+def _validate_paragraph_ordering_state(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+    generated = state["generated"]
+
+    if prepared_source is None:
+        return ["PreparedSource is missing for validation."]
+    if not isinstance(plan, ParagraphOrderingPlan):
+        return ["ParagraphOrderingPlan is missing for validation."]
+    if not isinstance(generated, GeneratedQuestion):
+        return ["GeneratedQuestion is missing for validation."]
+
+    return validate_paragraph_ordering_output(
+        prepared_source=prepared_source,
+        plan=plan,
+        generated=generated,
+        type_spec=type_spec,
+    )
+
+
+def validate_paragraph_ordering_output(
+    *,
+    prepared_source: PreparedSource,
+    plan: ParagraphOrderingPlan,
+    generated: GeneratedQuestion,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    errors: list[str] = []
+    sentence_map = {unit.id: unit for unit in prepared_source.sentence_units}
+    sentence_ids = [unit.id for unit in prepared_source.sentence_units]
+    flattened = plan.intro_unit_ids + [unit_id for block in plan.continuation_blocks for unit_id in block]
+    if flattened != sentence_ids:
+        errors.append("ParagraphOrderingPlan must cover all sentence IDs exactly once in source order.")
+        return errors
+
+    if generated.QuestionType != type_spec.label_ko:
+        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.question_stem != type_spec.question_stem:
+        errors.append("question_stem does not match the question type metadata.")
+
+    if generated.given_sentence is not None:
+        errors.append("given_sentence must be None for paragraph_ordering.")
+
+    if generated.choices is None or len(generated.choices) != type_spec.choice_count:
+        errors.append(f"choices must contain exactly {type_spec.choice_count} items.")
+    else:
+        if len(set(generated.choices)) != len(generated.choices):
+            errors.append("choices must be unique.")
+        if not generated.answer or generated.answer not in MARKER_CHOICES[: len(generated.choices)]:
+            errors.append("answer must be one of the rendered marker choices.")
+
+        permutation = DISPLAY_PERMUTATIONS[generated.OriginalQuestionNumber % len(DISPLAY_PERMUTATIONS)]
+        label_by_logical_index = {
+            logical_index: label
+            for label, logical_index in zip(("A", "B", "C"), permutation)
+        }
+        correct_sequence = tuple(label_by_logical_index[index] for index in range(3))
+        expected_sequences = list(ORDERING_CHOICES)
+        for index, sequence in enumerate(expected_sequences):
+            if sequence != correct_sequence:
+                del expected_sequences[index]
+                break
+        expected_choices = [
+            f"({first})-({second})-({third})"
+            for first, second, third in expected_sequences
+        ]
+        if generated.choices != expected_choices:
+            errors.append(f"choices must be exactly {expected_choices}.")
+        else:
+            expected_answer = MARKER_CHOICES[expected_choices.index(f"({correct_sequence[0]})-({correct_sequence[1]})-({correct_sequence[2]})")]
+            if generated.answer != expected_answer:
+                errors.append(
+                    f"answer should map to the correct ordering as {expected_answer}, got {generated.answer}."
+                )
+
+    intro_text = " ".join(sentence_map[unit_id].text for unit_id in plan.intro_unit_ids)
+    for fragment in [intro_text, "(A)", "(B)", "(C)"]:
+        if fragment not in generated.student_paragraph:
+            errors.append(f"student_paragraph must include {fragment}.")
+
+    preserved_sentences = [sentence_map[unit_id].text for unit_id in sentence_ids]
+    normalized_student = normalize_text(generated.student_paragraph)
+    for sentence in preserved_sentences:
+        if normalized_student.count(normalize_text(sentence)) != 1:
+            errors.append(f"Preserved sentence must appear exactly once: {sentence}")
+
+    if generated.explanation is None or not generated.explanation.strip():
+        errors.append("explanation is required.")
+    elif not any("\uac00" <= char <= "\ud7a3" for char in generated.explanation):
+        errors.append("explanation must contain Korean text.")
+
+    return errors
+
+
+GENERATED_QUESTION_VALIDATORS = {
+    "sentence_insertion": _validate_sentence_insertion_state,
+    "paragraph_ordering": _validate_paragraph_ordering_state,
+}

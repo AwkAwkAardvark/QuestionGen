@@ -63,3 +63,57 @@ Repair rules:
 - Keep the explanation in Korean.
 - Return only structured data matching the schema.
 """.strip()
+
+
+def build_paragraph_ordering_prompt(
+    *,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> str:
+    sentence_inventory = "\n".join(
+        f"- {unit.id}: {unit.text}"
+        for unit in prepared_source.sentence_units
+    )
+    return f"""
+You are planning an English exam paragraph ordering question.
+
+Return only structured data matching the required schema.
+
+Question type:
+- Key: paragraph_ordering
+- Label: {type_spec.label_ko}
+- Student-facing stem: {type_spec.question_stem}
+
+Planning rules:
+{type_spec.planner_prompt}
+
+Source paragraph:
+{source_paragraph}
+
+Sentence units:
+{sentence_inventory}
+""".strip()
+
+
+def build_paragraph_ordering_repair_prompt(
+    *,
+    base_prompt: str,
+    previous_error: str,
+) -> str:
+    return f"""
+{base_prompt}
+
+Your previous answer did not satisfy the required schema.
+
+Previous validation error:
+{previous_error}
+
+Repair rules:
+- Return a fully corrected answer.
+- The intro block and continuation blocks must together cover every sentence exactly once.
+- Keep exactly three continuation blocks.
+- Keep each block non-empty.
+- Keep the explanation in Korean.
+- Return only structured data matching the schema.
+""".strip()

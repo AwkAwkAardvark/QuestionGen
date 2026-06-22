@@ -4,9 +4,24 @@ from typing import Any
 
 from .parsers import normalize_text
 from .question_types import QuestionTypeSpec
-from .schemas import GeneratedQuestion, PreparedSource, QuestionState, SentenceInsertionPlan
+from .schemas import GeneratedQuestion, ParagraphOrderingPlan, PreparedSource, QuestionState, SentenceInsertionPlan
 
 MARKER_CHOICES = ["①", "②", "③", "④", "⑤"]
+ORDERING_CHOICES = [
+    ("A", "B", "C"),
+    ("A", "C", "B"),
+    ("B", "A", "C"),
+    ("B", "C", "A"),
+    ("C", "A", "B"),
+    ("C", "B", "A"),
+]
+DISPLAY_PERMUTATIONS = [
+    (0, 2, 1),
+    (1, 0, 2),
+    (1, 2, 0),
+    (2, 0, 1),
+    (2, 1, 0),
+]
 
 
 def render_sentence_insertion(
@@ -24,6 +39,39 @@ def render_sentence_insertion(
 
     try:
         generated = _build_sentence_insertion_question(
+            original_question_number=state["OriginalQuestionNumber"],
+            prepared_source=prepared_source,
+            plan=plan,
+            type_spec=type_spec,
+        )
+    except Exception as exc:
+        return {
+            "status": "rendering_error",
+            "errors": [f"Renderer failed: {exc}"],
+        }
+
+    return {
+        "generated": generated,
+        "status": "rendered",
+        "errors": [],
+    }
+
+
+def render_paragraph_ordering(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> dict[str, Any]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+
+    if prepared_source is None or not isinstance(plan, ParagraphOrderingPlan):
+        return {
+            "status": "rendering_error",
+            "errors": ["PreparedSource and ParagraphOrderingPlan are required for rendering."],
+        }
+
+    try:
+        generated = _build_paragraph_ordering_question(
             original_question_number=state["OriginalQuestionNumber"],
             prepared_source=prepared_source,
             plan=plan,
@@ -93,6 +141,64 @@ def _build_sentence_insertion_question(
     )
 
 
+def _build_paragraph_ordering_question(
+    *,
+    original_question_number: int,
+    prepared_source: PreparedSource,
+    plan: ParagraphOrderingPlan,
+    type_spec: QuestionTypeSpec,
+) -> GeneratedQuestion:
+    sentence_map = {unit.id: unit for unit in prepared_source.sentence_units}
+    sentence_ids = [unit.id for unit in prepared_source.sentence_units]
+    all_block_ids = plan.intro_unit_ids + [
+        unit_id
+        for block in plan.continuation_blocks
+        for unit_id in block
+    ]
+    if all_block_ids != sentence_ids:
+        raise ValueError("ParagraphOrderingPlan blocks must cover all sentence IDs exactly once in source order.")
+
+    intro_text = " ".join(sentence_map[unit_id].text for unit_id in plan.intro_unit_ids)
+    logical_blocks = [
+        " ".join(sentence_map[unit_id].text for unit_id in block)
+        for block in plan.continuation_blocks
+    ]
+    permutation = DISPLAY_PERMUTATIONS[original_question_number % len(DISPLAY_PERMUTATIONS)]
+    displayed_blocks = [logical_blocks[index] for index in permutation]
+
+    label_by_logical_index = {
+        logical_index: label
+        for label, logical_index in zip(("A", "B", "C"), permutation)
+    }
+    correct_sequence = tuple(label_by_logical_index[index] for index in range(3))
+
+    choice_sequences = list(ORDERING_CHOICES)
+    for index, sequence in enumerate(choice_sequences):
+        if sequence != correct_sequence:
+            del choice_sequences[index]
+            break
+
+    choices = [f"({first})-({second})-({third})" for first, second, third in choice_sequences]
+    answer = MARKER_CHOICES[choice_sequences.index(correct_sequence)]
+
+    student_paragraph = (
+        f"[주어진 글] {intro_text}\n\n"
+        f"(A) {displayed_blocks[0]}\n\n"
+        f"(B) {displayed_blocks[1]}\n\n"
+        f"(C) {displayed_blocks[2]}"
+    )
+
+    return GeneratedQuestion(
+        OriginalQuestionNumber=original_question_number,
+        QuestionType=type_spec.label_ko,
+        student_paragraph=student_paragraph,
+        question_stem=type_spec.question_stem,
+        choices=choices,
+        answer=answer,
+        explanation=plan.explanation,
+    )
+
+
 def rendered_gap_positions(prepared_source: PreparedSource, target_id: str) -> dict[str, tuple[str | None, str | None]]:
     positions: dict[str, tuple[str | None, str | None]] = {}
     sentence_ids = [unit.id for unit in prepared_source.sentence_units]
@@ -116,4 +222,5 @@ def rendered_gap_positions(prepared_source: PreparedSource, target_id: str) -> d
 
 RENDERERS = {
     "sentence_insertion": render_sentence_insertion,
+    "paragraph_ordering": render_paragraph_ordering,
 }

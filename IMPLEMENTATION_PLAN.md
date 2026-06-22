@@ -78,12 +78,12 @@
 
 ## Wave 4: Multi-Type Expansion
 
-- [ ] Add additional registered question types beyond `sentence_insertion`.
-- [ ] Add broad registry keys plus `format_key`-level first supported formats for Wave 4 types.
+- [x] Add additional registered question types beyond `sentence_insertion`.
+- [x] Add broad registry keys plus `format_key`-level first supported formats for Wave 4 types.
 - [ ] Use `mood_atmosphere` as the registry key for the 심경·분위기 family.
-- [ ] Reuse the same planner-renderer-validator architecture per new type.
-- [ ] Introduce `qtype_incompatibility_error` for passages that are valid inputs but not suitable for a given question type.
-- [ ] Ensure "all registered types" automatically expands as the registry grows.
+- [x] Reuse the same planner-renderer-validator architecture per new type.
+- [x] Introduce `qtype_incompatibility_error` for passages that are valid inputs but not suitable for a given question type.
+- [x] Ensure "all registered types" automatically expands as the registry grows.
 - [ ] Keep type-specific failure modes readable in shared exports.
 - [ ] Keep `BatchInputRow` unchanged until a concrete type truly requires extra input fields.
 - [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
