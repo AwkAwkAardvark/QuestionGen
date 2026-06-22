@@ -1,0 +1,46 @@
+from __future__ import annotations
+
+import unittest
+
+from questiongen.parsers import prepare_source
+from questiongen.question_types import QUESTION_TYPES
+from questiongen.renderers import render_sentence_insertion
+from questiongen.schemas import SentenceInsertionPlan
+
+
+class RendererTests(unittest.TestCase):
+    def test_sentence_insertion_renderer_builds_expected_output(self) -> None:
+        prepared = prepare_source("A. B. C. D. E. F.")
+        plan = SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G3", "G4"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        result = render_sentence_insertion(
+            {
+                "source_paragraph": "A. B. C. D. E. F.",
+                "OriginalQuestionNumber": 1,
+                "QuestionTypeKey": "sentence_insertion",
+                "prepared_source": prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_TYPES["sentence_insertion"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        generated = result["generated"]
+        self.assertEqual(generated.given_sentence, "C.")
+        self.assertNotIn("C.", generated.student_paragraph)
+        for sentence in ["A.", "B.", "D.", "E.", "F."]:
+            self.assertEqual(generated.student_paragraph.count(sentence), 1)
+        for marker in ["①", "②", "③", "④", "⑤"]:
+            self.assertEqual(generated.student_paragraph.count(marker), 1)
+        self.assertEqual(generated.answer, "③")
+        self.assertEqual(generated.QuestionType, QUESTION_TYPES["sentence_insertion"].label_ko)
+
+
+if __name__ == "__main__":
+    unittest.main()
