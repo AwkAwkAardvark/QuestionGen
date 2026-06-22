@@ -26,6 +26,7 @@ Rules:
 - `QuestionGenData/` is runtime state, not source code.
 - The GitHub repo should be cloned into the Colab runtime filesystem, not stored as the working code directory inside `QuestionGenData/`.
 - The notebook may live in Drive, including inside `QuestionGenData/`, but it is still a launcher artifact rather than package logic.
+- `OriginalQuestionNumber` is treated as an opaque source label, not a numeric-only field.
 
 ## Secret Loading
 
@@ -113,6 +114,7 @@ Notes:
 - The user-facing product direction is "run all registered question types."
 - The current API still requires explicit `question_type_keys`, so the launcher must derive them from `QUESTION_TYPES`.
 - This preserves the current backend API while delivering the intended launcher behavior.
+- Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
 
 ## Output Artifacts
 
@@ -128,6 +130,7 @@ Rules:
 - Failed type/passage combinations must remain visible in the exported artifacts.
 - Expected incompatibility between a valid passage and a specific question type should surface as its own status such as `qtype_incompatibility_error`, not be collapsed into generic planner failure.
 - The launcher may write JSON directly from `result.model_dump()` payloads until a dedicated package-level JSON exporter is added.
+- Exported results should preserve both the original source label (`OriginalQuestionNumber`) and the internal deterministic row handle (`BatchRowId`).
 
 ## Notebook Shape
 

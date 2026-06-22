@@ -40,6 +40,7 @@ def render_sentence_insertion(
     try:
         generated = _build_sentence_insertion_question(
             original_question_number=state["OriginalQuestionNumber"],
+            batch_row_id=state["BatchRowId"],
             prepared_source=prepared_source,
             plan=plan,
             type_spec=type_spec,
@@ -73,6 +74,7 @@ def render_paragraph_ordering(
     try:
         generated = _build_paragraph_ordering_question(
             original_question_number=state["OriginalQuestionNumber"],
+            batch_row_id=state["BatchRowId"],
             prepared_source=prepared_source,
             plan=plan,
             type_spec=type_spec,
@@ -92,7 +94,8 @@ def render_paragraph_ordering(
 
 def _build_sentence_insertion_question(
     *,
-    original_question_number: int,
+    original_question_number: str,
+    batch_row_id: int,
     prepared_source: PreparedSource,
     plan: SentenceInsertionPlan,
     type_spec: QuestionTypeSpec,
@@ -131,6 +134,7 @@ def _build_sentence_insertion_question(
 
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
         QuestionType=type_spec.label_ko,
         student_paragraph=student_paragraph,
         question_stem=type_spec.question_stem,
@@ -143,7 +147,8 @@ def _build_sentence_insertion_question(
 
 def _build_paragraph_ordering_question(
     *,
-    original_question_number: int,
+    original_question_number: str,
+    batch_row_id: int,
     prepared_source: PreparedSource,
     plan: ParagraphOrderingPlan,
     type_spec: QuestionTypeSpec,
@@ -163,7 +168,7 @@ def _build_paragraph_ordering_question(
         " ".join(sentence_map[unit_id].text for unit_id in block)
         for block in plan.continuation_blocks
     ]
-    permutation = DISPLAY_PERMUTATIONS[original_question_number % len(DISPLAY_PERMUTATIONS)]
+    permutation = DISPLAY_PERMUTATIONS[batch_row_id % len(DISPLAY_PERMUTATIONS)]
     displayed_blocks = [logical_blocks[index] for index in permutation]
 
     label_by_logical_index = {
@@ -190,6 +195,7 @@ def _build_paragraph_ordering_question(
 
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
         QuestionType=type_spec.label_ko,
         student_paragraph=student_paragraph,
         question_stem=type_spec.question_stem,

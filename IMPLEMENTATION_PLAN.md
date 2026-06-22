@@ -85,7 +85,7 @@
 - [x] Introduce `qtype_incompatibility_error` for passages that are valid inputs but not suitable for a given question type.
 - [x] Ensure "all registered types" automatically expands as the registry grows.
 - [ ] Keep type-specific failure modes readable in shared exports.
-- [ ] Keep `BatchInputRow` unchanged until a concrete type truly requires extra input fields.
+- [x] Split source provenance from internal deterministic row identity so `OriginalQuestionNumber` can remain an opaque label and `BatchRowId` can drive internal ordering behavior.
 - [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
 
 ## Acceptance Checklist
@@ -107,5 +107,6 @@
 - [x] `BatchResultRow` remains the canonical exported result model.
 - [x] Environment variables remain the final runtime interface to the LLM client.
 - [x] Secret acquisition remains a launcher concern, not a package concern.
-- [x] `BatchInputRow` should stay narrow until a future type forces additional source annotations.
+- [x] `OriginalQuestionNumber` is source provenance, not an internal numeric key.
+- [x] `BatchRowId` is the deterministic internal row identifier generated from batch row order and preserved in exports.
 - [x] Future Wave 4 registry entries should keep broad `QuestionTypeKey` values and move exact first supported shapes into `format_key`.

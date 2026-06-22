@@ -20,7 +20,8 @@ class RendererTests(unittest.TestCase):
         result = render_sentence_insertion(
             {
                 "source_paragraph": "A. B. C. D. E. F.",
-                "OriginalQuestionNumber": 1,
+                "OriginalQuestionNumber": "8-Analysis",
+                "BatchRowId": 0,
                 "QuestionTypeKey": "sentence_insertion",
                 "prepared_source": prepared,
                 "plan": plan,
@@ -40,6 +41,8 @@ class RendererTests(unittest.TestCase):
             self.assertEqual(generated.student_paragraph.count(marker), 1)
         self.assertEqual(generated.answer, "③")
         self.assertEqual(generated.QuestionType, QUESTION_TYPES["sentence_insertion"].label_ko)
+        self.assertEqual(generated.OriginalQuestionNumber, "8-Analysis")
+        self.assertEqual(generated.BatchRowId, 0)
         self.assertEqual(generated.student_paragraph, "① A. ② B. ③ D. ④ E. ⑤ F.")
 
     def test_paragraph_ordering_renderer_builds_expected_output(self) -> None:
@@ -52,7 +55,8 @@ class RendererTests(unittest.TestCase):
         result = render_paragraph_ordering(
             {
                 "source_paragraph": "A. B. C. D. E. F.",
-                "OriginalQuestionNumber": 1,
+                "OriginalQuestionNumber": "8-Analysis",
+                "BatchRowId": 1,
                 "QuestionTypeKey": "paragraph_ordering",
                 "prepared_source": prepared,
                 "plan": plan,
@@ -65,6 +69,7 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(result["status"], "rendered")
         generated = result["generated"]
         self.assertEqual(generated.QuestionType, QUESTION_TYPES["paragraph_ordering"].label_ko)
+        self.assertEqual(generated.BatchRowId, 1)
         self.assertIn("[주어진 글] A.", generated.student_paragraph)
         self.assertIn("(A)", generated.student_paragraph)
         self.assertEqual(len(generated.choices), 5)

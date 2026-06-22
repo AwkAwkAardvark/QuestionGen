@@ -28,6 +28,7 @@ def run_batch_rows(
             state = make_initial_state(
                 source_paragraph=input_row.source_paragraph,
                 original_question_number=input_row.OriginalQuestionNumber,
+                batch_row_id=input_row.BatchRowId,
                 question_type_key=question_type_key,
             )
             try:
@@ -50,7 +51,10 @@ def run_batch_dataframe(df: object, question_type_keys: Sequence[str], runner: R
         raise ImportError("pandas is required for run_batch_dataframe().") from exc
 
     records = df.to_dict(orient="records")
-    rows = [BatchInputRow.model_validate(record) for record in records]
+    rows = [
+        BatchInputRow.model_validate(_coerce_tabular_row(record, batch_row_id=index))
+        for index, record in enumerate(records)
+    ]
     results = run_batch_rows(rows, question_type_keys, runner)
     return pd.DataFrame([result.model_dump() for result in results])
 
@@ -65,8 +69,8 @@ def run_batch_files(
     rows: list[BatchInputRow] = []
     with Path(input_csv).open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        for raw_row in reader:
-            rows.append(BatchInputRow.model_validate(_coerce_csv_row(raw_row)))
+        for index, raw_row in enumerate(reader):
+            rows.append(BatchInputRow.model_validate(_coerce_tabular_row(raw_row, batch_row_id=index)))
 
     results = run_batch_rows(rows, question_type_keys, runner)
     write_results_csv(results, output_csv)
@@ -80,10 +84,9 @@ def _ensure_runner(runner: object) -> None:
         raise ValueError("runner must be an invoke-capable compiled graph or equivalent object.")
 
 
-def _coerce_csv_row(row: dict[str, str]) -> dict[str, object]:
+def _coerce_tabular_row(row: dict[str, object], *, batch_row_id: int) -> dict[str, object]:
     payload = dict(row)
-    if "OriginalQuestionNumber" in payload:
-        payload["OriginalQuestionNumber"] = int(payload["OriginalQuestionNumber"])
+    payload["BatchRowId"] = payload.get("BatchRowId", batch_row_id)
     return payload
 
 
@@ -95,6 +98,7 @@ def _state_to_result_row(state: QuestionState) -> BatchResultRow:
 
     return BatchResultRow(
         OriginalQuestionNumber=state["OriginalQuestionNumber"],
+        BatchRowId=state["BatchRowId"],
         QuestionTypeKey=question_type_key,
         QuestionType=generated_payload.QuestionType if generated_payload else (type_spec.label_ko if type_spec else None),
         status=state["status"],

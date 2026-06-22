@@ -40,7 +40,7 @@ class _IncompatibleRunner:
 class BatchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = compile_question_graph(structured_llm_factory=lambda schema: _StubPlanner(schema))
-        self.rows = [BatchInputRow(OriginalQuestionNumber=1, source_paragraph="A. B. C. D. E. F.")]
+        self.rows = [BatchInputRow(OriginalQuestionNumber="8-Analysis", BatchRowId=0, source_paragraph="A. B. C. D. E. F.")]
 
     def test_one_row_one_type(self) -> None:
         results = run_batch_rows(self.rows, ["sentence_insertion"], self.runner)
@@ -73,7 +73,7 @@ class BatchTests(unittest.TestCase):
                 writer.writeheader()
                 writer.writerow(
                     {
-                        "OriginalQuestionNumber": 1,
+                        "OriginalQuestionNumber": "8-Analysis",
                         "source_paragraph": "A. B. C. D. E. F.",
                     }
                 )
@@ -86,8 +86,12 @@ class BatchTests(unittest.TestCase):
                 output_markdown=output_md,
             )
             self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].OriginalQuestionNumber, "8-Analysis")
+            self.assertEqual(results[0].BatchRowId, 0)
             self.assertTrue(output_csv.exists())
             self.assertTrue(output_md.exists())
+            self.assertIn("BatchRowId", output_csv.read_text(encoding="utf-8"))
+            self.assertIn("row 0 / 8-Analysis", output_md.read_text(encoding="utf-8"))
 
     def test_invalid_runner_fails_clearly(self) -> None:
         with self.assertRaises(ValueError):
@@ -103,6 +107,26 @@ class BatchTests(unittest.TestCase):
         df_results = run_batch_dataframe(frame, ["sentence_insertion"], self.runner)
         row_results = run_batch_rows(self.rows, ["sentence_insertion"], self.runner)
         self.assertEqual(df_results.to_dict(orient="records")[0]["status"], row_results[0].status)
+        self.assertEqual(df_results.to_dict(orient="records")[0]["BatchRowId"], 0)
+
+    def test_dataframe_adapter_assigns_batch_row_id_when_missing(self) -> None:
+        try:
+            import pandas as pd
+        except ImportError:
+            self.skipTest("pandas is not installed")
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "OriginalQuestionNumber": "8-Analysis",
+                    "source_paragraph": "A. B. C. D. E. F.",
+                }
+            ]
+        )
+        df_results = run_batch_dataframe(frame, ["sentence_insertion"], self.runner)
+        record = df_results.to_dict(orient="records")[0]
+        self.assertEqual(record["OriginalQuestionNumber"], "8-Analysis")
+        self.assertEqual(record["BatchRowId"], 0)
 
 
 if __name__ == "__main__":

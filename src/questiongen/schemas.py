@@ -114,7 +114,8 @@ class ParagraphOrderingPlan(BaseModel):
 
 
 class GeneratedQuestion(BaseModel):
-    OriginalQuestionNumber: int
+    OriginalQuestionNumber: str
+    BatchRowId: int
     QuestionType: str
     student_paragraph: str
     question_stem: str
@@ -125,20 +126,24 @@ class GeneratedQuestion(BaseModel):
 
 
 class BatchInputRow(BaseModel):
-    OriginalQuestionNumber: int
+    OriginalQuestionNumber: str
+    BatchRowId: int
     source_paragraph: str
 
     @model_validator(mode="after")
     def _validate_input_row(self) -> BatchInputRow:
-        if not isinstance(self.OriginalQuestionNumber, int):
-            raise ValueError("OriginalQuestionNumber must be an integer.")
+        if not isinstance(self.OriginalQuestionNumber, str) or not self.OriginalQuestionNumber.strip():
+            raise ValueError("OriginalQuestionNumber must be a non-empty string.")
+        if not isinstance(self.BatchRowId, int) or self.BatchRowId < 0:
+            raise ValueError("BatchRowId must be a non-negative integer.")
         if not isinstance(self.source_paragraph, str) or not self.source_paragraph.strip():
             raise ValueError("source_paragraph must be a non-empty string.")
         return self
 
 
 class BatchResultRow(BaseModel):
-    OriginalQuestionNumber: int
+    OriginalQuestionNumber: str
+    BatchRowId: int
     QuestionTypeKey: str
     QuestionType: str | None = None
     status: PipelineStatus
@@ -154,7 +159,8 @@ class BatchResultRow(BaseModel):
 
 class QuestionState(TypedDict):
     source_paragraph: str
-    OriginalQuestionNumber: int
+    OriginalQuestionNumber: str
+    BatchRowId: int
     QuestionTypeKey: str
     prepared_source: PreparedSource | None
     plan: BaseModel | None
@@ -165,12 +171,14 @@ class QuestionState(TypedDict):
 
 def make_initial_state(
     source_paragraph: str,
-    original_question_number: int,
+    original_question_number: str,
+    batch_row_id: int,
     question_type_key: str,
 ) -> QuestionState:
     return {
         "source_paragraph": source_paragraph,
         "OriginalQuestionNumber": original_question_number,
+        "BatchRowId": batch_row_id,
         "QuestionTypeKey": question_type_key,
         "prepared_source": None,
         "plan": None,

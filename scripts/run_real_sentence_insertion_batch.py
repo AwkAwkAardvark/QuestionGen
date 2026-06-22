@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
         "--input-csv",
         type=Path,
         default=Path("sample_data/real_sentence_insertion_batch.csv"),
-        help="CSV with OriginalQuestionNumber and source_paragraph columns.",
+        help="CSV with OriginalQuestionNumber as a source label plus source_paragraph.",
     )
     parser.add_argument(
         "--output-dir",
@@ -70,6 +70,7 @@ def main() -> None:
         "rows": [
             {
                 "OriginalQuestionNumber": result.OriginalQuestionNumber,
+                "BatchRowId": result.BatchRowId,
                 "status": result.status,
                 "errors": result.errors,
                 "answer": result.answer,

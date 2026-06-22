@@ -12,8 +12,10 @@ def input_check(state: QuestionState) -> dict[str, Any]:
     errors: list[str] = []
     if state["QuestionTypeKey"] not in QUESTION_TYPES:
         errors.append(f"Unknown QuestionTypeKey: {state['QuestionTypeKey']}")
-    if not isinstance(state["OriginalQuestionNumber"], int):
-        errors.append("OriginalQuestionNumber must be an integer.")
+    if not isinstance(state["OriginalQuestionNumber"], str) or not state["OriginalQuestionNumber"].strip():
+        errors.append("OriginalQuestionNumber must be a non-empty string.")
+    if not isinstance(state["BatchRowId"], int) or state["BatchRowId"] < 0:
+        errors.append("BatchRowId must be a non-negative integer.")
     if not isinstance(state["source_paragraph"], str) or not state["source_paragraph"].strip():
         errors.append("source_paragraph must be a non-empty string.")
 
@@ -130,6 +132,10 @@ def _validate_sentence_insertion_state(
         return ["SentenceInsertionPlan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
+    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
+        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
+    if generated.BatchRowId != state["BatchRowId"]:
+        return ["GeneratedQuestion BatchRowId must match the state."]
 
     return validate_sentence_insertion_output(
         prepared_source=prepared_source,
@@ -238,6 +244,10 @@ def _validate_paragraph_ordering_state(
         return ["ParagraphOrderingPlan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
+    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
+        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
+    if generated.BatchRowId != state["BatchRowId"]:
+        return ["GeneratedQuestion BatchRowId must match the state."]
 
     return validate_paragraph_ordering_output(
         prepared_source=prepared_source,
@@ -278,7 +288,7 @@ def validate_paragraph_ordering_output(
         if not generated.answer or generated.answer not in MARKER_CHOICES[: len(generated.choices)]:
             errors.append("answer must be one of the rendered marker choices.")
 
-        permutation = DISPLAY_PERMUTATIONS[generated.OriginalQuestionNumber % len(DISPLAY_PERMUTATIONS)]
+        permutation = DISPLAY_PERMUTATIONS[generated.BatchRowId % len(DISPLAY_PERMUTATIONS)]
         label_by_logical_index = {
             logical_index: label
             for label, logical_index in zip(("A", "B", "C"), permutation)

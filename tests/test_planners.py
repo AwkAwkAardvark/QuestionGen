@@ -63,7 +63,8 @@ class PlannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {
             "source_paragraph": "A. B. C. D. E. F.",
-            "OriginalQuestionNumber": 1,
+            "OriginalQuestionNumber": "8-Analysis",
+            "BatchRowId": 0,
             "QuestionTypeKey": "sentence_insertion",
             "prepared_source": prepare_source("A. B. C. D. E. F."),
             "plan": None,

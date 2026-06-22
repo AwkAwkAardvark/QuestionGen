@@ -22,7 +22,8 @@ class ValidatorTests(unittest.TestCase):
         result = source_check(
             {
                 "source_paragraph": "A. B. C. D.",
-                "OriginalQuestionNumber": 1,
+                "OriginalQuestionNumber": "8-Analysis",
+                "BatchRowId": 0,
                 "QuestionTypeKey": "sentence_insertion",
                 "prepared_source": prepared,
                 "plan": None,
@@ -39,7 +40,8 @@ class ValidatorTests(unittest.TestCase):
         result = source_check(
             {
                 "source_paragraph": "A. B. C. D. E. F.",
-                "OriginalQuestionNumber": 1,
+                "OriginalQuestionNumber": "8-Analysis",
+                "BatchRowId": 0,
                 "QuestionTypeKey": "sentence_insertion",
                 "prepared_source": self.prepared,
                 "plan": None,
@@ -55,7 +57,8 @@ class ValidatorTests(unittest.TestCase):
         result = source_check(
             {
                 "source_paragraph": "A. B. C. D. E. F.",
-                "OriginalQuestionNumber": 1,
+                "OriginalQuestionNumber": "8-Analysis",
+                "BatchRowId": 0,
                 "QuestionTypeKey": "sentence_insertion",
                 "prepared_source": self.prepared,
                 "plan": None,
@@ -75,7 +78,8 @@ class ValidatorTests(unittest.TestCase):
             explanation="문맥상 이 위치가 가장 자연스럽습니다.",
         )
         generated = GeneratedQuestion(
-            OriginalQuestionNumber=1,
+            OriginalQuestionNumber="8-Analysis",
+            BatchRowId=0,
             QuestionType=self.type_spec.label_ko,
             student_paragraph="① A. ② B. ③ D. ④ E. ⑤ F.",
             question_stem=self.type_spec.question_stem,
@@ -93,7 +97,8 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
         bad_generated = GeneratedQuestion(
-            OriginalQuestionNumber=1,
+            OriginalQuestionNumber="8-Analysis",
+            BatchRowId=0,
             QuestionType=self.type_spec.label_ko,
             student_paragraph="① A. ② B. ③ C. ④ D. ⑤ E.",
             question_stem=self.type_spec.question_stem,
@@ -118,7 +123,8 @@ class ValidatorTests(unittest.TestCase):
             explanation="문맥상 이 위치가 가장 자연스럽습니다.",
         )
         generated = GeneratedQuestion(
-            OriginalQuestionNumber=1,
+            OriginalQuestionNumber="8-Analysis",
+            BatchRowId=0,
             QuestionType=self.type_spec.label_ko,
             student_paragraph="① A. ② B. ③ ④ D. ⑤ E. F.",
             question_stem=self.type_spec.question_stem,
@@ -142,7 +148,8 @@ class ValidatorTests(unittest.TestCase):
             explanation="도입부 이후의 흐름을 세 덩어리로 나누는 것이 자연스럽습니다.",
         )
         generated = GeneratedQuestion(
-            OriginalQuestionNumber=1,
+            OriginalQuestionNumber="8-Analysis",
+            BatchRowId=1,
             QuestionType=QUESTION_TYPES["paragraph_ordering"].label_ko,
             student_paragraph="[주어진 글] A.\n\n(A) C. D.\n\n(B) E. F.\n\n(C) B.",
             question_stem=QUESTION_TYPES["paragraph_ordering"].question_stem,

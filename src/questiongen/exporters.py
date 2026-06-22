@@ -9,6 +9,7 @@ from .schemas import BatchResultRow
 
 CSV_FIELDS = [
     "OriginalQuestionNumber",
+    "BatchRowId",
     "QuestionTypeKey",
     "QuestionType",
     "status",
@@ -52,8 +53,9 @@ def batch_results_to_markdown(results: Iterable[BatchResultRow]) -> str:
     lines = ["# QuestionGen Batch Results", ""]
     for result in results:
         lines.append(
-            f"## {result.OriginalQuestionNumber} / {result.QuestionTypeKey} / {result.status}"
+            f"## row {result.BatchRowId} / {result.OriginalQuestionNumber} / {result.QuestionTypeKey} / {result.status}"
         )
+        lines.append(f"- BatchRowId: {result.BatchRowId}")
         if result.errors:
             lines.append(f"- Errors: {' | '.join(result.errors)}")
         else:
