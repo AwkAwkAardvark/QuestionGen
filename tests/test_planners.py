@@ -28,6 +28,28 @@ class _InvalidPlanner:
         }
 
 
+class _RetryPlanner:
+    def __init__(self) -> None:
+        self.invocations = 0
+
+    def invoke(self, prompt: str) -> dict[str, object]:
+        self.invocations += 1
+        if self.invocations == 1:
+            return {
+                "target_unit_ids": ["S4"],
+                "selected_gap_ids": ["G0", "G1", "G2", "G3", "G4"],
+                "correct_gap_id": "G6",
+                "explanation": "문맥상 이 위치를 선택했습니다.",
+            }
+        self.last_prompt = prompt
+        return {
+            "target_unit_ids": ["S4"],
+            "selected_gap_ids": ["G0", "G1", "G2", "G4", "G6"],
+            "correct_gap_id": "G6",
+            "explanation": "문맥상 이 위치가 가장 자연스럽습니다.",
+        }
+
+
 class PlannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {
@@ -64,6 +86,17 @@ class PlannerTests(unittest.TestCase):
                 for error in result["errors"]
             )
         )
+
+    def test_planner_retries_once_after_schema_failure(self) -> None:
+        planner = _RetryPlanner()
+        result = plan_sentence_insertion(
+            self.state,
+            self.type_spec,
+            structured_llm_factory=lambda schema: planner,
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(planner.invocations, 2)
+        self.assertIn("correct_gap_id", planner.last_prompt)
 
 
 if __name__ == "__main__":

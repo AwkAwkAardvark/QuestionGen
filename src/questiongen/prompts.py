@@ -40,3 +40,26 @@ Sentence units:
 Gap units:
 {gap_inventory}
 """.strip()
+
+
+def build_sentence_insertion_repair_prompt(
+    *,
+    base_prompt: str,
+    previous_error: str,
+) -> str:
+    return f"""
+{base_prompt}
+
+Your previous answer did not satisfy the required schema.
+
+Previous validation error:
+{previous_error}
+
+Repair rules:
+- Return a fully corrected answer.
+- `correct_gap_id` must be exactly one of the IDs listed in `selected_gap_ids`.
+- Re-check that `selected_gap_ids` contains exactly five unique gap IDs.
+- Re-check that you did not choose both gaps immediately before and after the target sentence.
+- Keep the explanation in Korean.
+- Return only structured data matching the schema.
+""".strip()

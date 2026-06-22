@@ -10,6 +10,7 @@ SENTENCE_INSERTION_PLANNER_PROMPT = """
 - Select exactly one target sentence ID from the sentence inventory.
 - Select exactly five unique gap IDs from the gap inventory.
 - Do not select both gaps that sit immediately before and after the target sentence, because they collapse into one rendered position once the target sentence is removed.
+- First finalize `selected_gap_ids`, then choose `correct_gap_id` from that exact five-item list only.
 - Set correct_gap_id to the gap where the target sentence best fits back into the paragraph.
 - The target sentence text must remain unchanged.
 - Use only IDs that appear in the inventories.

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .prompts import build_sentence_insertion_prompt
+from .prompts import build_sentence_insertion_prompt, build_sentence_insertion_repair_prompt
 from .question_types import QuestionTypeSpec
 from .schemas import BaseModel, QuestionState, coerce_model
 
 StructuredLLMFactory = Callable[[type[BaseModel]], Any]
+MAX_PLANNER_ATTEMPTS = 2
 
 
 def plan_sentence_insertion(
@@ -31,20 +32,31 @@ def plan_sentence_insertion(
         type_spec=type_spec,
     )
 
-    try:
-        planner = structured_llm_factory(type_spec.plan_schema)
-        raw_plan = planner.invoke(prompt)
-        plan = coerce_model(raw_plan, type_spec.plan_schema)
-    except Exception as exc:
-        return {
-            "status": "planning_error",
-            "errors": [f"Planner failed: {exc}"],
-        }
+    planner = structured_llm_factory(type_spec.plan_schema)
+    current_prompt = prompt
+    last_exc: Exception | None = None
+
+    for attempt in range(MAX_PLANNER_ATTEMPTS):
+        try:
+            raw_plan = planner.invoke(current_prompt)
+            plan = coerce_model(raw_plan, type_spec.plan_schema)
+            return {
+                "plan": plan,
+                "status": "planned",
+                "errors": [],
+            }
+        except Exception as exc:
+            last_exc = exc
+            if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
+                break
+            current_prompt = build_sentence_insertion_repair_prompt(
+                base_prompt=prompt,
+                previous_error=str(exc),
+            )
 
     return {
-        "plan": plan,
-        "status": "planned",
-        "errors": [],
+        "status": "planning_error",
+        "errors": [f"Planner failed: {last_exc}"],
     }
 
 
