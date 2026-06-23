@@ -80,6 +80,29 @@ class _RetryPlanner:
         }
 
 
+class _DeterministicSentenceRetryPlanner:
+    def __init__(self) -> None:
+        self.invocations = 0
+        self.last_prompt = ""
+
+    def invoke(self, prompt: str) -> dict[str, object]:
+        self.invocations += 1
+        if self.invocations == 1:
+            return {
+                "target_unit_ids": ["S2"],
+                "selected_gap_ids": ["G0", "G1", "G2", "G3", "G4"],
+                "correct_gap_id": "G2",
+                "explanation": "문맥상 이 위치가 가장 자연스럽습니다.",
+            }
+        self.last_prompt = prompt
+        return {
+            "target_unit_ids": ["S2"],
+            "selected_gap_ids": ["G0", "G1", "G2", "G4", "G5"],
+            "correct_gap_id": "G2",
+            "explanation": "문맥상 이 위치가 가장 자연스럽습니다.",
+        }
+
+
 class _ParagraphOrderingPlanner:
     def invoke(self, prompt: str) -> ParagraphOrderingPlan:
         return ParagraphOrderingPlan(
@@ -219,6 +242,54 @@ class _UnderlinedRetryPlanner:
         }
 
 
+class _DeterministicUnderlinedRetryPlanner:
+    def __init__(self, weak_span_id: str, weak_span_text: str, strong_span_id: str, strong_span_text: str, evidence: str) -> None:
+        self.weak_span_id = weak_span_id
+        self.weak_span_text = weak_span_text
+        self.strong_span_id = strong_span_id
+        self.strong_span_text = strong_span_text
+        self.evidence = evidence
+        self.invocations = 0
+        self.last_prompt = ""
+
+    def invoke(self, prompt: str) -> dict[str, object]:
+        self.invocations += 1
+        if self.invocations == 1:
+            return {
+                "selected_span_id": self.weak_span_id,
+                "selected_span_text": self.weak_span_text,
+                "paraphrase_choices_ko": [
+                    "첫 문장의 일부 표현이라는 뜻",
+                    "한정된 예시만 가리킨다는 뜻",
+                    "앞 문장을 반복한다는 뜻",
+                    "주장을 약하게 바꾼다는 뜻",
+                    "표현만 바뀌고 의미는 같다는 뜻",
+                ],
+                "correct_choice": "한정된 예시만 가리킨다는 뜻",
+                "surface_meaning": "표면적 의미",
+                "contextual_meaning": "문맥적 의미",
+                "supporting_evidence": self.evidence,
+                "explanation": "초안입니다.",
+            }
+        self.last_prompt = prompt
+        return {
+            "selected_span_id": self.strong_span_id,
+            "selected_span_text": self.strong_span_text,
+            "paraphrase_choices_ko": [
+                "비교 속에서 상대적 박탈감만 커졌다는 뜻",
+                "경제적 격차가 불만을 낳았다는 뜻",
+                "보상이 충분해도 만족이 오래가지 않았다는 뜻",
+                "경쟁이 심해져 분노가 겉으로 드러났다는 뜻",
+                "차이가 커질수록 성취감도 함께 커졌다는 뜻",
+            ],
+            "correct_choice": "경제적 격차가 불만을 낳았다는 뜻",
+            "surface_meaning": "오직 불만만을 가져왔다는 말",
+            "contextual_meaning": "상대적 불평등 때문에 만족 대신 불만이 커졌다는 뜻",
+            "supporting_evidence": self.evidence,
+            "explanation": "문맥을 다시 반영한 수정안입니다.",
+        }
+
+
 class PlannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {
@@ -315,6 +386,17 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(planner.invocations, 2)
         self.assertIn("correct_gap_id", planner.last_prompt)
 
+    def test_planner_retries_after_deterministic_sentence_insertion_failure(self) -> None:
+        planner = _DeterministicSentenceRetryPlanner()
+        result = plan_sentence_insertion(
+            self.state,
+            self.type_spec,
+            structured_llm_factory=lambda schema: planner,
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(planner.invocations, 2)
+        self.assertIn("collapsed rendered positions", planner.last_prompt)
+
     def test_sentence_insertion_prompt_exposes_ranked_target_hints(self) -> None:
         prompt = build_sentence_insertion_prompt(
             source_paragraph=self.contextual_insertion_source,
@@ -325,6 +407,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("priority=strong", prompt)
         self.assertIn("connector_only=", prompt)
         self.assertIn("between S1", prompt)
+        self.assertIn("Selection reminders", prompt)
 
     def test_paragraph_ordering_planner_output_validates(self) -> None:
         result = plan_paragraph_ordering(
@@ -495,6 +578,39 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(planner.invocations, 2)
         self.assertIn("selected_span_id", planner.last_prompt)
 
+    def test_underlined_phrase_meaning_planner_retries_after_deterministic_quality_failure(self) -> None:
+        source = (
+            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative to those around them. "
+            "But the resulting inequality brought only discontent for the workers who compared salaries each day. "
+            "Because those comparisons lingered, even small pay gaps began to feel like a personal insult."
+        )
+        prepared_source = prepare_source(source)
+        weak_span = next(span for span in prepared_source.span_units if span.text == "But the resulting")
+        strong_span = next(
+            span for span in prepared_source.span_units if span.text == "resulting inequality brought only discontent"
+        )
+        underlined_state = {
+            **self.state,
+            "source_paragraph": source,
+            "QuestionTypeKey": "underlined_phrase_meaning",
+            "prepared_source": prepared_source,
+        }
+        planner = _DeterministicUnderlinedRetryPlanner(
+            weak_span.id,
+            weak_span.text,
+            strong_span.id,
+            strong_span.text,
+            "the resulting inequality brought only discontent for the workers",
+        )
+        result = plan_underlined_phrase_meaning(
+            underlined_state,
+            QUESTION_TYPES["underlined_phrase_meaning"],
+            structured_llm_factory=lambda schema: planner,
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(planner.invocations, 2)
+        self.assertIn("not central enough", planner.last_prompt)
+
     def test_underlined_phrase_meaning_prompt_exposes_ranked_span_priorities(self) -> None:
         prompt = build_underlined_phrase_meaning_prompt(
             source_paragraph=self.underlined_source,
@@ -505,6 +621,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("priority=top", prompt)
         self.assertIn("centrality=claim_bearing", prompt)
         self.assertIn("context=", prompt)
+        self.assertIn("Selection reminders", prompt)
 
     def test_graph_rewrites_underlined_phrase_meaning_explanation(self) -> None:
         runner = compile_question_graph(

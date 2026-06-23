@@ -324,6 +324,10 @@ def validate_question_type_compatibility(
     prepared_source: PreparedSource,
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
+    if type_spec.validator_key == "sentence_insertion":
+        return _validate_sentence_insertion_compatibility(prepared_source)
+    if type_spec.validator_key == "paragraph_ordering":
+        return _validate_paragraph_ordering_compatibility(prepared_source)
     if type_spec.validator_key == "mood_atmosphere":
         return _validate_mood_atmosphere_compatibility(source_paragraph, prepared_source)
     if type_spec.validator_key == "underlined_phrase_meaning":
@@ -451,6 +455,62 @@ def _validate_mood_atmosphere_compatibility(
         return ["Passage does not contain enough sentence-level development for an emotion-shift item."]
 
     return []
+
+
+def _validate_sentence_insertion_compatibility(prepared_source: PreparedSource) -> list[str]:
+    sentence_units = prepared_source.sentence_units
+    if not _should_apply_live_quality_gates(sentence_units):
+        return []
+
+    viable_targets = 0
+    for target_unit in sentence_units[1:-1]:
+        rendered_positions = rendered_gap_positions(prepared_source, target_unit.id)
+        if len(set(rendered_positions.values())) < 5:
+            continue
+
+        before_text = sentence_units[target_unit.index - 1].text
+        after_text = sentence_units[target_unit.index + 1].text
+        left_score = _adjacency_score(before_text, target_unit.text)
+        right_score = _adjacency_score(target_unit.text, after_text)
+        if left_score < 2 or right_score < 2:
+            continue
+        if _looks_connector_only_sentence(target_unit.text) and left_score <= 2 and right_score <= 2:
+            continue
+        viable_targets += 1
+
+    if viable_targets == 0:
+        return [
+            "Passage does not contain a stable sentence-insertion target with five distinct rendered positions and two-sided context evidence."
+        ]
+    return []
+
+
+def _validate_paragraph_ordering_compatibility(prepared_source: PreparedSource) -> list[str]:
+    sentence_units = prepared_source.sentence_units
+    if not _should_apply_live_quality_gates(sentence_units):
+        return []
+
+    sentence_texts = [unit.text for unit in sentence_units]
+    sentence_count = len(sentence_texts)
+    for first_cut in range(1, sentence_count - 2):
+        for second_cut in range(first_cut + 1, sentence_count - 1):
+            for third_cut in range(second_cut + 1, sentence_count):
+                intro_text = " ".join(sentence_texts[:first_cut])
+                block_a = " ".join(sentence_texts[first_cut:second_cut])
+                block_b = " ".join(sentence_texts[second_cut:third_cut])
+                block_c = " ".join(sentence_texts[third_cut:])
+                ordered_segments = [intro_text, block_a, block_b, block_c]
+                edge_scores = [
+                    _adjacency_score(ordered_segments[index], ordered_segments[index + 1])
+                    for index in range(len(ordered_segments) - 1)
+                ]
+                if any(score < 2 for score in edge_scores):
+                    continue
+                if _looks_like_parallel_blocks([block_a, block_b, block_c]) and max(edge_scores, default=0) <= 3:
+                    continue
+                return []
+
+    return ["Passage does not contain strongly forced adjacency boundaries for a stable paragraph_ordering item."]
 
 
 def _validate_underlined_phrase_meaning_plan(prepared_source: PreparedSource, plan: object) -> list[str]:

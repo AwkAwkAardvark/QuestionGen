@@ -14,6 +14,7 @@ from .prompts import (
 )
 from .question_types import QuestionTypeSpec
 from .schemas import BaseModel, QuestionState, coerce_model
+from .validators import validate_plan_against_prepared_source
 
 StructuredLLMFactory = Callable[[type[BaseModel]], Any]
 MAX_PLANNER_ATTEMPTS = 2
@@ -77,6 +78,7 @@ def _normalized_exception_text(exc: BaseException) -> str:
 
 def _run_planner_with_repair(
     *,
+    state: QuestionState,
     type_spec: QuestionTypeSpec,
     structured_llm_factory: StructuredLLMFactory | None,
     base_prompt: str,
@@ -90,6 +92,18 @@ def _run_planner_with_repair(
         try:
             raw_plan = planner.invoke(current_prompt)
             plan = coerce_model(raw_plan, type_spec.plan_schema)
+            prepared_source = state["prepared_source"]
+            if prepared_source is not None:
+                deterministic_errors = validate_plan_against_prepared_source(prepared_source, plan, type_spec)
+                if deterministic_errors:
+                    last_exc = RuntimeError("; ".join(deterministic_errors))
+                    if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
+                        break
+                    current_prompt = repair_prompt_builder(
+                        base_prompt=base_prompt,
+                        previous_error="; ".join(deterministic_errors),
+                    )
+                    continue
             return {
                 "plan": plan,
                 "status": "planned",
@@ -132,6 +146,7 @@ def plan_sentence_insertion(
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
+        state=state,
         type_spec=type_spec,
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
@@ -161,6 +176,7 @@ def plan_paragraph_ordering(
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
+        state=state,
         type_spec=type_spec,
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
@@ -190,6 +206,7 @@ def plan_mood_atmosphere(
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
+        state=state,
         type_spec=type_spec,
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
@@ -219,6 +236,7 @@ def plan_underlined_phrase_meaning(
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
+        state=state,
         type_spec=type_spec,
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,

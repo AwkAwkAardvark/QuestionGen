@@ -18,6 +18,7 @@ SENTENCE_INSERTION_PLANNER_PROMPT = """
 - Select exactly one target sentence ID from the sentence inventory.
 - Select exactly five unique gap IDs from the gap inventory.
 - Use the ranked target-candidate notes to choose the best available strong target, not merely any schema-valid sentence.
+- Treat weak or reject-by-default target hints as a sign to choose a different target rather than forcing the item.
 - Do not select both gaps that sit immediately before and after the target sentence, because they collapse into one rendered position once the target sentence is removed.
 - Before returning, verify that the five selected gap IDs still map to five distinct rendered positions after removing the target sentence from the paragraph.
 - First finalize `selected_gap_ids`, then choose `correct_gap_id` from that exact five-item list only.
@@ -41,6 +42,7 @@ PARAGRAPH_ORDERING_PLANNER_PROMPT = """
 - Use every sentence exactly once across the intro block and the three continuation blocks.
 - Before returning, verify that flattening the intro block followed by the three continuation blocks reproduces the full sentence inventory in exactly the original order.
 - Use the boundary hints and candidate block-start notes to choose the strongest available partition, not just any contiguous four-block split.
+- Treat weak boundary hints or parallel-example block starts as a sign to rebuild the partition rather than forcing a generic four-block answer.
 - Prefer block boundaries whose adjacency is forced by the passage, not just by a generic start-middle-end outline.
 - Good partition shape: one block clearly raises a stage, question, or step that the next block directly continues or answers.
 - Bad partition shape: three case-example blocks that look parallel enough to be swapped without changing the broad summary.
@@ -73,6 +75,7 @@ UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT = """
 - Treat this first rollout as a single-span contextual paraphrase item under the broad key underlined_phrase_meaning.
 - Self-select exactly one span candidate from the provided span inventory.
 - Use the ranked span inventory and prefer the strongest claim-bearing or proposition-bearing target unless it is clearly unusable.
+- Treat weak or local centrality hints as a sign to pick a different span rather than forcing a merely valid phrase boundary.
 - Prefer abstract, figurative, evaluative, or claim-bearing phrases whose meaning must be inferred from the passage.
 - Reject literal dictionary-gloss phrases, dangling phrase fragments, surface comparison phrases, and weak targets that are not central to the passage claim.
 - Prefer propositionally or argumentatively central spans over easy surface-paraphrase fragments.

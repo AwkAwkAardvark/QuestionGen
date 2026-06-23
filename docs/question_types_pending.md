@@ -23,9 +23,12 @@ Latest gating lessons from sample review:
 
 - abbreviation-safe sentence parsing matters for sentence-based families; `U.S.` / `U.K.` style splits can otherwise create fake sentence units and malformed live items
 - a smaller residual parser/source false positive still matters: complete clauses like the row-9 `they’d ever been to` sentence should not be rejected as fragments
-- the current `sample_data/generated_questions.json` review is operational rather than evaluative: 39 rows, 31 quota-driven `planning_error`, 8 `qtype_incompatibility_error`, and 0 `source_error`
-- those 31 `planning_error` rows are upstream `insufficient_quota`, so this sample should not be read as evidence that `sentence_insertion`, `paragraph_ordering`, or `underlined_phrase_meaning` worsened
-- the next live-quality pass must use a quota-clean rerun of the same mixed batch; quota-driven `planning_error` rows are excluded from live-family recalibration and blank-rollout decisions
+- the updated `sample_data/generated_questions.json` is now quota-clean enough to act as a real live-quality baseline: 39 rows, 17 `validation_passed`, 14 `planning_error`, and 8 `qtype_incompatibility_error`
+- the main current signal is live-family quality, not operations:
+  - `sentence_insertion` still leaks schema-invalid or collapse-prone target choices
+  - `paragraph_ordering` still accepts too many weak-adjacency passages into planning
+  - `underlined_phrase_meaning` still lets some weak-centrality span picks survive too long before failing
+- the next live-quality pass should therefore harden the current live families again before `fill_in_the_blank` expands the registry
 - current live families should reject weak items more aggressively before `fill_in_the_blank` expands the registry again
 - model-tier specialization is a later optimization problem, not part of the current MVP hardening pass
 
@@ -56,7 +59,7 @@ Why `fill_in_the_blank` is still next, but not yet:
 
 - The safer first consumer has already shipped as `underlined_phrase_meaning`.
 - `fill_in_the_blank` remains product-important and is still the next best use of the new span layer, but it is riskier because target selection, recoverability, and distractor policy all become harder at once.
-- The current live registry first needs a stronger `gpt-5-mini` baseline on `sentence_insertion`, `paragraph_ordering`, and `underlined_phrase_meaning`, measured from quota-free rows rather than from quota-interrupted mixed batches.
+- The current live registry first needs a stronger `gpt-5-mini` baseline on `sentence_insertion`, `paragraph_ordering`, and `underlined_phrase_meaning`, measured by materially fewer real `planning_error` rows on the current mixed batch.
 - The remaining multi-span families should still wait until the single-span blank family is stable.
 
 When to intentionally override this order:
@@ -72,7 +75,7 @@ The following keys are broad registry candidates. The `format_key` values name t
 
 - Current rollout policy:
   - do not add this family to the live registry in the current pass
-  - resume rollout only after the current `gpt-5-mini` live baseline is acceptable again on a quota-clean mixed-batch rerun
+  - resume rollout only after the current `gpt-5-mini` live baseline is acceptable again after another live-family hardening pass
   - keep the broad key locked as `fill_in_the_blank`
   - keep the first format locked as `blank_inference_proposition_5_choices`
   - keep the first release locked as strict proposition-level 빈칸추론
@@ -234,10 +237,11 @@ The remaining workflow should be treated as:
 
 1. stabilize parser and structural validation for live sentence/span families
 2. harden current live families under the shared `gpt-5-mini` default
-3. rerun the same mixed sample with available quota and judge live-family quality only from quota-free rows
-4. use the live span layer to ship the blank family only after the live baseline recovers
-5. move to multi-span corruption families
-6. reconsider `mood_atmosphere` only at the very end, and only after explicit user confirmation
+3. harden the current live families so more weak cases fail as `qtype_incompatibility_error` or succeed cleanly instead of leaking into `planning_error`
+4. rerun the same mixed sample and confirm the live-family status mix improves
+5. use the live span layer to ship the blank family only after the live baseline recovers
+6. move to multi-span corruption families
+7. reconsider `mood_atmosphere` only at the very end, and only after explicit user confirmation
 
 This is safer than thinking in terms of question-type names alone because the next real architectural boundary is no longer basic span preparation itself, but how far the live span contract can be pushed without breaking mixed-batch quality.
 

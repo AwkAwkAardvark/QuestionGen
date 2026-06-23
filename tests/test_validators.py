@@ -112,6 +112,31 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "source_passed")
 
+    def test_sentence_insertion_source_check_rejects_passage_without_two_sided_target(self) -> None:
+        source = (
+            "Plants need water to grow. "
+            "Birds build nests in spring. "
+            "Winter nights are often cold. "
+            "Metal expands when heated. "
+            "Rivers slowly carve valleys."
+        )
+        result = source_check(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "11-05",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "sentence_insertion",
+                "prepared_source": prepare_source(source),
+                "plan": None,
+                "generated": None,
+                "status": "source_prepared",
+                "errors": [],
+            },
+            self.type_spec,
+        )
+        self.assertEqual(result["status"], "qtype_incompatibility_error")
+        self.assertTrue(any("stable sentence-insertion target" in error for error in result["errors"]))
+
     def test_prepared_source_rejects_fragmentary_sentence_units(self) -> None:
         prepared = PreparedSource(
             source_text="Even now, in the U.S. and U.K., no pizza menu seems complete without it.",
@@ -204,6 +229,32 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "qtype_incompatibility_error")
         self.assertTrue(any("weakly central" in error or "too literal" in error for error in result["errors"]))
+
+    def test_paragraph_ordering_source_check_rejects_parallel_example_passage_early(self) -> None:
+        source = (
+            "Researchers use migration stories to compare how birds react to seasonal change. "
+            "In Canada, geese travel south when the lakes freeze each winter. "
+            "In Europe, storks leave their nesting grounds as temperatures drop. "
+            "In Asia, cranes move between wetlands during the dry season. "
+            "Each route reflects a local climate pattern. "
+            "Together, these cases show how migration follows environmental pressure."
+        )
+        result = source_check(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "12-06",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "paragraph_ordering",
+                "prepared_source": prepare_source(source),
+                "plan": None,
+                "generated": None,
+                "status": "source_prepared",
+                "errors": [],
+            },
+            QUESTION_TYPES["paragraph_ordering"],
+        )
+        self.assertEqual(result["status"], "qtype_incompatibility_error")
+        self.assertTrue(any("strongly forced adjacency boundaries" in error for error in result["errors"]))
 
     def test_plan_check_rejects_collapsed_sentence_insertion_gaps_as_planning_error(self) -> None:
         plan = SentenceInsertionPlan(

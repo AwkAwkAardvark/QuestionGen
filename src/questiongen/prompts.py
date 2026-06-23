@@ -92,6 +92,11 @@ Gap units:
 
 Ranked target candidates (best available strong target first):
 {ranked_candidates}
+
+Selection reminders:
+- Choose the target only from candidates with clear two-sided support and avoid `priority=weak` or `priority=reject_by_default`.
+- Exclude the target's collapsed gap pair and never return both sides of that pair inside `selected_gap_ids`.
+- Before returning, re-check that `correct_gap_id` is one of the exact five `selected_gap_ids`.
 """.strip()
 
 
@@ -114,8 +119,10 @@ Repair rules:
 - Re-check that `selected_gap_ids` contains exactly five unique gap IDs.
 - Re-check that you did not choose both gaps immediately before and after the target sentence.
 - Re-check that the five selected gap IDs still map to five distinct rendered positions after removing the target sentence.
+- If the previous error mentions collapsed rendered positions, rebuild the five-gap set from scratch instead of editing only one ID.
 - Re-check the ranked target-candidate notes and prefer the best remaining sentence with two-sided support, not merely a sentence with a valid surface shape.
 - Re-check that the target sentence is not fragmentary, first-only, last-only, or supported by only one side of the context.
+- Re-check that `correct_gap_id` is copied from the final five-item `selected_gap_ids` list after every other field is finalized.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that uses the surrounding sentences as evidence rather than the given sentence itself, internal IDs, gap labels, schema field names, or renderer mechanics.
 - Return only structured data matching the schema.
@@ -162,6 +169,10 @@ Boundary hints:
 
 Candidate continuation-block starts (best first):
 {block_start_hints}
+
+Selection reminders:
+- Choose a partition only if every block boundary is supported by real adjacency evidence, not just by a generic topic outline.
+- Avoid block starts marked as weak or dominated by parallel-example risk when a stronger boundary exists.
 """.strip()
 
 
@@ -186,6 +197,7 @@ Repair rules:
 - Keep each block non-empty.
 - Re-check the block-start hints and choose boundaries that create the strongest forced adjacency, not just three plausible chunks.
 - Re-check that the ordering is forced by adjacency, not just by a generic intro-middle-end summary or interchangeable examples.
+- If the previous error mentions weak adjacency, rebuild the whole partition around stronger boundaries rather than only moving one sentence.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains why one block follows the previous block rather than using internal sentence IDs, block inventories, or schema mechanics.
 - Return only structured data matching the schema.
@@ -298,6 +310,10 @@ Sentence units:
 
 Span candidates:
 {span_inventory}
+
+Selection reminders:
+- Prefer candidates marked `priority=top` or `priority=strong` and avoid `centrality=weak` or `centrality=local` when a stronger candidate exists.
+- Never choose a span just because its boundaries are valid; the span must still carry a central claim, mechanism, evaluation, contrast, or limitation.
 """.strip()
 
 
@@ -323,6 +339,7 @@ Repair rules:
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
 - Re-check the ranked span inventory and prefer the strongest claim-bearing or proposition-bearing span, not a merely local phrase with valid boundaries.
 - Re-check that the selected span is not a dangling fragment, a surface comparison phrase, or a weakly central literal phrase.
+- If the previous error says the span is not central enough, choose a new higher-centrality candidate instead of reusing the same span.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains surface wording, contextual meaning, and passage evidence without schema fields or mechanics.
 - Return only structured data matching the schema.
