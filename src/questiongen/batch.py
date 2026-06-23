@@ -5,6 +5,12 @@ from pathlib import Path
 from typing import Iterable, Protocol, Sequence
 
 from .exporters import write_results_csv, write_results_markdown
+from .planners import (
+    PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR,
+    classify_planner_error,
+    is_quota_planning_error,
+    normalize_planner_error,
+)
 from .question_types import QUESTION_TYPES
 from .schemas import BatchInputRow, BatchResultRow, GeneratedQuestion, QuestionState, make_initial_state
 
@@ -21,6 +27,7 @@ def run_batch_rows(
 ) -> list[BatchResultRow]:
     _ensure_runner(runner)
     results: list[BatchResultRow] = []
+    quota_exhausted = False
 
     for row in rows:
         input_row = row if isinstance(row, BatchInputRow) else BatchInputRow.model_validate(row)
@@ -31,14 +38,31 @@ def run_batch_rows(
                 batch_row_id=input_row.BatchRowId,
                 question_type_key=question_type_key,
             )
+            if quota_exhausted:
+                results.append(
+                    _state_to_result_row(
+                        {
+                            **state,
+                            "status": "planning_error",
+                            "errors": [PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR],
+                        }
+                    )
+                )
+                continue
             try:
                 final_state = runner.invoke(state)
             except Exception as exc:
+                if classify_planner_error(exc) == "service_quota":
+                    errors = [normalize_planner_error(exc)]
+                else:
+                    errors = [f"Runner invocation failed: {exc}"]
                 final_state = {
                     **state,
                     "status": "planning_error",
-                    "errors": [f"Runner invocation failed: {exc}"],
+                    "errors": errors,
                 }
+            if final_state["status"] == "planning_error" and is_quota_planning_error(final_state["errors"]):
+                quota_exhausted = True
             results.append(_state_to_result_row(final_state))
 
     return results

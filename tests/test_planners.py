@@ -5,6 +5,7 @@ import unittest
 from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
 from questiongen.planners import (
+    PLANNER_QUOTA_EXHAUSTED_ERROR,
     plan_mood_atmosphere,
     plan_paragraph_ordering,
     plan_sentence_insertion,
@@ -42,6 +43,19 @@ class _InvalidPlanner:
             "correct_gap_id": "G9",
             "explanation": "invalid",
         }
+
+
+class _QuotaPlanner:
+    def invoke(self, prompt: str) -> dict[str, object]:
+        raise RuntimeError(
+            "Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan "
+            "and billing details.', 'type': 'insufficient_quota', 'param': None, 'code': 'insufficient_quota'}}"
+        )
+
+
+class _GenericServicePlanner:
+    def invoke(self, prompt: str) -> dict[str, object]:
+        raise RuntimeError("Error code: 500 - {'error': {'message': 'Internal server error.'}}")
 
 
 class _RetryPlanner:
@@ -269,6 +283,26 @@ class PlannerTests(unittest.TestCase):
                 for error in result["errors"]
             )
         )
+
+    def test_quota_planner_failure_is_normalized_as_service_quota(self) -> None:
+        result = plan_sentence_insertion(
+            self.state,
+            self.type_spec,
+            structured_llm_factory=lambda schema: _QuotaPlanner(),
+        )
+        self.assertEqual(result["status"], "planning_error")
+        self.assertEqual(result["errors"], [PLANNER_QUOTA_EXHAUSTED_ERROR])
+
+    def test_non_quota_service_failure_keeps_service_prefix_without_quota_normalization(self) -> None:
+        result = plan_sentence_insertion(
+            self.state,
+            self.type_spec,
+            structured_llm_factory=lambda schema: _GenericServicePlanner(),
+        )
+        self.assertEqual(result["status"], "planning_error")
+        self.assertTrue(result["errors"])
+        self.assertTrue(result["errors"][0].startswith("Planner service failed:"))
+        self.assertNotIn("insufficient_quota", result["errors"][0])
 
     def test_planner_retries_once_after_schema_failure(self) -> None:
         planner = _RetryPlanner()

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from questiongen.batch import run_batch_dataframe, run_batch_files, run_batch_rows
 from questiongen.graph import compile_question_graph
+from questiongen.planners import PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR, PLANNER_QUOTA_EXHAUSTED_ERROR
 from questiongen.schemas import (
     BatchInputRow,
     ParagraphOrderingPlan,
@@ -71,6 +72,38 @@ class _IncompatibleRunner:
         }
 
 
+class _QuotaThenUnexpectedRunner:
+    def __init__(self) -> None:
+        self.invocations = 0
+
+    def invoke(self, state):
+        self.invocations += 1
+        if self.invocations == 1:
+            return {
+                **state,
+                "status": "planning_error",
+                "errors": [PLANNER_QUOTA_EXHAUSTED_ERROR],
+            }
+        return {
+            **state,
+            "status": "validation_passed",
+            "errors": ["runner should not have been invoked again"],
+        }
+
+
+class _NonQuotaPlanningErrorRunner:
+    def __init__(self) -> None:
+        self.invocations = 0
+
+    def invoke(self, state):
+        self.invocations += 1
+        return {
+            **state,
+            "status": "planning_error",
+            "errors": [f"Planner failed: schema mismatch on call {self.invocations}"],
+        }
+
+
 class BatchTests(unittest.TestCase):
     @staticmethod
     def _load_fixture_row(question_number: str) -> BatchInputRow:
@@ -118,6 +151,40 @@ class BatchTests(unittest.TestCase):
         results = run_batch_rows(self.rows, ["sentence_insertion"], _IncompatibleRunner())
         self.assertEqual(results[0].status, "qtype_incompatibility_error")
         self.assertTrue(any("not suitable" in error for error in results[0].errors))
+
+    def test_quota_failure_triggers_batch_global_fail_fast(self) -> None:
+        runner = _QuotaThenUnexpectedRunner()
+        mixed_rows = [
+            BatchInputRow(OriginalQuestionNumber="8-01", BatchRowId=0, source_paragraph="A. B. C. D. E. F."),
+            BatchInputRow(OriginalQuestionNumber="8-02", BatchRowId=1, source_paragraph="G. H. I. J. K. L."),
+        ]
+        results = run_batch_rows(
+            mixed_rows,
+            ["sentence_insertion", "paragraph_ordering"],
+            runner,
+        )
+        self.assertEqual(len(results), 4)
+        self.assertEqual(runner.invocations, 1)
+        self.assertEqual(results[0].errors, [PLANNER_QUOTA_EXHAUSTED_ERROR])
+        for result in results[1:]:
+            self.assertEqual(result.status, "planning_error")
+            self.assertEqual(result.errors, [PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR])
+
+    def test_non_quota_planning_error_does_not_trigger_fail_fast(self) -> None:
+        runner = _NonQuotaPlanningErrorRunner()
+        mixed_rows = [
+            BatchInputRow(OriginalQuestionNumber="8-01", BatchRowId=0, source_paragraph="A. B. C. D. E. F."),
+            BatchInputRow(OriginalQuestionNumber="8-02", BatchRowId=1, source_paragraph="G. H. I. J. K. L."),
+        ]
+        results = run_batch_rows(
+            mixed_rows,
+            ["sentence_insertion", "paragraph_ordering"],
+            runner,
+        )
+        self.assertEqual(len(results), 4)
+        self.assertEqual(runner.invocations, 4)
+        self.assertTrue(all(result.status == "planning_error" for result in results))
+        self.assertTrue(all("schema mismatch" in result.errors[0] for result in results))
 
     def test_short_valid_passage_becomes_qtype_incompatibility(self) -> None:
         short_rows = [BatchInputRow(OriginalQuestionNumber="8-01", BatchRowId=0, source_paragraph="A. B. C. D.")]

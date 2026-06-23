@@ -97,6 +97,9 @@
 - [x] Harden `underlined_phrase_meaning` so literal, fragmentary, and weakly central spans fail earlier in the pipeline.
 - [x] Refine fragment detection so complete finite clauses with terminal stranded prepositions do not surface as false `source_error` rows.
 - [x] Recalibrate live planner prompt surfaces for `gpt-5-mini` so inventories expose ranked evidence rather than raw IDs alone.
+- [x] Keep upstream LLM service failures, including `insufficient_quota`, under `planning_error` without adding a new exported status.
+- [x] Stop further batch-wide LLM planning attempts after the first detected `insufficient_quota` while still exporting every row/type combination.
+- [x] Treat quota-driven `planning_error` rows as operational failures rather than as live-family quality evidence during mixed-batch audits.
 
 ### Live families already shipped
 
@@ -141,11 +144,11 @@
   - first-release target: contextual paraphrase / 함축 의미 추론, not literal translation
   - shipped v1 policy: self-select one phrase, prefer abstract or claim-bearing spans, use Korean contextual paraphrase choices, and render `[밑줄]...[/밑줄]` in exports
 - [ ] `fill_in_the_blank`
-  - reason for order: next planned single-span consumer once the current `gpt-5-mini` live baseline is acceptable again; still riskier because it also needs blank-shape policy and proposition-level distractor logic
+  - reason for order: next planned single-span consumer once the current `gpt-5-mini` live baseline is acceptable again on a quota-clean rerun; still riskier because it also needs blank-shape policy and proposition-level distractor logic
   - first supported format: `blank_inference_proposition_5_choices`
   - first-release target: 빈칸추론, not generic phrase deletion
   - main hard problems: proposition-level target selection, non-trivial recoverability, and diagnostic distractors
-  - current rollout gate: do not add it to the live registry until the existing live families stop concentrating mixed-batch failures in `planning_error`
+  - current rollout gate: do not add it to the live registry until the existing live families are re-measured on a quota-clean mixed-batch rerun and no longer concentrate non-operational failures in `planning_error`
 
 ### Single-span acceptance
 
@@ -192,6 +195,7 @@
 - [x] CSV and JSON are both produced for debugging runs.
 - [x] Failed type/passage combinations remain visible and readable in exported results.
 - [x] `qtype_incompatibility_error` is distinguishable from malformed-source failure and planner malfunction in exported results.
+- [x] `planning_error` continues to cover both planner-quality defects and upstream LLM service failures; quota exhaustion does not introduce a new `PipelineStatus`.
 
 ## Stable Interface Commitments
 
@@ -207,3 +211,4 @@
 - [x] Invalid deterministic plans surface as `planning_error` before rendering rather than leaking into `rendering_error`.
 - [x] Planner rationale and exported explanation do not need to share the same generation step.
 - [x] Future Wave 4 registry entries should keep broad `QuestionTypeKey` values and move exact first supported shapes into `format_key`.
+- [x] Batch execution may short-circuit further LLM attempts after the first `insufficient_quota` failure, but exported result counts must still equal input rows times active question types.

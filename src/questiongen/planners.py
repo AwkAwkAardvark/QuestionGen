@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Literal
 
 from .prompts import (
     build_mood_atmosphere_prompt,
@@ -17,6 +17,97 @@ from .schemas import BaseModel, QuestionState, coerce_model
 
 StructuredLLMFactory = Callable[[type[BaseModel]], Any]
 MAX_PLANNER_ATTEMPTS = 2
+PLANNER_QUOTA_EXHAUSTED_ERROR = "Planner service failed: upstream LLM quota exhausted (insufficient_quota)."
+PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR = (
+    "Planner service failed: upstream LLM quota exhausted (insufficient_quota); "
+    "skipped after earlier quota failure in this batch."
+)
+_PLANNER_SERVICE_ERROR_MARKERS = (
+    "error code:",
+    "apiconnectionerror",
+    "apitimeouterror",
+    "authenticationerror",
+    "permissiondeniederror",
+    "notfounderror",
+    "internalservererror",
+    "serviceunavailable",
+    "ratelimiterror",
+)
+
+
+def classify_planner_error(exc: BaseException) -> Literal["service_quota", "service", "planner"]:
+    error_text = _normalized_exception_text(exc).lower()
+    if "insufficient_quota" in error_text:
+        return "service_quota"
+    if any(marker in error_text for marker in _PLANNER_SERVICE_ERROR_MARKERS):
+        return "service"
+    return "planner"
+
+
+def normalize_planner_error(exc: BaseException) -> str:
+    failure_kind = classify_planner_error(exc)
+    if failure_kind == "service_quota":
+        return PLANNER_QUOTA_EXHAUSTED_ERROR
+    error_text = _normalized_exception_text(exc)
+    if failure_kind == "service":
+        return f"Planner service failed: {error_text}"
+    return f"Planner failed: {error_text}"
+
+
+def is_quota_planning_error(errors: Iterable[str]) -> bool:
+    return any("insufficient_quota" in error.lower() for error in errors)
+
+
+def _normalized_exception_text(exc: BaseException) -> str:
+    messages: list[str] = []
+    current: BaseException | None = exc
+    visited: set[int] = set()
+
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        message = " ".join(str(current).split())
+        if message:
+            messages.append(message)
+        current = current.__cause__ or current.__context__
+
+    if not messages:
+        return exc.__class__.__name__
+    return " | ".join(messages)
+
+
+def _run_planner_with_repair(
+    *,
+    type_spec: QuestionTypeSpec,
+    structured_llm_factory: StructuredLLMFactory | None,
+    base_prompt: str,
+    repair_prompt_builder: Callable[..., str],
+) -> dict[str, Any]:
+    planner = structured_llm_factory(type_spec.plan_schema)
+    current_prompt = base_prompt
+    last_exc: Exception | None = None
+
+    for attempt in range(MAX_PLANNER_ATTEMPTS):
+        try:
+            raw_plan = planner.invoke(current_prompt)
+            plan = coerce_model(raw_plan, type_spec.plan_schema)
+            return {
+                "plan": plan,
+                "status": "planned",
+                "errors": [],
+            }
+        except Exception as exc:
+            last_exc = exc
+            if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
+                break
+            current_prompt = repair_prompt_builder(
+                base_prompt=base_prompt,
+                previous_error=str(exc),
+            )
+
+    return {
+        "status": "planning_error",
+        "errors": [normalize_planner_error(last_exc or RuntimeError("Planner failed without an exception."))],
+    }
 
 
 def plan_sentence_insertion(
@@ -40,33 +131,12 @@ def plan_sentence_insertion(
         prepared_source=state["prepared_source"],
         type_spec=type_spec,
     )
-
-    planner = structured_llm_factory(type_spec.plan_schema)
-    current_prompt = prompt
-    last_exc: Exception | None = None
-
-    for attempt in range(MAX_PLANNER_ATTEMPTS):
-        try:
-            raw_plan = planner.invoke(current_prompt)
-            plan = coerce_model(raw_plan, type_spec.plan_schema)
-            return {
-                "plan": plan,
-                "status": "planned",
-                "errors": [],
-            }
-        except Exception as exc:
-            last_exc = exc
-            if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
-                break
-            current_prompt = build_sentence_insertion_repair_prompt(
-                base_prompt=prompt,
-                previous_error=str(exc),
-            )
-
-    return {
-        "status": "planning_error",
-        "errors": [f"Planner failed: {last_exc}"],
-    }
+    return _run_planner_with_repair(
+        type_spec=type_spec,
+        structured_llm_factory=structured_llm_factory,
+        base_prompt=prompt,
+        repair_prompt_builder=build_sentence_insertion_repair_prompt,
+    )
 
 
 def plan_paragraph_ordering(
@@ -90,33 +160,12 @@ def plan_paragraph_ordering(
         prepared_source=state["prepared_source"],
         type_spec=type_spec,
     )
-
-    planner = structured_llm_factory(type_spec.plan_schema)
-    current_prompt = prompt
-    last_exc: Exception | None = None
-
-    for attempt in range(MAX_PLANNER_ATTEMPTS):
-        try:
-            raw_plan = planner.invoke(current_prompt)
-            plan = coerce_model(raw_plan, type_spec.plan_schema)
-            return {
-                "plan": plan,
-                "status": "planned",
-                "errors": [],
-            }
-        except Exception as exc:
-            last_exc = exc
-            if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
-                break
-            current_prompt = build_paragraph_ordering_repair_prompt(
-                base_prompt=prompt,
-                previous_error=str(exc),
-            )
-
-    return {
-        "status": "planning_error",
-        "errors": [f"Planner failed: {last_exc}"],
-    }
+    return _run_planner_with_repair(
+        type_spec=type_spec,
+        structured_llm_factory=structured_llm_factory,
+        base_prompt=prompt,
+        repair_prompt_builder=build_paragraph_ordering_repair_prompt,
+    )
 
 
 def plan_mood_atmosphere(
@@ -140,33 +189,12 @@ def plan_mood_atmosphere(
         prepared_source=state["prepared_source"],
         type_spec=type_spec,
     )
-
-    planner = structured_llm_factory(type_spec.plan_schema)
-    current_prompt = prompt
-    last_exc: Exception | None = None
-
-    for attempt in range(MAX_PLANNER_ATTEMPTS):
-        try:
-            raw_plan = planner.invoke(current_prompt)
-            plan = coerce_model(raw_plan, type_spec.plan_schema)
-            return {
-                "plan": plan,
-                "status": "planned",
-                "errors": [],
-            }
-        except Exception as exc:
-            last_exc = exc
-            if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
-                break
-            current_prompt = build_mood_atmosphere_repair_prompt(
-                base_prompt=prompt,
-                previous_error=str(exc),
-            )
-
-    return {
-        "status": "planning_error",
-        "errors": [f"Planner failed: {last_exc}"],
-    }
+    return _run_planner_with_repair(
+        type_spec=type_spec,
+        structured_llm_factory=structured_llm_factory,
+        base_prompt=prompt,
+        repair_prompt_builder=build_mood_atmosphere_repair_prompt,
+    )
 
 
 def plan_underlined_phrase_meaning(
@@ -190,33 +218,12 @@ def plan_underlined_phrase_meaning(
         prepared_source=state["prepared_source"],
         type_spec=type_spec,
     )
-
-    planner = structured_llm_factory(type_spec.plan_schema)
-    current_prompt = prompt
-    last_exc: Exception | None = None
-
-    for attempt in range(MAX_PLANNER_ATTEMPTS):
-        try:
-            raw_plan = planner.invoke(current_prompt)
-            plan = coerce_model(raw_plan, type_spec.plan_schema)
-            return {
-                "plan": plan,
-                "status": "planned",
-                "errors": [],
-            }
-        except Exception as exc:
-            last_exc = exc
-            if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
-                break
-            current_prompt = build_underlined_phrase_meaning_repair_prompt(
-                base_prompt=prompt,
-                previous_error=str(exc),
-            )
-
-    return {
-        "status": "planning_error",
-        "errors": [f"Planner failed: {last_exc}"],
-    }
+    return _run_planner_with_repair(
+        type_spec=type_spec,
+        structured_llm_factory=structured_llm_factory,
+        base_prompt=prompt,
+        repair_prompt_builder=build_underlined_phrase_meaning_repair_prompt,
+    )
 
 
 PLANNERS: dict[str, Callable[[QuestionState, QuestionTypeSpec, StructuredLLMFactory | None], dict[str, Any]]] = {
