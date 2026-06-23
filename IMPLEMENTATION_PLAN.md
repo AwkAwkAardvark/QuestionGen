@@ -76,11 +76,12 @@
 - [x] Keep Markdown optional and secondary during debugging.
 - [x] Ensure failed rows remain diagnosable from exported artifacts without hidden filtering.
 
-## Wave 4: Multi-Type Expansion
+## Wave 4: Live Type Expansion and Hardening
+
+### Shared multi-type groundwork
 
 - [x] Add additional registered question types beyond `sentence_insertion`.
 - [x] Add broad registry keys plus `format_key`-level first supported formats for Wave 4 types.
-- [x] Use `mood_atmosphere` as the registry key for the 심경·분위기 family.
 - [x] Reuse the same planner-renderer-validator architecture per new type.
 - [x] Introduce `qtype_incompatibility_error` for passages that are valid inputs but not suitable for a given question type.
 - [x] Ensure "all registered types" automatically expands as the registry grows.
@@ -88,9 +89,86 @@
 - [x] Split source provenance from internal deterministic row identity so `OriginalQuestionNumber` can remain an opaque label and `BatchRowId` can drive internal ordering behavior.
 - [x] Keep exported explanations teacher-facing by rejecting internal `S#` / `G#` notation and schema-mechanics language.
 - [x] Separate teacher-facing explanation generation from structural planning so explanation writing can use post-render textual evidence rather than planner-internal notation.
-- [x] Ship `mood_atmosphere` v1 as the `emotion_shift` subtype while keeping `emotion_state` and `atmosphere` deferred.
-- [x] Keep the broad `mood_atmosphere` key but use a subtype-specific stem and English adjective-pair choices for the live `emotion_shift` rollout.
+
+### Live families already shipped
+
+- [x] `sentence_insertion`
+  - status: live
+  - first supported format: `sentence_insertion_5_gaps`
+  - remaining hardening focus: stronger two-sided evidence selection and less templated explanation prose
+- [x] `paragraph_ordering`
+  - status: live
+  - first supported format: `abc_ordering_after_intro`
+  - remaining hardening focus: better semantic suitability gating and more edge-by-edge ordering explanations
+- [x] `mood_atmosphere`
+  - status: live, narrow v1
+  - first supported format: `emotion_shift_pair_choice_5`
+  - chosen scope: `emotion_shift` only, with `emotion_state` and `atmosphere` deferred
+  - remaining hardening focus: incompatibility tuning, answer-pair distinctiveness, and stronger evidence-based explanations
+
+### Remaining registry work
+
 - [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
+
+## Wave 5: Span Infrastructure
+
+### Shared span-preparation layer
+
+- [ ] Introduce a real span-oriented preparation layer that can support both single-span selection and later multi-span rendering.
+- [ ] Keep the span layer notebook-agnostic and question-type agnostic in the same way the current sentence/gap preparation is package-local and reusable.
+- [ ] Define deterministic span identity, source-preserving rendering rules, and validation surfaces before live registration of additional span-based types.
+- [ ] Preserve the current status boundary:
+  - malformed preparation remains `source_error`
+  - valid-but-poor-fit passages remain `qtype_incompatibility_error`
+  - deterministic post-plan violations remain `planning_error`
+
+### Span-layer acceptance
+
+- [ ] Single-span types can render a chosen span without damaging surrounding text.
+- [ ] Multi-span types can later mark multiple targets deterministically without redefining the base preparation contract.
+- [ ] Exported explanations can refer to chosen span text and surrounding evidence rather than preparation internals.
+
+## Wave 6: Single-Span Types
+
+### Recommended implementation order
+
+- [ ] `underlined_phrase_meaning`
+  - reason for order: safest first consumer of the span layer because it needs one selected span and contextual interpretation, but not deletion-based rendering or multi-target corruption
+  - first supported format: `underlined_phrase_meaning_5_ko`
+  - first-release target: contextual paraphrase / 함축 의미 추론, not literal translation
+  - main hard problems: target-span quality, Korean distractor distinctiveness, and explanation bridging from surface wording to contextual meaning
+- [ ] `fill_in_the_blank`
+  - reason for order: still a high-priority single-span family, but riskier than `underlined_phrase_meaning` because it also needs blank-shape policy and proposition-level distractor logic
+  - first supported format: `blank_inference_proposition_5_choices`
+  - first-release target: 빈칸추론, not generic phrase deletion
+  - main hard problems: proposition-level target selection, non-trivial recoverability, and diagnostic distractors
+
+### Single-span acceptance
+
+- [ ] Each family has explicit incompatibility gates beyond raw sentence count.
+- [ ] Each family has one clearly scoped v1 format before any subtype expansion.
+- [ ] Each family can pass real mixed-batch review without collapsing into generic planner failures or low-quality choice sets.
+
+## Wave 7: Multi-Span Corruption Types
+
+### Recommended implementation order
+
+- [ ] `vocab`
+  - reason for order: harder than single-span interpretation types, but still simpler than grammar because lexical corruption can be constrained semantically before it must be constrained structurally
+  - first supported format: `contextual_vocab_error_5`
+  - first-release target: one controlled contextual corruption with four still-valid underlined items
+  - main hard problems: target selection, plausible wrong replacements, and single-answer uniqueness
+- [ ] `grammar`
+  - reason for order: last because it needs the most fragile corruption behavior and the strongest structure-sensitive validation
+  - first supported format: `grammar_error_5`
+  - first-release target: one controlled structural corruption with four still-valid grammar-bearing items
+  - main hard problems: provable wrongness, readability, grammar-versus-vocab boundary, and explanation clarity
+
+### Multi-span acceptance
+
+- [ ] The span layer can support numbered multi-target rendering without destabilizing earlier single-span types.
+- [ ] The validator can prove there is exactly one answerable corruption.
+- [ ] Real-batch outputs remain diagnostically readable in CSV/JSON when passages do not fit these families.
 
 ## Acceptance Checklist
 

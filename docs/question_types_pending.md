@@ -19,10 +19,12 @@ Because the launcher runs every registered type, new types should not be added t
 
 ## Recommended Order
 
-1. `fill_in_the_blank`
-2. `underlined_phrase_meaning`
+1. `underlined_phrase_meaning`
+2. `fill_in_the_blank`
 3. `vocab`
 4. `grammar`
+
+This order is the current engineering-first recommendation, not a claim about long-term pedagogical priority.
 
 Why `mood_atmosphere` came next:
 
@@ -33,9 +35,21 @@ Why `mood_atmosphere` came next:
 
 Why the remaining order is span-first rather than registry-first:
 
-- `fill_in_the_blank` and `underlined_phrase_meaning` need a single target span, so they are the most natural first consumers of a new span layer.
+- `underlined_phrase_meaning` and `fill_in_the_blank` need a single target span, so they are the most natural first consumers of a new span layer.
 - `vocab` and `grammar` both need multiple numbered underlined targets and one intentionally corrupted target, which makes them more demanding than the single-span families.
 - `grammar` is the riskiest because grammatical corruption must stay subtle, local, and teacher-explainable.
+
+Why `underlined_phrase_meaning` now comes before `fill_in_the_blank`:
+
+- It is the safer first consumer of a span layer.
+- It requires one selected span and contextual interpretation, but does not also require blank-shape policy or proposition-deletion rendering.
+- It should expose span-selection and explanation-bridging problems earlier, with less rendering complexity than 빈칸.
+- `fill_in_the_blank` remains product-important, but it is a riskier first span rollout because target selection, recoverability, and distractor policy are all harder at once.
+
+When to intentionally override this order:
+
+- If product priority clearly favors 빈칸 over engineering caution, `fill_in_the_blank` can be pulled forward after the span layer exists.
+- If that happens, treat it as a deliberate product-first decision rather than as the default low-risk implementation order.
 
 ## Pending Catalog
 
@@ -207,9 +221,22 @@ Current recommendation on registry shape:
 ## Boundary Notes
 
 - `sentence_insertion` and `paragraph_ordering` are already live and should not be duplicated as pending entries.
+- `mood_atmosphere` is also now live, but only as the narrow `emotion_shift` rollout documented below.
 - Span-based types should wait for a real span-preparation layer in `PreparedSource` or an equivalent planning structure.
 - Pending specs should stay outside `src/questiongen/` until the implementation path is ready.
 - Once these pending specs have been worked into the durable implementation docs and the corresponding types are live, ask for explicit confirmation before deleting the local `QuestionTypeDump`.
+
+## Planning Direction
+
+The remaining workflow should be treated as:
+
+1. harden current live families
+2. build the shared span layer
+3. ship the first safe single-span consumer
+4. ship the harder single-span blank family
+5. move to multi-span corruption families
+
+This is safer than thinking in terms of question-type names alone because the next real architectural boundary is span preparation, not the individual labels of the pending families.
 
 ## Live Type Refinement Notes
 

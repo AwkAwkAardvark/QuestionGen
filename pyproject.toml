@@ -21,6 +21,9 @@ dev = [
     "pytest>=8.0.0",
     "pandas"
     ]
+ui = [
+    "gradio>=5.0.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
