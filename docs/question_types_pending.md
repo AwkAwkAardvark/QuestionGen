@@ -22,6 +22,8 @@ Because the launcher runs every registered type, new types should not be added t
 Latest gating lessons from sample review:
 
 - abbreviation-safe sentence parsing matters for sentence-based families; `U.S.` / `U.K.` style splits can otherwise create fake sentence units and malformed live items
+- a smaller residual parser/source false positive still matters: complete clauses like the row-9 `they’d ever been to` sentence should not be rejected as fragments
+- the updated sample is now dominated by `planning_error`, so the next live-quality pass is mainly a `gpt-5-mini` planner-calibration problem rather than a validator-relaxation problem
 - current live families should reject weak items more aggressively before `fill_in_the_blank` expands the registry again
 - model-tier specialization is a later optimization problem, not part of the current MVP hardening pass
 
@@ -48,10 +50,11 @@ Why the remaining order is still span-first rather than registry-first:
 - `vocab` and `grammar` both need multiple numbered underlined targets and one intentionally corrupted target, which makes them more demanding than the single-span families.
 - `grammar` is the riskiest because grammatical corruption must stay subtle, local, and teacher-explainable.
 
-Why `fill_in_the_blank` is next:
+Why `fill_in_the_blank` is still next, but not yet:
 
 - The safer first consumer has already shipped as `underlined_phrase_meaning`.
 - `fill_in_the_blank` remains product-important and is still the next best use of the new span layer, but it is riskier because target selection, recoverability, and distractor policy all become harder at once.
+- The current live registry first needs a stronger `gpt-5-mini` baseline on `sentence_insertion`, `paragraph_ordering`, and `underlined_phrase_meaning`.
 - The remaining multi-span families should still wait until the single-span blank family is stable.
 
 When to intentionally override this order:
@@ -65,6 +68,12 @@ The following keys are broad registry candidates. The `format_key` values name t
 
 ### `fill_in_the_blank`
 
+- Current rollout policy:
+  - do not add this family to the live registry in the current pass
+  - resume rollout only after the current `gpt-5-mini` live baseline is acceptable again on mixed-batch review
+  - keep the broad key locked as `fill_in_the_blank`
+  - keep the first format locked as `blank_inference_proposition_5_choices`
+  - keep the first release locked as strict proposition-level 빈칸추론
 - First format key: `blank_inference_proposition_5_choices`
 - Korean stem direction:
   - likely `다음 빈칸에 들어갈 말로 가장 적절한 것은?`
@@ -83,13 +92,12 @@ The following keys are broad registry candidates. The `format_key` values name t
   - blank target too trivial, too copied, or too long
 - Major risks:
   - the shared span-preparation layer now exists, but blank-specific planning and rendering policy are still missing
+  - blank rollout would currently stack new blank-specific risk on top of an already shaky `gpt-5-mini` live-family planning baseline
   - distractor quality will likely dominate item quality
   - blank placement may drift away from real 수능/내신 expectations if under-specified
   - the planner may produce vocabulary-style deletion instead of true inference
 - User confirmation still needed:
-  - whether the broad key should stay `fill_in_the_blank` or use the shorter historical `blank`
-  - whether the first live format should stay strictly with blank inference
-  - what the first removable unit should be
+  - when the live `gpt-5-mini` baseline is strong enough to resume blank rollout work
 
 Subtype direction that looks useful for this project:
 
@@ -223,8 +231,8 @@ Current recommendation on registry shape:
 The remaining workflow should be treated as:
 
 1. stabilize parser and structural validation for live sentence/span families
-2. harden current live families
-3. use the live span layer to ship the blank family
+2. harden current live families under the shared `gpt-5-mini` default
+3. use the live span layer to ship the blank family only after the live baseline recovers
 4. move to multi-span corruption families
 5. reconsider `mood_atmosphere` only at the very end, and only after explicit user confirmation
 

@@ -85,6 +85,33 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "source_passed")
 
+    def test_source_check_accepts_complete_terminal_to_sentence_in_row9_passage(self) -> None:
+        source = (
+            "Looking forward to cheering for their high school football team, over a thousand people appeared at the field. "
+            "There was a long line at the ticket booth that stretched down the street. "
+            "The delicious smell of popcorn and hot dogs was everywhere, and the refreshment stand ran out of food before halftime. "
+            "Everyone was cheering: the crowd waving flags, the cheerleaders, the band that played loud music, the players, the officials, the parents running the hot dog stand, the policeman, even me! "
+            "The cheerleaders were whistling and stomping their feet on the aluminum bleachers, making a loud noise. "
+            "The cheerleaders looked up in delighted surprise. "
+            "For the first time, they were hearing something come back from the backflips and even a three-tier pyramid. "
+            "The old-timers said it was the loudest, most exciting game they’d ever been to."
+        )
+        result = source_check(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "9",
+                "BatchRowId": 8,
+                "QuestionTypeKey": "sentence_insertion",
+                "prepared_source": prepare_source(source),
+                "plan": None,
+                "generated": None,
+                "status": "source_prepared",
+                "errors": [],
+            },
+            self.type_spec,
+        )
+        self.assertEqual(result["status"], "source_passed")
+
     def test_prepared_source_rejects_fragmentary_sentence_units(self) -> None:
         prepared = PreparedSource(
             source_text="Even now, in the U.S. and U.K., no pizza menu seems complete without it.",
@@ -450,6 +477,47 @@ class ValidatorTests(unittest.TestCase):
             QUESTION_TYPES["sentence_insertion"],
         )
         self.assertTrue(any("one-sided linkage" in error or "connector cues" in error for error in errors))
+
+    def test_sentence_insertion_plan_accepts_two_sided_target(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        prepared = prepare_source(source)
+        plan = SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G4", "G6"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["sentence_insertion"]),
+            [],
+        )
+
+    def test_paragraph_ordering_plan_accepts_forced_adjacency_blocks(self) -> None:
+        source = (
+            "Many museums are rethinking how visitors experience their collections. "
+            "First, they replace long wall labels with short questions that invite curiosity. "
+            "This curiosity encourages people to look closely before reading an explanation. "
+            "Next, curators turn that curiosity into quiet audio guides for visitors who want more detail. "
+            "Those guides let each person choose how much background information to hear. "
+            "Finally, the feedback gathered through those guides helps museums redesign later exhibits."
+        )
+        prepared = prepare_source(source)
+        plan = ParagraphOrderingPlan(
+            intro_unit_ids=["S0"],
+            continuation_blocks=[["S1", "S2"], ["S3", "S4"], ["S5"]],
+            explanation="도입 뒤에 전개 단계가 순차적으로 이어집니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["paragraph_ordering"]),
+            [],
+        )
 
     def test_underlined_phrase_meaning_plan_validator_requires_known_span_and_exact_text(self) -> None:
         source = (

@@ -95,6 +95,8 @@
 - [x] Harden `sentence_insertion` so weak one-sided targets fail deterministically and explanations rely on left/right context rather than on the given sentence itself.
 - [x] Harden `paragraph_ordering` so weakly forced or parallel-example block splits fail deterministically and explanations justify adjacency edge by edge.
 - [x] Harden `underlined_phrase_meaning` so literal, fragmentary, and weakly central spans fail earlier in the pipeline.
+- [x] Refine fragment detection so complete finite clauses with terminal stranded prepositions do not surface as false `source_error` rows.
+- [x] Recalibrate live planner prompt surfaces for `gpt-5-mini` so inventories expose ranked evidence rather than raw IDs alone.
 
 ### Live families already shipped
 
@@ -139,10 +141,11 @@
   - first-release target: contextual paraphrase / 함축 의미 추론, not literal translation
   - shipped v1 policy: self-select one phrase, prefer abstract or claim-bearing spans, use Korean contextual paraphrase choices, and render `[밑줄]...[/밑줄]` in exports
 - [ ] `fill_in_the_blank`
-  - reason for order: next planned single-span consumer now that the parser/validator stabilization pass and live-family hardening pass are complete; still riskier because it also needs blank-shape policy and proposition-level distractor logic
+  - reason for order: next planned single-span consumer once the current `gpt-5-mini` live baseline is acceptable again; still riskier because it also needs blank-shape policy and proposition-level distractor logic
   - first supported format: `blank_inference_proposition_5_choices`
   - first-release target: 빈칸추론, not generic phrase deletion
   - main hard problems: proposition-level target selection, non-trivial recoverability, and diagnostic distractors
+  - current rollout gate: do not add it to the live registry until the existing live families stop concentrating mixed-batch failures in `planning_error`
 
 ### Single-span acceptance
 

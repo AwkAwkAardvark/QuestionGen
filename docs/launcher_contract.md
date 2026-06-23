@@ -118,6 +118,7 @@ Notes:
 - This preserves the current backend API while delivering the intended launcher behavior.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
 - The live registry currently includes `sentence_insertion`, `paragraph_ordering`, and `underlined_phrase_meaning`; the current first supported span format is `underlined_phrase_meaning_5_ko`.
+- `fill_in_the_blank` remains the next planned family, but it must not appear in launcher-derived defaults until the current `gpt-5-mini` live baseline is acceptable again.
 - The `mood_atmosphere` implementation remains in the codebase as deferred future work, but it is intentionally excluded from `QUESTION_TYPES` and from launcher-derived default selections.
 
 ## Output Artifacts

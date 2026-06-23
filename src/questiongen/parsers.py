@@ -141,6 +141,19 @@ _SENTENCE_FRAGMENT_STARTERS = {
     "while",
     "whereas",
 }
+_SENTENCE_TERMINAL_FRAGMENT_WORDS = {
+    "and",
+    "as",
+    "because",
+    "if",
+    "or",
+    "than",
+    "that",
+    "though",
+    "when",
+    "while",
+    "whereas",
+}
 _HANGING_EDGE_WORDS = {
     "and",
     "as",
@@ -158,6 +171,18 @@ _HANGING_EDGE_WORDS = {
     "to",
     "when",
     "while",
+    "with",
+    "without",
+}
+_PERMISSIVE_TERMINAL_PREPOSITIONS = {
+    "at",
+    "by",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "to",
     "with",
     "without",
 }
@@ -185,6 +210,36 @@ _FINITE_VERB_CUES = {
     "were",
     "will",
     "would",
+}
+_IRREGULAR_VERB_CUES = {
+    "been",
+    "brought",
+    "came",
+    "come",
+    "felt",
+    "found",
+    "gone",
+    "heard",
+    "kept",
+    "knew",
+    "left",
+    "made",
+    "met",
+    "put",
+    "read",
+    "said",
+    "saw",
+    "set",
+    "spent",
+    "spoke",
+    "stood",
+    "stuck",
+    "taught",
+    "thought",
+    "told",
+    "took",
+    "went",
+    "wrote",
 }
 _MAX_SPAN_CANDIDATES = 24
 
@@ -236,7 +291,7 @@ def looks_fragmentary_sentence(text: str, *, previous_text: str | None = None) -
     if _ends_with_abbreviation(normalized) and not _has_finite_verb(tokens):
         return True
 
-    if tokens[-1] in _HANGING_EDGE_WORDS:
+    if _looks_terminal_fragment(tokens):
         return True
 
     return False
@@ -550,6 +605,37 @@ def _has_finite_verb(tokens: list[str]) -> bool:
             return True
         if len(token) >= 4 and token.endswith("ed"):
             return True
+    return False
+
+
+def _looks_terminal_fragment(tokens: list[str]) -> bool:
+    last_token = tokens[-1]
+    if last_token in _SENTENCE_TERMINAL_FRAGMENT_WORDS:
+        return True
+    if last_token not in _HANGING_EDGE_WORDS:
+        return False
+    if last_token in _PERMISSIVE_TERMINAL_PREPOSITIONS:
+        return not _looks_complete_terminal_preposition_clause(tokens)
+    return True
+
+
+def _looks_complete_terminal_preposition_clause(tokens: list[str]) -> bool:
+    if len(tokens) < 5 or not _has_finite_verb(tokens):
+        return False
+
+    content = [token for token in tokens if token not in _FUNCTION_WORDS]
+    if len(content) < 2:
+        return False
+
+    tail_token = tokens[-2]
+    if tail_token in _FINITE_VERB_CUES or tail_token in _IRREGULAR_VERB_CUES:
+        return True
+    if tail_token.endswith("ed") or tail_token.endswith("en"):
+        return True
+    if len(tokens) >= 6 and tokens[-3] in _FINITE_VERB_CUES and tail_token in {"already", "ever", "just", "never", "still"}:
+        return True
+    if len(tokens) >= 6 and tokens[-3] == "to":
+        return True
     return False
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from questiongen.parsers import normalize_text, prepare_source, split_sentences
+from questiongen.parsers import looks_fragmentary_sentence, normalize_text, prepare_source, split_sentences
 
 
 class ParserTests(unittest.TestCase):
@@ -38,6 +38,14 @@ class ParserTests(unittest.TestCase):
                 "In Italy, however, most people find pineapple on pizza distasteful.",
             ],
         )
+
+    def test_fragment_detector_accepts_complete_sentence_with_terminal_to(self) -> None:
+        sentence = "The old-timers said it was the loudest, most exciting game they’d ever been to."
+        self.assertFalse(looks_fragmentary_sentence(sentence))
+
+    def test_fragment_detector_still_rejects_real_terminal_fragment(self) -> None:
+        sentence = "The book I was looking for."
+        self.assertTrue(looks_fragmentary_sentence(sentence))
 
     def test_span_preparation_is_deterministic_and_source_preserving(self) -> None:
         source = (

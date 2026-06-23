@@ -34,7 +34,12 @@ PENDING_CATALOG_CONTEXT = {
     "drive_backed_runtime": True,
     "run_all_registered_types": True,
     "incompatibility_status": "qtype_incompatibility_error",
-    "live_question_type_keys": ("sentence_insertion", "paragraph_ordering", "mood_atmosphere"),
+    "live_question_type_keys": ("sentence_insertion", "paragraph_ordering", "underlined_phrase_meaning"),
+    "next_registry_gate": (
+        "Do not add fill_in_the_blank to the live registry until the current "
+        "gpt-5-mini baseline for sentence_insertion, paragraph_ordering, and "
+        "underlined_phrase_meaning is stable again on mixed-batch review."
+    ),
     "live_type_refinement_note": (
         "The same PendingQuestionTypeSpec shape may also be used to capture "
         "non-runtime refinement guidance for already live types. Those notes "
@@ -74,17 +79,19 @@ PENDING_QUESTION_TYPES: tuple[PendingQuestionTypeSpec, ...] = (
             "Passages where the answer would be copied too directly from nearby text instead of requiring paraphrase or inference.",
         ),
         implementation_risks=(
-            "Needs a real span-preparation layer before planning is trustworthy.",
+            "The shared span-preparation layer now exists, but blank-specific planner calibration for gpt-5-mini is still pending.",
             "Distractor quality will dominate item usefulness and may require explicit polarity, scope, and logic-aware validation.",
             "Blank placement must match 수능/내신 expectations rather than arbitrary deletion.",
             "The planner may drift toward easy lexical deletion unless the prompt anchors it to proposition reconstruction.",
         ),
         requires_user_confirmation=(
-            "Confirm the preferred broad key: fill_in_the_blank versus the shorter historical blank label.",
-            "Confirm whether the first live format should be only blank_inference or whether lower-level blank subtypes should be considered later under the same broad key.",
-            "Confirm the first removable unit target: phrase, clause, sentence-length span, or other proposition unit.",
+            "Confirm when the current gpt-5-mini live baseline is strong enough to resume blank rollout work.",
         ),
         notes=(
+            "Current locked next-pass direction: keep the broad key as `fill_in_the_blank`.",
+            "Current locked first format: `blank_inference_proposition_5_choices`.",
+            "Current locked first release scope: strict proposition-level 빈칸추론 only.",
+            "Do not add this family to QUESTION_TYPES during the current stabilization pass.",
             "Do not force this into the current sentence/gap pipeline.",
             "Depends on span IDs and span-preserving rendering.",
             "Useful external guidance: treat the first blank type as missing-proposition reconstruction, not generic word deletion.",

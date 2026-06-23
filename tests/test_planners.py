@@ -10,6 +10,11 @@ from questiongen.planners import (
     plan_sentence_insertion,
     plan_underlined_phrase_meaning,
 )
+from questiongen.prompts import (
+    build_paragraph_ordering_prompt,
+    build_sentence_insertion_prompt,
+    build_underlined_phrase_meaning_prompt,
+)
 from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
 from questiongen.schemas import (
     MoodAtmospherePlan,
@@ -276,6 +281,17 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(planner.invocations, 2)
         self.assertIn("correct_gap_id", planner.last_prompt)
 
+    def test_sentence_insertion_prompt_exposes_ranked_target_hints(self) -> None:
+        prompt = build_sentence_insertion_prompt(
+            source_paragraph=self.contextual_insertion_source,
+            prepared_source=prepare_source(self.contextual_insertion_source),
+            type_spec=QUESTION_TYPES["sentence_insertion"],
+        )
+        self.assertIn("Ranked target candidates", prompt)
+        self.assertIn("priority=strong", prompt)
+        self.assertIn("connector_only=", prompt)
+        self.assertIn("between S1", prompt)
+
     def test_paragraph_ordering_planner_output_validates(self) -> None:
         result = plan_paragraph_ordering(
             self.state,
@@ -284,6 +300,17 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planned")
         self.assertIsInstance(result["plan"], ParagraphOrderingPlan)
+
+    def test_paragraph_ordering_prompt_exposes_boundary_and_block_start_hints(self) -> None:
+        prompt = build_paragraph_ordering_prompt(
+            source_paragraph=self.ordering_source,
+            prepared_source=prepare_source(self.ordering_source),
+            type_spec=QUESTION_TYPES["paragraph_ordering"],
+        )
+        self.assertIn("Boundary hints", prompt)
+        self.assertIn("Candidate continuation-block starts", prompt)
+        self.assertIn("right_stage_cue=next", prompt.lower())
+        self.assertIn("block_start_priority=high", prompt)
 
     def test_graph_reclassifies_collapsed_gap_plan_as_planning_error(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _CollapsedGapPlanner())
@@ -433,6 +460,17 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "planned")
         self.assertEqual(planner.invocations, 2)
         self.assertIn("selected_span_id", planner.last_prompt)
+
+    def test_underlined_phrase_meaning_prompt_exposes_ranked_span_priorities(self) -> None:
+        prompt = build_underlined_phrase_meaning_prompt(
+            source_paragraph=self.underlined_source,
+            prepared_source=self.underlined_prepared,
+            type_spec=QUESTION_TYPES["underlined_phrase_meaning"],
+        )
+        self.assertIn("rank 1", prompt)
+        self.assertIn("priority=top", prompt)
+        self.assertIn("centrality=claim_bearing", prompt)
+        self.assertIn("context=", prompt)
 
     def test_graph_rewrites_underlined_phrase_meaning_explanation(self) -> None:
         runner = compile_question_graph(
