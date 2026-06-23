@@ -273,17 +273,19 @@ def _build_vocab_context(
     plan: VocabPlan,
 ) -> dict[str, str]:
     inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
+    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
     ordered_spans = sorted(
         [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
         key=lambda span: (span.char_start, span.char_end),
     )
     ordered_ids = [span.id for span in ordered_spans]
+    corrupted_span = inventory[plan.corrupted_span_id]
     correct_marker = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
-    original_word = inventory[plan.corrupted_span_id].text
+    original_word = corrupted_span.text
     return {
         "original_word": original_word,
         "corrupted_word": plan.corrupted_word,
-        "correction_basis_ko": plan.correction_basis_ko,
+        "source_sentence": sentence_map.get(corrupted_span.sentence_unit_id or "", ""),
         "supporting_evidence": plan.supporting_evidence,
         "correct_marker": correct_marker,
     }
@@ -294,17 +296,20 @@ def _build_grammar_context(
     plan: GrammarPlan,
 ) -> dict[str, str]:
     inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
+    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
     ordered_spans = sorted(
         [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
         key=lambda span: (span.char_start, span.char_end),
     )
     ordered_ids = [span.id for span in ordered_spans]
+    corrupted_span = inventory[plan.corrupted_span_id]
     correct_marker = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
-    original_word = inventory[plan.corrupted_span_id].text
+    original_word = corrupted_span.text
     return {
         "original_word": original_word,
         "corrupted_word": plan.corrupted_word,
-        "correction_basis_ko": plan.correction_basis_ko,
+        "grammar_cue_ko": _grammar_structure_cue(corrupted_span.text, corrupted_span.heuristic_tags),
+        "source_sentence": sentence_map.get(corrupted_span.sentence_unit_id or "", ""),
         "supporting_evidence": plan.supporting_evidence,
         "correct_marker": correct_marker,
     }
@@ -407,17 +412,21 @@ def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
 
 def _write_vocab_explanation(context: dict[str, str]) -> str:
     return (
-        f"{context['correct_marker']}의 '{context['corrupted_word']}'는 문법상 읽히더라도 문맥과 어울리지 않습니다. "
-        f"이 부분은 원래 '{context['original_word']}'처럼 읽혀야 하며, {context['correction_basis_ko']}. "
-        f"특히 '{context['supporting_evidence']}'라는 내용이 그 판단을 뒷받침하므로 정답은 {context['correct_marker']}입니다."
+        f"{context['correct_marker']}의 '{context['corrupted_word']}'는 "
+        f"'{_sentence_snippet(context['source_sentence'])}'라는 문맥과 맞지 않습니다. "
+        f"이 자리는 원래 '{context['original_word']}'가 가리키는 의미로 읽혀야 하고, "
+        f"특히 '{context['supporting_evidence']}'라는 내용이 그 방향을 뒷받침하므로 "
+        f"정답은 {context['correct_marker']}입니다."
     )
 
 
 def _write_grammar_explanation(context: dict[str, str]) -> str:
     return (
-        f"{context['correct_marker']}의 '{context['corrupted_word']}'는 형태상 그럴듯해 보여도 이 자리의 문법 구조에는 맞지 않습니다. "
-        f"원래는 '{context['original_word']}'가 와야 하며, {context['correction_basis_ko']}. "
-        f"특히 '{context['supporting_evidence']}'라는 단서가 그 구조를 보여 주므로 정답은 {context['correct_marker']}입니다."
+        f"{context['correct_marker']}의 '{context['corrupted_word']}'는 "
+        f"'{_sentence_snippet(context['source_sentence'])}'라는 구조와 맞지 않습니다. "
+        f"이 자리는 원래 '{context['original_word']}'가 와야 하며, {context['grammar_cue_ko']}. "
+        f"특히 '{context['supporting_evidence']}'라는 단서가 그 구조를 보여 주므로 "
+        f"정답은 {context['correct_marker']}입니다."
     )
 
 
@@ -426,3 +435,22 @@ def _sentence_snippet(text: str, *, max_words: int = 12) -> str:
     if len(words) <= max_words:
         return text
     return " ".join(words[:max_words]) + "..."
+
+
+def _grammar_structure_cue(original_word: str, heuristic_tags: list[str]) -> str:
+    lowered = original_word.strip().lower()
+    tag_set = set(heuristic_tags)
+
+    if "to_infinitive_context" in tag_set:
+        return "to 뒤에는 동사원형이 와야 합니다"
+    if "modal_context" in tag_set:
+        return "조동사 뒤에는 동사원형이 와야 합니다"
+    if "be_context" in tag_set and lowered.endswith("ing"):
+        return "be동사 뒤에서는 진행형을 이루는 현재분사가 와야 합니다"
+    if lowered in {"been", "gone", "known", "shown", "taken", "written"} or lowered.endswith("en"):
+        return "주변 구조상 이 자리에는 과거분사 형태가 유지되어야 합니다"
+    if lowered.endswith("ed"):
+        return "주변 구조상 이 자리에는 과거형 또는 과거분사형이 유지되어야 합니다"
+    if lowered.endswith("s"):
+        return "주어와 시제에 맞는 동사 형태가 유지되어야 합니다"
+    return "주변 문장 구조가 요구하는 동사 형태가 유지되어야 합니다"

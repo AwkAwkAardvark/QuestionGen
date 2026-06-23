@@ -83,7 +83,7 @@ UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT = """
 - Use the ranked span inventory and prefer the strongest claim-bearing or proposition-bearing target unless it is clearly unusable.
 - Treat weak or local centrality hints as a sign to pick a different span rather than forcing a merely valid phrase boundary.
 - Prefer abstract, figurative, evaluative, or claim-bearing phrases whose meaning must be inferred from the passage.
-- Reject literal dictionary-gloss phrases, dangling phrase fragments, surface comparison phrases, and weak targets that are not central to the passage claim.
+- Reject literal dictionary-gloss phrases, dangling phrase fragments, punctuation-crossing chunks that are not complete clause-level units, surface comparison phrases, and weak targets that are not central to the passage claim.
 - Prefer propositionally or argumentatively central spans over easy surface-paraphrase fragments.
 - Good target shape: a phrase that carries the passage's conclusion, mechanism, evaluation, contrast, or limitation.
 - Bad target shape: a merely local wording fragment that is easy to gloss without understanding the passage claim.
@@ -103,8 +103,10 @@ FILL_IN_THE_BLANK_PLANNER_PROMPT = """
 - Treat this first rollout as the blank_inference_proposition_5_choices format under the broad key fill_in_the_blank.
 - Self-select exactly one span candidate from the provided phrase-span inventory.
 - Prefer a proposition-like, clause-level, claim-bearing, reason-bearing, effect-bearing, contrast-bearing, or limitation-bearing span.
-- If no strongly proposition-like span exists, still prefer the most readable clause-sized contextual span rather than failing over to a single-word deletion.
+- If no strongly proposition-like span exists, still prefer the most readable clause-sized contextual span rather than falling back to a local phrase fragment.
 - Do not generate a trivial lexical blank or a pure grammar blank.
+- Reject punctuation-crossing chunks unless the selected span remains a complete clause-level unit.
+- Reject blanks that mainly restore a short surface phrase, connective fragment, or mechanically copied wording.
 - Copy the selected span ID into `selected_span_id` and the exact source text into `selected_span_text`.
 - Do not alter the source passage text or generate final student-facing paragraph text.
 - Create exactly five unique English completion choices in `completion_choices`.
@@ -119,7 +121,7 @@ FILL_IN_THE_BLANK_PLANNER_PROMPT = """
 VOCAB_PLANNER_PROMPT = """
 - Treat this first rollout as the contextual_vocab_error_5 format under the broad key vocab.
 - Select exactly five unique single-word target IDs from the provided vocab-target inventory.
-- Copy those exact source words in order into `target_span_texts`.
+- Treat `target_span_ids` as the authoritative source-owned contract; `target_span_texts` should simply mirror those selected IDs.
 - Choose exactly one of those five targets as `corrupted_span_id`.
 - Replace only that one target with one single English word in `corrupted_word`.
 - The corrupted word should remain grammatically readable in the sentence but be contextually wrong for the passage.
@@ -136,10 +138,10 @@ GRAMMAR_PLANNER_PROMPT = """
 - Treat this first rollout as the grammar_error_5 format under the broad key grammar.
 - Narrow the task to one controlled verb-form corruption family only.
 - Select exactly five unique single-word target IDs from the provided grammar-target inventory.
-- Copy those exact source words in order into `target_span_texts`.
+- Treat `target_span_ids` as the authoritative source-owned contract; `target_span_texts` should simply mirror those selected IDs.
 - Choose exactly one of those five targets as `corrupted_span_id`.
 - Replace only that one target with one single English word in `corrupted_word`.
-- The corrupted word must be a plausible-looking but grammatically wrong verb-form variant of the original target.
+- The corrupted word must be a plausible-looking but grammatically wrong verb-form variant chosen from the deterministic allowed family for the original target.
 - Keep the other four target words unchanged from the source.
 - Prefer broad coverage over polish: if the error is local, readable, and clearly verb-form based, that is acceptable for this MVP.
 - Set `correction_basis_ko` to a short Korean note explaining what structural cue makes the original verb form correct and the corrupted form wrong.

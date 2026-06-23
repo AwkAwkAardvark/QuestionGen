@@ -19,7 +19,8 @@ from .prompts import (
     build_vocab_repair_prompt,
 )
 from .question_types import QuestionTypeSpec
-from .schemas import BaseModel, QuestionState, coerce_model
+from .schemas import BaseModel, GrammarPlan, PreparedSource, QuestionState, VocabPlan, coerce_model
+from .targeting import grammar_target_inventory, vocab_target_inventory
 from .validators import validate_plan_against_prepared_source
 
 StructuredLLMFactory = Callable[[type[BaseModel]], Any]
@@ -100,6 +101,7 @@ def _run_planner_with_repair(
             plan = coerce_model(raw_plan, type_spec.plan_schema)
             prepared_source = state["prepared_source"]
             if prepared_source is not None:
+                plan = _canonicalize_source_owned_plan(plan, prepared_source)
                 deterministic_errors = validate_plan_against_prepared_source(prepared_source, plan, type_spec)
                 if deterministic_errors:
                     last_exc = RuntimeError("; ".join(deterministic_errors))
@@ -128,6 +130,30 @@ def _run_planner_with_repair(
         "status": "planning_error",
         "errors": [normalize_planner_error(last_exc or RuntimeError("Planner failed without an exception."))],
     }
+
+
+def _canonicalize_source_owned_plan(plan: BaseModel, prepared_source: PreparedSource) -> BaseModel:
+    if isinstance(plan, VocabPlan):
+        inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
+        if len(plan.target_span_ids) == 5 and all(span_id in inventory for span_id in plan.target_span_ids):
+            return plan.model_copy(
+                update={
+                    "target_span_texts": [inventory[span_id].text for span_id in plan.target_span_ids],
+                }
+            )
+        return plan
+
+    if isinstance(plan, GrammarPlan):
+        inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
+        if len(plan.target_span_ids) == 5 and all(span_id in inventory for span_id in plan.target_span_ids):
+            return plan.model_copy(
+                update={
+                    "target_span_texts": [inventory[span_id].text for span_id in plan.target_span_ids],
+                }
+            )
+        return plan
+
+    return plan
 
 
 def plan_sentence_insertion(

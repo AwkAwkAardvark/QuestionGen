@@ -4,7 +4,7 @@ from collections.abc import Mapping
 import re
 from typing import Any
 
-from .parsers import content_tokens, looks_fragmentary_sentence, looks_hanging_phrase, normalize_text
+from .parsers import content_tokens, looks_fragmentary_sentence, normalize_text
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
 from .renderers import (
     DISPLAY_PERMUTATIONS,
@@ -29,6 +29,8 @@ from .schemas import (
 from .targeting import (
     BLANK_MARKER,
     allowed_verb_form_variants,
+    fill_blank_span_quality_error,
+    fill_blank_target_inventory,
     grammar_target_inventory,
     is_auxiliary_like,
     is_single_english_word,
@@ -36,6 +38,8 @@ from .targeting import (
     normalize_english_word,
     phrase_span_inventory,
     render_numbered_span_edits,
+    underlined_phrase_inventory,
+    underlined_span_quality_error,
     vocab_target_inventory,
 )
 
@@ -552,7 +556,7 @@ def _validate_underlined_phrase_meaning_plan(prepared_source: PreparedSource, pl
         return ["UnderlinedPhraseMeaningPlan is missing for deterministic plan checks."]
 
     errors: list[str] = []
-    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
+    span_map = {span.id: span for span in underlined_phrase_inventory(prepared_source)}
     selected_span = span_map.get(plan.selected_span_id)
     if selected_span is None:
         return [f"Unknown selected span ID: {plan.selected_span_id}"]
@@ -577,7 +581,7 @@ def _validate_underlined_phrase_meaning_plan(prepared_source: PreparedSource, pl
         errors.append("UnderlinedPhraseMeaningPlan supporting_evidence must be copied from the source passage.")
 
     if _should_apply_live_quality_gates(prepared_source.sentence_units):
-        span_quality_error = _underlined_span_quality_error(selected_span.text, selected_span.heuristic_tags, selected_span.priority_score)
+        span_quality_error = underlined_span_quality_error(selected_span)
         if span_quality_error is not None:
             errors.append(span_quality_error)
 
@@ -589,11 +593,7 @@ def _validate_underlined_phrase_meaning_compatibility(prepared_source: PreparedS
     if not span_units:
         return ["Passage has no suitable contextual phrase candidate for underlined_phrase_meaning."]
 
-    viable_spans = [
-        span
-        for span in span_units
-        if _underlined_span_quality_error(span.text, span.heuristic_tags, span.priority_score) is None
-    ]
+    viable_spans = underlined_phrase_inventory(prepared_source)
     if not viable_spans:
         return ["Available phrase candidates are too literal, fragmentary, or weakly central for underlined_phrase_meaning."]
 
@@ -604,7 +604,7 @@ def _validate_underlined_phrase_meaning_compatibility(prepared_source: PreparedS
     claim_bearing_spans = [
         span
         for span in viable_spans
-        if {"abstract_term", "claim_bearing", "contextual_cue", "phrase_frame"} & set(span.heuristic_tags)
+        if {"abstract_term", "claim_bearing", "phrase_frame"} & set(span.heuristic_tags)
     ]
     if not claim_bearing_spans:
         return ["Available phrase candidates are not central enough to the passage claim for underlined_phrase_meaning."]
@@ -621,7 +621,7 @@ def _validate_fill_in_the_blank_plan(prepared_source: PreparedSource, plan: obje
         return ["FillInTheBlankPlan is missing for deterministic plan checks."]
 
     errors: list[str] = []
-    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
+    span_map = {span.id: span for span in fill_blank_target_inventory(prepared_source)}
     selected_span = span_map.get(plan.selected_span_id)
     if selected_span is None:
         return [f"Unknown selected span ID: {plan.selected_span_id}"]
@@ -639,20 +639,17 @@ def _validate_fill_in_the_blank_plan(prepared_source: PreparedSource, plan: obje
     if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
         errors.append("FillInTheBlankPlan supporting_evidence must be copied from the source passage.")
 
-    if _fill_blank_span_quality_error(selected_span.text, selected_span.heuristic_tags) is not None:
-        errors.append(_fill_blank_span_quality_error(selected_span.text, selected_span.heuristic_tags) or "")
+    span_quality_error = fill_blank_span_quality_error(selected_span)
+    if span_quality_error is not None:
+        errors.append(span_quality_error)
 
     return errors
 
 
 def _validate_fill_in_the_blank_compatibility(prepared_source: PreparedSource) -> list[str]:
-    viable_spans = [
-        span
-        for span in phrase_span_inventory(prepared_source)
-        if _fill_blank_span_quality_error(span.text, span.heuristic_tags) is None
-    ]
+    viable_spans = fill_blank_target_inventory(prepared_source)
     if not viable_spans:
-        return ["Passage has no readable multi-word contextual span for fill_in_the_blank."]
+        return ["Passage has no proposition-like contextual span for fill_in_the_blank."]
     return []
 
 
@@ -1142,7 +1139,7 @@ def validate_underlined_phrase_meaning_output(
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
     errors: list[str] = []
-    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
+    span_map = {span.id: span for span in underlined_phrase_inventory(prepared_source)}
     selected_span = span_map.get(plan.selected_span_id)
     normalized_choices = [_normalize_korean_choice(choice) for choice in plan.paraphrase_choices_ko]
 
@@ -1212,7 +1209,7 @@ def validate_fill_in_the_blank_output(
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
     errors: list[str] = []
-    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
+    span_map = {span.id: span for span in fill_blank_target_inventory(prepared_source)}
     selected_span = span_map.get(plan.selected_span_id)
     expected_choices = [normalize_english_choice(choice) for choice in plan.completion_choices]
 
@@ -1352,21 +1349,6 @@ def _looks_like_parallel_blocks(blocks: list[str]) -> bool:
     return parallel_count >= 2
 
 
-def _underlined_span_quality_error(text: str, tags: list[str], priority_score: int) -> str | None:
-    tag_set = set(tags)
-    if looks_hanging_phrase(text):
-        return "Selected span is fragmentary and leaves a dangling phrase boundary."
-    if "single_word" in tag_set:
-        return "Selected span is too short for underlined_phrase_meaning."
-    if priority_score < 5:
-        return "Selected span is too literal or weak for underlined_phrase_meaning."
-    if "surface_comparison" in tag_set and "abstract_term" not in tag_set:
-        return "Selected span is a surface comparison phrase, not a central contextual target."
-    if not {"abstract_term", "claim_bearing", "phrase_frame"} & tag_set:
-        return "Selected span is not central enough to the passage claim for underlined_phrase_meaning."
-    return None
-
-
 def _starts_with_any(text: str, phrases: set[str]) -> bool:
     return any(text.startswith(f"{phrase} ") or text == phrase for phrase in phrases)
 
@@ -1395,14 +1377,6 @@ def _normalize_korean_choice(value: str) -> str:
     return normalize_text(value)
 
 
-def _fill_blank_span_quality_error(text: str, tags: list[str]) -> str | None:
-    if looks_hanging_phrase(text):
-        return "Selected span is fragmentary and cannot support a readable blank."
-    if "single_word" in set(tags):
-        return "Selected span is too short and becomes a lexical deletion rather than a blank-inference target."
-    return None
-
-
 def _validate_single_word_error_plan(
     *,
     prepared_source: PreparedSource,
@@ -1426,17 +1400,13 @@ def _validate_single_word_error_plan(
     if len(target_span_texts) != 5:
         errors.append(f"{question_type_key} requires exactly five target_span_texts.")
         return errors
-    if len({normalize_english_word(text) for text in target_span_texts}) != 5:
-        errors.append(f"{question_type_key} target_span_texts must be unique.")
 
     ordered_spans: list[object] = []
-    for span_id, span_text in zip(target_span_ids, target_span_texts):
+    for span_id in target_span_ids:
         span = inventory.get(span_id)
         if span is None:
             errors.append(f"Unknown target span ID: {span_id}")
             continue
-        if getattr(span, "text") != span_text:
-            errors.append(f"{question_type_key} target_span_texts must exactly match the source text for {span_id}.")
         if not is_single_english_word(getattr(span, "text")):
             errors.append(f"{question_type_key} targets must all be single English words.")
         ordered_spans.append(span)
@@ -1480,13 +1450,11 @@ def _validate_single_word_error_output(
     inventory = {span.id: span for span in target_inventory}
 
     selected_spans: list[object] = []
-    for span_id, expected_text in zip(target_span_ids, target_span_texts):
+    for span_id in target_span_ids:
         span = inventory.get(span_id)
         if span is None:
             errors.append(f"Unknown target span ID: {span_id}")
             continue
-        if span.text != expected_text:
-            errors.append(f"{question_type_key} target_span_texts must exactly match the source text for {span_id}.")
         selected_spans.append(span)
     if errors:
         return errors

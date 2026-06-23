@@ -22,7 +22,12 @@ from questiongen.schemas import (
     UnderlinedPhraseMeaningPlan,
     VocabPlan,
 )
-from questiongen.targeting import allowed_verb_form_variants, grammar_target_inventory, phrase_span_inventory, vocab_target_inventory
+from questiongen.targeting import (
+    allowed_verb_form_variants,
+    fill_blank_target_inventory,
+    grammar_target_inventory,
+    vocab_target_inventory,
+)
 from questiongen.validators import validate_sentence_insertion_output
 
 
@@ -203,7 +208,11 @@ class RendererTests(unittest.TestCase):
             "to those around them. But the resulting inequality brought only discontent."
         )
         prepared = prepare_source(source)
-        selected_span = next(span for span in prepared.span_units if span.text == "brought only discontent")
+        selected_span = next(
+            span
+            for span in prepared.span_units
+            if span.text == "resulting inequality brought only discontent"
+        )
         plan = UnderlinedPhraseMeaningPlan(
             selected_span_id=selected_span.id,
             selected_span_text=selected_span.text,
@@ -240,7 +249,7 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(generated.given_sentence, None)
         self.assertEqual(generated.student_paragraph.count("[밑줄]"), 1)
         self.assertEqual(generated.student_paragraph.count("[/밑줄]"), 1)
-        self.assertIn("[밑줄]brought only discontent[/밑줄]", generated.student_paragraph)
+        self.assertIn("[밑줄]resulting inequality brought only discontent[/밑줄]", generated.student_paragraph)
         self.assertEqual(generated.answer, "②")
 
     def test_fill_in_the_blank_renderer_replaces_selected_span_once(self) -> None:
@@ -253,7 +262,7 @@ class RendererTests(unittest.TestCase):
             "Officials now plan to expand the same lighting system to nearby neighborhoods."
         )
         prepared = prepare_source(source)
-        selected_span = next(span for span in phrase_span_inventory(prepared) if "electricity" in span.text and "older" in span.text)
+        selected_span = next(span for span in fill_blank_target_inventory(prepared) if "improve safety" in span.text)
         plan = FillInTheBlankPlan(
             selected_span_id=selected_span.id,
             selected_span_text=selected_span.text,
@@ -330,6 +339,44 @@ class RendererTests(unittest.TestCase):
         self.assertIn("heavier", generated.student_paragraph)
         self.assertEqual(generated.answer, "②")
 
+    def test_vocab_renderer_uses_target_ids_as_source_owned_contract(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(vocab_target_inventory(prepared)[:5], key=lambda span: span.char_start)
+        plan = VocabPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
+            corrupted_span_id=targets[1].id,
+            corrupted_word="heavier",
+            correction_basis_ko="이 문맥에서는 원래 단어가 글의 설명 흐름과 더 잘 맞습니다",
+            supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+            explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
+        )
+        result = render_vocab(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "MVP-02",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "vocab",
+                "prepared_source": prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_TYPES["vocab"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        self.assertIn("[밑줄②]", result["generated"].student_paragraph)
+        self.assertIn("heavier", result["generated"].student_paragraph)
+
     def test_grammar_renderer_marks_five_targets_and_one_corruption(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "
@@ -372,6 +419,46 @@ class RendererTests(unittest.TestCase):
         self.assertIn("[밑줄②]", generated.student_paragraph)
         self.assertIn(replacement, generated.student_paragraph)
         self.assertEqual(generated.answer, "②")
+
+    def test_grammar_renderer_uses_target_ids_as_source_owned_contract(self) -> None:
+        source = (
+            "The city can reduce energy use without raising taxes. "
+            "Officials plan to expand the lighting system next month. "
+            "Residents say the brighter streets feel safer at night. "
+            "Engineers are testing whether the new lamps last longer in winter. "
+            "The mayor hopes to show that the project saves money over time. "
+            "Teachers report that students now walk home with more confidence."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(grammar_target_inventory(prepared)[:5], key=lambda span: span.char_start)
+        original_word = targets[1].text
+        replacement = next(iter(sorted(allowed_verb_form_variants(original_word) - {original_word.lower()})))
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
+            corrupted_span_id=targets[1].id,
+            corrupted_word=replacement,
+            correction_basis_ko="이 자리에는 주변 구조에 맞는 원래 동사 형태가 필요합니다",
+            supporting_evidence="Officials plan to expand the lighting system next month.",
+            explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
+        )
+        result = render_grammar(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "MVP-03",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "grammar",
+                "prepared_source": prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_TYPES["grammar"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        self.assertIn("[밑줄②]", result["generated"].student_paragraph)
+        self.assertIn(replacement, result["generated"].student_paragraph)
 
 
 if __name__ == "__main__":

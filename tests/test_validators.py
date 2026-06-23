@@ -19,9 +19,12 @@ from questiongen.schemas import (
 )
 from questiongen.targeting import (
     allowed_verb_form_variants,
+    fill_blank_target_inventory,
+    fill_blank_span_quality_error,
     grammar_target_inventory,
     phrase_span_inventory,
     render_numbered_span_edits,
+    underlined_span_quality_error,
     vocab_target_inventory,
 )
 from questiongen.validators import (
@@ -241,7 +244,17 @@ class ValidatorTests(unittest.TestCase):
             QUESTION_TYPES["underlined_phrase_meaning"],
         )
         self.assertEqual(result["status"], "qtype_incompatibility_error")
-        self.assertTrue(any("weakly central" in error or "too literal" in error for error in result["errors"]))
+        self.assertTrue(any("not central enough" in error or "too literal" in error for error in result["errors"]))
+
+    def test_underlined_phrase_meaning_quality_gate_rejects_punctuation_crossing_fragment(self) -> None:
+        source = (
+            "The committee, after a long delay, announced a new policy. "
+            "The reaction, however, remained sharply divided. "
+            "Some praised the plan, while others questioned its cost."
+        )
+        prepared = prepare_source(source)
+        bad_span = next(span for span in phrase_span_inventory(prepared) if span.text == "a long delay, announced a")
+        self.assertIn("awkward semantic chunk", underlined_span_quality_error(bad_span) or "")
 
     def test_paragraph_ordering_source_check_rejects_parallel_example_passage_early(self) -> None:
         source = (
@@ -589,7 +602,11 @@ class ValidatorTests(unittest.TestCase):
             "to those around them. But the resulting inequality brought only discontent."
         )
         prepared = prepare_source(source)
-        selected_span = next(span for span in prepared.span_units if span.text == "brought only discontent")
+        selected_span = next(
+            span
+            for span in prepared.span_units
+            if span.text == "resulting inequality brought only discontent"
+        )
         plan = UnderlinedPhraseMeaningPlan(
             selected_span_id=selected_span.id,
             selected_span_text=selected_span.text,
@@ -626,24 +643,9 @@ class ValidatorTests(unittest.TestCase):
         )
         prepared = prepare_source(source)
         selected_span = next(span for span in prepared.span_units if span.text == "reply rather than to understand")
-        plan = UnderlinedPhraseMeaningPlan(
-            selected_span_id=selected_span.id,
-            selected_span_text=selected_span.text,
-            paraphrase_choices_ko=[
-                "이해보다 반응에 치우친 태도를 뜻한다",
-                "경청의 중요성을 요약한 표현이다",
-                "멘토가 직접 해결책을 주어야 한다는 뜻이다",
-                "말하기보다 침묵이 더 중요하다는 뜻이다",
-                "학생의 감정을 즉시 교정해야 한다는 뜻이다",
-            ],
-            correct_choice="이해보다 반응에 치우친 태도를 뜻한다",
-            surface_meaning="이해하기보다 대답하려 한다는 말",
-            contextual_meaning="상대의 말을 진정으로 이해하기보다 즉각 반응하려는 태도를 뜻한다",
-            supporting_evidence="most people listen with the intention to reply rather than to understand",
-            explanation="문맥상 이해보다 반응에 치우친 태도를 뜻합니다.",
+        self.assertTrue(
+            "surface comparison phrase" in (underlined_span_quality_error(selected_span) or "")
         )
-        errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["underlined_phrase_meaning"])
-        self.assertTrue(any("surface comparison phrase" in error for error in errors))
 
     def test_paragraph_ordering_validator_accepts_valid_output(self) -> None:
         plan = ParagraphOrderingPlan(
@@ -772,7 +774,11 @@ class ValidatorTests(unittest.TestCase):
             "to those around them. But the resulting inequality brought only discontent."
         )
         prepared = prepare_source(source)
-        selected_span = next(span for span in prepared.span_units if span.text == "brought only discontent")
+        selected_span = next(
+            span
+            for span in prepared.span_units
+            if span.text == "resulting inequality brought only discontent"
+        )
         plan = UnderlinedPhraseMeaningPlan(
             selected_span_id=selected_span.id,
             selected_span_text=selected_span.text,
@@ -794,8 +800,8 @@ class ValidatorTests(unittest.TestCase):
             BatchRowId=0,
             QuestionType=QUESTION_TYPES["underlined_phrase_meaning"].label_ko,
             student_paragraph=source.replace(
-                "brought only discontent",
-                "[밑줄]brought only discontent[/밑줄]",
+                selected_span.text,
+                f"[밑줄]{selected_span.text}[/밑줄]",
             ),
             question_stem=QUESTION_TYPES["underlined_phrase_meaning"].question_stem,
             choices=[
@@ -807,7 +813,7 @@ class ValidatorTests(unittest.TestCase):
             ],
             answer="②",
             explanation=(
-                "밑줄 친 'brought only discontent'는 표면적으로는 오직 불만만을 가져왔다는 말입니다. "
+                "밑줄 친 'resulting inequality brought only discontent'는 표면적으로는 오직 불만만을 가져왔다는 말입니다. "
                 "하지만 이 글에서는 상대적 불평등 때문에 만족 대신 불만이 커졌다는 뜻으로 이해해야 합니다. "
                 "특히 'the resulting inequality brought only discontent'라는 내용이 그 해석을 뒷받침하므로 "
                 "정답은 ② 경제적 격차가 불만을 낳았다는 뜻입니다."
@@ -827,7 +833,11 @@ class ValidatorTests(unittest.TestCase):
             "to those around them. But the resulting inequality brought only discontent."
         )
         prepared = prepare_source(source)
-        selected_span = next(span for span in prepared.span_units if span.text == "brought only discontent")
+        selected_span = next(
+            span
+            for span in prepared.span_units
+            if span.text == "resulting inequality brought only discontent"
+        )
         plan = UnderlinedPhraseMeaningPlan(
             selected_span_id=selected_span.id,
             selected_span_text=selected_span.text,
@@ -898,6 +908,19 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "source_passed")
 
+    def test_fill_in_the_blank_quality_gate_rejects_surface_restoration_fragment(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        prepared = prepare_source(source)
+        bad_span = next(span for span in phrase_span_inventory(prepared) if span.text == "use less electricity than the")
+        self.assertIn("surface-restoration fragment", fill_blank_span_quality_error(bad_span) or "")
+
     def test_vocab_and_grammar_source_checks_accept_single_word_targets(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "
@@ -949,7 +972,7 @@ class ValidatorTests(unittest.TestCase):
             "Officials now plan to expand the same lighting system to nearby neighborhoods."
         )
         prepared = prepare_source(source)
-        selected_span = next(span for span in phrase_span_inventory(prepared) if "electricity" in span.text and "older" in span.text)
+        selected_span = next(span for span in fill_blank_target_inventory(prepared) if "improve safety" in span.text)
         plan = FillInTheBlankPlan(
             selected_span_id=selected_span.id,
             selected_span_text=selected_span.text,
@@ -1018,6 +1041,51 @@ class ValidatorTests(unittest.TestCase):
                 explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
             )
 
+    def test_vocab_validator_uses_target_ids_as_source_owned_contract(self) -> None:
+        source = (
+            "The city can reduce energy use without raising taxes. "
+            "Officials plan to expand the lighting system next month. "
+            "Residents say the brighter streets feel safer at night. "
+            "Engineers are testing whether the new lamps last longer in winter. "
+            "The mayor hopes to show that the project saves money over time. "
+            "Teachers report that students now walk home with more confidence."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(vocab_target_inventory(prepared)[:5], key=lambda span: span.char_start)
+        plan = VocabPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
+            corrupted_span_id=targets[2].id,
+            corrupted_word="heavier",
+            correction_basis_ko="문맥상 맞지 않는 단어입니다",
+            supporting_evidence="Residents say the brighter streets feel safer at night.",
+            explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="MVP-02",
+            BatchRowId=0,
+            QuestionType=QUESTION_TYPES["vocab"].label_ko,
+            student_paragraph=render_numbered_span_edits(
+                source_text=source,
+                selected_spans=targets,
+                replacement_by_span_id={targets[2].id: "heavier"},
+                markers=["①", "②", "③", "④", "⑤"],
+            ),
+            question_stem=QUESTION_TYPES["vocab"].question_stem,
+            choices=["①", "②", "③", "④", "⑤"],
+            answer="③",
+            explanation="③의 heavier는 문맥과 맞지 않으므로 정답입니다.",
+        )
+        self.assertEqual(
+            validate_vocab_output(
+                prepared_source=prepared,
+                plan=plan,
+                generated=generated,
+                type_spec=QUESTION_TYPES["vocab"],
+            ),
+            [],
+        )
+
     def test_grammar_validator_accepts_valid_output(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "
@@ -1053,6 +1121,52 @@ class ValidatorTests(unittest.TestCase):
             choices=["①", "②", "③", "④", "⑤"],
             answer="②",
             explanation="②의 잘못된 형태는 주변 구조와 맞지 않으므로 원래 형태가 와야 합니다.",
+        )
+        self.assertEqual(
+            validate_grammar_output(
+                prepared_source=prepared,
+                plan=plan,
+                generated=generated,
+                type_spec=QUESTION_TYPES["grammar"],
+            ),
+            [],
+        )
+
+    def test_grammar_validator_uses_target_ids_as_source_owned_contract(self) -> None:
+        source = (
+            "The city can reduce energy use without raising taxes. "
+            "Officials plan to expand the lighting system next month. "
+            "Residents say the brighter streets feel safer at night. "
+            "Engineers are testing whether the new lamps last longer in winter. "
+            "The mayor hopes to show that the project saves money over time. "
+            "Teachers report that students now walk home with more confidence."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(grammar_target_inventory(prepared)[:5], key=lambda span: span.char_start)
+        replacement = next(iter(sorted(allowed_verb_form_variants(targets[1].text) - {targets[1].text.lower()})))
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
+            corrupted_span_id=targets[1].id,
+            corrupted_word=replacement,
+            correction_basis_ko="문맥상 맞지 않는 형태입니다",
+            supporting_evidence="Officials plan to expand the lighting system next month.",
+            explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="MVP-03",
+            BatchRowId=0,
+            QuestionType=QUESTION_TYPES["grammar"].label_ko,
+            student_paragraph=render_numbered_span_edits(
+                source_text=source,
+                selected_spans=targets,
+                replacement_by_span_id={targets[1].id: replacement},
+                markers=["①", "②", "③", "④", "⑤"],
+            ),
+            question_stem=QUESTION_TYPES["grammar"].question_stem,
+            choices=["①", "②", "③", "④", "⑤"],
+            answer="②",
+            explanation="②의 잘못된 형태는 주변 구조와 맞지 않으므로 정답입니다.",
         )
         self.assertEqual(
             validate_grammar_output(

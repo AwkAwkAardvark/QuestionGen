@@ -81,6 +81,23 @@ _CONTEXTUAL_CUE_WORDS = {
     "while",
     "without",
 }
+_PROPOSITION_CUE_WORDS = {
+    "because",
+    "despite",
+    "if",
+    "rather",
+    "than",
+    "therefore",
+    "though",
+    "while",
+    "without",
+}
+_EVALUATIVE_CUE_WORDS = {
+    "even",
+    "merely",
+    "only",
+    "still",
+}
 _ABSTRACT_CUE_WORDS = {
     "ability",
     "assumption",
@@ -155,6 +172,7 @@ _SENTENCE_TERMINAL_FRAGMENT_WORDS = {
     "whereas",
 }
 _HANGING_EDGE_WORDS = {
+    "around",
     "and",
     "as",
     "because",
@@ -173,6 +191,47 @@ _HANGING_EDGE_WORDS = {
     "while",
     "with",
     "without",
+}
+_DETERMINER_LIKE_WORDS = {
+    "a",
+    "an",
+    "his",
+    "her",
+    "its",
+    "my",
+    "our",
+    "that",
+    "the",
+    "their",
+    "these",
+    "this",
+    "those",
+    "your",
+}
+_INCOMPLETE_SPAN_EDGE_WORDS = _HANGING_EDGE_WORDS | {
+    "another",
+    "but",
+    "brighter",
+    "fewer",
+    "her",
+    "his",
+    "its",
+    "less",
+    "more",
+    "my",
+    "older",
+    "only",
+    "other",
+    "our",
+    "rather",
+    "same",
+    "several",
+    "such",
+    "their",
+    "who",
+    "which",
+    "whose",
+    "your",
 }
 _PERMISSIVE_TERMINAL_PREPOSITIONS = {
     "at",
@@ -243,6 +302,7 @@ _IRREGULAR_VERB_CUES = {
 }
 _MAX_SPAN_CANDIDATES = 24
 _MAX_SINGLE_WORD_SPAN_CANDIDATES = 48
+_MAX_SENTENCE_SPAN_TOKENS = 7
 _GRAMMAR_LEFT_CONTEXT_CUES = {
     "and",
     "can",
@@ -464,7 +524,7 @@ def _collect_sentence_span_candidates(
     candidates: list[dict[str, object]] = []
 
     for start_index in range(len(token_matches)):
-        for end_index in range(start_index + 2, min(len(token_matches), start_index + 6) + 1):
+        for end_index in range(start_index + 2, min(len(token_matches), start_index + _MAX_SENTENCE_SPAN_TOKENS) + 1):
             start_match = token_matches[start_index]
             end_match = token_matches[end_index - 1]
             candidate_text = sentence_text[start_match.start() : end_match.end()]
@@ -553,12 +613,20 @@ def _score_span_candidate(
         return 0, []
     if looks_hanging_phrase(candidate_text):
         return 0, []
+    previous_token = _normalize_token(token_matches[start_index - 1].group(0)) if start_index > 0 else ""
+    next_token = _normalize_token(token_matches[end_index].group(0)) if end_index < len(token_matches) else ""
+    if _looks_incomplete_span_boundary(lowered_tokens, previous_token=previous_token, next_token=next_token):
+        return 0, []
 
     score = 0
     tags: list[str] = []
+    has_clause_signal = _span_has_clause_signal(lowered_tokens)
+    crosses_punctuation = any(punct in candidate_text for punct in (",", ";", ":", " - ", " — ", " – ", "(", ")"))
 
     if 2 <= len(token_texts) <= 5:
         score += 2
+    elif len(token_texts) in {6, 7}:
+        score += 1
     if len(content) >= 2:
         score += 1
     if any(token in _CONTEXTUAL_CUE_WORDS for token in lowered_tokens):
@@ -570,6 +638,9 @@ def _score_span_candidate(
     if any(pattern in candidate_lowered for pattern in _MULTIWORD_CUE_PATTERNS):
         score += 2
         tags.append("phrase_frame")
+    if any(token in _EVALUATIVE_CUE_WORDS for token in lowered_tokens):
+        score += 1
+        tags.append("evaluative")
     if "rather than" in candidate_lowered and "abstract_term" not in tags:
         score -= 3
         tags.append("surface_comparison")
@@ -579,11 +650,25 @@ def _score_span_candidate(
     if any(len(token) >= 8 for token in content):
         score += 1
         tags.append("dense_lexis")
+    if has_clause_signal:
+        score += 2
+        tags.append("clause_like")
+    if crosses_punctuation:
+        if has_clause_signal:
+            score -= 1
+            tags.append("punctuation_crossing")
+        else:
+            return 0, []
     if {"contextual_cue", "abstract_term"} <= set(tags) or (
         "phrase_frame" in tags and "surface_comparison" not in tags
     ):
         score += 1
         tags.append("claim_bearing")
+    if has_clause_signal and (
+        {"contextual_cue", "abstract_term"} & set(tags) or any(token in _PROPOSITION_CUE_WORDS for token in lowered_tokens)
+    ):
+        score += 1
+        tags.append("proposition_like")
     if len(token_texts) == 2 and not {"contextual_cue", "abstract_term", "phrase_frame"} & set(tags):
         score -= 1
 
@@ -821,5 +906,40 @@ def _looks_grammar_target(current_token: str, *, previous_token: str, next_token
     }:
         return True
     if next_token in {"to", "that"} and current_token in _IRREGULAR_VERB_CUES:
+        return True
+    return False
+
+
+def _span_has_clause_signal(tokens: list[str]) -> bool:
+    for token in tokens:
+        if token in _FINITE_VERB_CUES or token in _IRREGULAR_VERB_CUES:
+            return True
+        if len(token) > 4 and token.endswith("ed"):
+            return True
+        if len(token) > 4 and token.endswith("ing"):
+            return True
+    return any(token in _PROPOSITION_CUE_WORDS for token in tokens)
+
+
+def _looks_incomplete_span_boundary(tokens: list[str], *, previous_token: str, next_token: str) -> bool:
+    if not tokens:
+        return True
+
+    first_token = tokens[0]
+    last_token = tokens[-1]
+    if previous_token and first_token in _INCOMPLETE_SPAN_EDGE_WORDS:
+        return True
+    if last_token in _INCOMPLETE_SPAN_EDGE_WORDS:
+        return True
+    if next_token in _DETERMINER_LIKE_WORDS and (
+        last_token.endswith("ing")
+        or last_token.endswith("ed")
+        or last_token.endswith("er")
+        or (len(tokens) >= 2 and tokens[-2] in {"to", "can", "could", "may", "might", "must", "should", "will", "would"})
+    ):
+        return True
+    if next_token and len(tokens) >= 2 and tokens[-2] in _DETERMINER_LIKE_WORDS and last_token not in _FINITE_VERB_CUES:
+        return True
+    if next_token and last_token in {"relative"}:
         return True
     return False

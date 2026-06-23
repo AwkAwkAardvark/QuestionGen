@@ -14,6 +14,7 @@
 - [x] Use CSV and JSON as the primary debug artifacts once orchestration/export work is complete.
 - [x] Ship one cheaper default model first: `gpt-5-mini`.
 - [x] Defer per-question-type model routing until after the live pipeline is stable.
+- [x] Keep the current batch execution path synchronous and serial; defer async or concurrent orchestration as a later performance-only track.
 
 ## Wave 1: Backend Foundation
 
@@ -152,6 +153,7 @@
 ### Single-span acceptance
 
 - [ ] Each family has explicit incompatibility gates beyond raw sentence count.
+- [x] Each family has explicit incompatibility gates beyond raw sentence count.
 - [x] Each family has one clearly scoped v1 format before any subtype expansion.
 - [ ] Each family can pass real mixed-batch review without collapsing into generic planner failures or low-quality choice sets.
 
@@ -160,15 +162,17 @@
 ### Recommended implementation order
 
 - [x] `vocab`
-  - rollout policy: live now for MVP, even if lexical nuance remains rough
+  - rollout policy: live now for MVP, with target selection anchored primarily to source-owned IDs rather than planner-copied text
   - first supported format: `contextual_vocab_error_5`
   - first-release target: one controlled contextual corruption with four still-valid underlined items
   - shipped v1 policy: exactly five numbered single-word targets are rendered, exactly one is replaced by a readable but contextually wrong word, and the other four remain source-preserving
+  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs
 - [x] `grammar`
-  - rollout policy: live now for MVP, even if local grammar subtlety remains rough
+  - rollout policy: live now for MVP, with the first pass still constrained to controlled verb-form corruption only
   - first supported format: `grammar_error_5`
   - first-release target: one controlled structural corruption with four still-valid grammar-bearing items
   - shipped v1 policy: exactly five numbered single-word verb-form targets are rendered, exactly one is replaced by a controlled verb-form variant, and the other four remain source-preserving
+  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs and write explanations from deterministic structural cues
 
 ### Multi-span acceptance
 
@@ -212,3 +216,5 @@
 - [x] Planner rationale and exported explanation do not need to share the same generation step.
 - [x] Future Wave 4 registry entries should keep broad `QuestionTypeKey` values and move exact first supported shapes into `format_key`.
 - [x] Batch execution may short-circuit further LLM attempts after the first `insufficient_quota` failure, but exported result counts must still equal input rows times active question types.
+- [x] Future async exploration, if any, should start at the batch or row/type orchestration layer without changing current question-type semantics or exported row counts.
+- [x] After the current hardening baseline, reopen qtype-specific refinement planning with priority on `grammar` and `vocab`.

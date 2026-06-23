@@ -63,9 +63,13 @@ class ParserTests(unittest.TestCase):
         self.assertEqual([unit.id for unit in prepared.sentence_units], ["S0", "S1"])
         self.assertEqual([gap.id for gap in prepared.gap_units], ["G0", "G1", "G2"])
 
-        target_span = next(span for span in prepared.span_units if span.text == "brought only discontent")
+        target_span = next(
+            span
+            for span in prepared.span_units
+            if span.text == "resulting inequality brought only discontent"
+        )
         self.assertEqual(source[target_span.char_start : target_span.char_end], target_span.text)
-        self.assertEqual(target_span.normalized_text, "brought only discontent")
+        self.assertEqual(target_span.normalized_text, "resulting inequality brought only discontent")
         self.assertEqual(target_span.sentence_unit_id, "S1")
 
 

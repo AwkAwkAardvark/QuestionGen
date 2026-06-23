@@ -33,7 +33,7 @@ from questiongen.schemas import (
     UnderlinedPhraseMeaningPlan,
     VocabPlan,
 )
-from questiongen.targeting import allowed_verb_form_variants
+from questiongen.targeting import allowed_verb_form_variants, grammar_target_inventory, vocab_target_inventory
 
 
 class _ValidPlanner:
@@ -305,7 +305,7 @@ class _FillInTheBlankPlanner:
     def invoke(self, prompt: str) -> FillInTheBlankPlan:
         match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
         span_id = match.group(1) if match else "P0"
-        span_text = match.group(2) if match else "less electricity than the older"
+        span_text = match.group(2) if match else "improve safety without raising its energy budget"
         return FillInTheBlankPlan(
             selected_span_id=span_id,
             selected_span_text=span_text,
@@ -338,6 +338,21 @@ class _VocabPlanner:
         )
 
 
+class _VocabDriftPlanner:
+    def invoke(self, prompt: str) -> VocabPlan:
+        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
+        target_ids, target_texts = zip(*targets)
+        return VocabPlan(
+            target_span_ids=list(target_ids),
+            target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
+            corrupted_span_id=target_ids[1],
+            corrupted_word="heavier",
+            correction_basis_ko="이 문장은 절대 나오면 안 되는 자유서술 설명입니다",
+            supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+            explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
+        )
+
+
 class _GrammarPlanner:
     def invoke(self, prompt: str) -> GrammarPlan:
         targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
@@ -349,6 +364,22 @@ class _GrammarPlanner:
             corrupted_span_id=target_ids[1],
             corrupted_word=replacement,
             correction_basis_ko="주변 구조에 맞는 동사 형태가 유지되어야 합니다",
+            supporting_evidence="Officials now plan to expand the same lighting system to nearby neighborhoods.",
+            explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
+        )
+
+
+class _GrammarDriftPlanner:
+    def invoke(self, prompt: str) -> GrammarPlan:
+        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
+        target_ids, target_texts = zip(*targets)
+        replacement = next(iter(sorted(allowed_verb_form_variants(target_texts[1]) - {target_texts[1].lower()})))
+        return GrammarPlan(
+            target_span_ids=list(target_ids),
+            target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
+            corrupted_span_id=target_ids[1],
+            corrupted_word=replacement,
+            correction_basis_ko="이 문장은 절대 나오면 안 되는 자유서술 문법 해설입니다",
             supporting_evidence="Officials now plan to expand the same lighting system to nearby neighborhoods.",
             explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
         )
@@ -377,7 +408,7 @@ class PlannerTests(unittest.TestCase):
         self.underlined_span = next(
             span
             for span in self.underlined_prepared.span_units
-            if span.text == "brought only discontent"
+            if span.text == "resulting inequality brought only discontent"
         )
         self.contextual_insertion_source = (
             "City planners recently tested brighter LED lights on several downtown blocks. "
@@ -657,7 +688,11 @@ class PlannerTests(unittest.TestCase):
             "Because those comparisons lingered, even small pay gaps began to feel like a personal insult."
         )
         prepared_source = prepare_source(source)
-        weak_span = next(span for span in prepared_source.span_units if span.text == "But the resulting")
+        weak_span = next(
+            span
+            for span in prepared_source.span_units
+            if span.text == "lingered, even small pay gaps began"
+        )
         strong_span = next(
             span for span in prepared_source.span_units if span.text == "resulting inequality brought only discontent"
         )
@@ -692,6 +727,8 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("rank 1", prompt)
         self.assertIn("priority=top", prompt)
         self.assertIn("centrality=claim_bearing", prompt)
+        self.assertIn("shape=proposition", prompt)
+        self.assertIn("punctuation=clean", prompt)
         self.assertIn("context=", prompt)
         self.assertIn("Selection reminders", prompt)
 
@@ -744,6 +781,22 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "planned")
         self.assertIsInstance(result["plan"], VocabPlan)
 
+    def test_vocab_planner_canonicalizes_target_texts_from_ids(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "vocab",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = plan_vocab(
+            state,
+            QUESTION_TYPES["vocab"],
+            structured_llm_factory=lambda schema: _VocabDriftPlanner(),
+        )
+        self.assertEqual(result["status"], "planned")
+        expected_texts = [span.text for span in vocab_target_inventory(state["prepared_source"])[:5]]
+        self.assertEqual(result["plan"].target_span_texts, expected_texts)
+
     def test_grammar_planner_output_validates(self) -> None:
         state = {
             **self.state,
@@ -758,6 +811,22 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planned")
         self.assertIsInstance(result["plan"], GrammarPlan)
+
+    def test_grammar_planner_canonicalizes_target_texts_from_ids(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "grammar",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = plan_grammar(
+            state,
+            QUESTION_TYPES["grammar"],
+            structured_llm_factory=lambda schema: _GrammarDriftPlanner(),
+        )
+        self.assertEqual(result["status"], "planned")
+        expected_texts = [span.text for span in grammar_target_inventory(state["prepared_source"])[:5]]
+        self.assertEqual(result["plan"].target_span_texts, expected_texts)
 
     def test_new_type_prompts_expose_target_inventories(self) -> None:
         prepared = prepare_source(self.mvp_source)
@@ -777,8 +846,41 @@ class PlannerTests(unittest.TestCase):
             type_spec=QUESTION_TYPES["grammar"],
         )
         self.assertIn("Phrase-span candidates", blank_prompt)
+        self.assertIn("shape=proposition", blank_prompt)
         self.assertIn("Single-word vocab targets", vocab_prompt)
+        self.assertIn("authoritative contract", vocab_prompt)
         self.assertIn("Single-word grammar targets", grammar_prompt)
+        self.assertIn("allowed_variants=", grammar_prompt)
+
+    def test_graph_rewrites_vocab_explanation_from_source_evidence(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabDriftPlanner())
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "vocab",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = runner.invoke(state)
+        self.assertEqual(result["status"], "validation_passed")
+        explanation = result["generated"].explanation or ""
+        self.assertIn("문맥과 맞지 않습니다", explanation)
+        self.assertIn("brighter crosswalks feel safer", explanation)
+        self.assertNotIn("자유서술 설명", explanation)
+
+    def test_graph_rewrites_grammar_explanation_from_structural_cue(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _GrammarDriftPlanner())
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "grammar",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = runner.invoke(state)
+        self.assertEqual(result["status"], "validation_passed")
+        explanation = result["generated"].explanation or ""
+        self.assertIn("동사원형", explanation)
+        self.assertIn("lighting system to nearby neighborhoods", explanation)
+        self.assertNotIn("자유서술 문법 해설", explanation)
 
 
 if __name__ == "__main__":

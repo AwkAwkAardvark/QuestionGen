@@ -536,7 +536,6 @@ def _build_vocab_question(
     selected_spans = _ordered_target_spans(
         inventory=inventory,
         target_span_ids=plan.target_span_ids,
-        target_span_texts=plan.target_span_texts,
     )
     if plan.corrupted_span_id not in plan.target_span_ids:
         raise ValueError("corrupted_span_id must be included in target_span_ids.")
@@ -579,7 +578,6 @@ def _build_grammar_question(
     selected_spans = _ordered_target_spans(
         inventory=inventory,
         target_span_ids=plan.target_span_ids,
-        target_span_texts=plan.target_span_texts,
     )
     if plan.corrupted_span_id not in plan.target_span_ids:
         raise ValueError("corrupted_span_id must be included in target_span_ids.")
@@ -650,16 +648,11 @@ def _ordered_target_spans(
     *,
     inventory: dict[str, object],
     target_span_ids: list[str],
-    target_span_texts: list[str],
 ) -> list[object]:
-    if len(target_span_ids) != len(target_span_texts):
-        raise ValueError("target_span_ids and target_span_texts must have the same length.")
     selected_spans = []
-    for span_id, expected_text in zip(target_span_ids, target_span_texts):
+    for span_id in target_span_ids:
         span = inventory.get(span_id)
         if span is None:
             raise ValueError(f"Unknown target span ID: {span_id}")
-        if getattr(span, "text") != expected_text:
-            raise ValueError(f"target_span_texts must exactly match the source text for {span_id}.")
         selected_spans.append(span)
     return sorted(selected_spans, key=lambda span: (span.char_start, span.char_end))

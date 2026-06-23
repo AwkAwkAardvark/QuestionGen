@@ -5,7 +5,15 @@ import re
 from .parsers import content_tokens, normalize_text
 from .question_types import QuestionTypeSpec
 from .schemas import PreparedSource
-from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_target_inventory
+from .targeting import (
+    allowed_verb_form_variants,
+    fill_blank_target_inventory,
+    grammar_target_inventory,
+    span_crosses_punctuation,
+    span_shape_label,
+    underlined_phrase_inventory,
+    vocab_target_inventory,
+)
 
 _TRANSITION_STARTERS = {
     "accordingly",
@@ -273,21 +281,20 @@ def build_underlined_phrase_meaning_prompt(
         f"- {unit.id}: {unit.text}"
         for unit in prepared_source.sentence_units
     )
-    candidate_spans = phrase_span_inventory(prepared_source)
+    candidate_spans = underlined_phrase_inventory(prepared_source)
     span_inventory = "\n".join(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; "
             f"priority={_span_priority_label(span.priority_score)}; "
             f"centrality={_span_centrality_label(span.heuristic_tags)}; "
+            f"shape={span_shape_label(span)}; "
+            f"punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
             f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; "
             f"tags={','.join(span.heuristic_tags) or 'none'}; "
             f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
         )
         for rank, span in enumerate(
-            sorted(
-                candidate_spans,
-                key=lambda span: (-span.priority_score, span.char_start, span.char_end),
-            ),
+            candidate_spans,
             start=1,
         )
     )
@@ -315,7 +322,9 @@ Span candidates:
 
 Selection reminders:
 - Prefer candidates marked `priority=top` or `priority=strong` and avoid `centrality=weak` or `centrality=local` when a stronger candidate exists.
+- Prefer `shape=proposition` or `shape=claim` spans over merely local phrase chunks.
 - Never choose a span just because its boundaries are valid; the span must still carry a central claim, mechanism, evaluation, contrast, or limitation.
+- Avoid `punctuation=crossing` candidates unless the full span reads as a complete clause-level unit.
 """.strip()
 
 
@@ -329,22 +338,19 @@ def build_fill_in_the_blank_prompt(
         f"- {unit.id}: {unit.text}"
         for unit in prepared_source.sentence_units
     )
+    blank_candidates = fill_blank_target_inventory(prepared_source)
     span_inventory = "\n".join(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; "
             f"priority={_span_priority_label(span.priority_score)}; "
             f"centrality={_span_centrality_label(span.heuristic_tags)}; "
+            f"shape={span_shape_label(span)}; "
+            f"punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
             f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; "
             f"tags={','.join(span.heuristic_tags) or 'none'}; "
             f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
         )
-        for rank, span in enumerate(
-            sorted(
-                phrase_span_inventory(prepared_source),
-                key=lambda span: (-span.priority_score, span.char_start, span.char_end),
-            ),
-            start=1,
-        )
+        for rank, span in enumerate(blank_candidates, start=1)
     )
     return f"""
 You are planning an English exam fill-in-the-blank question.
@@ -369,7 +375,9 @@ Phrase-span candidates:
 {span_inventory}
 
 Selection reminders:
-- Prefer claim-bearing or clause-like spans, but if none are ideal, choose the most readable multi-word contextual span rather than failing.
+- Prefer `shape=proposition` spans first and `shape=claim` spans second.
+- Avoid `punctuation=crossing` candidates unless the full span remains a complete clause-level idea.
+- Reject local restorations that mainly test surface phrase recovery rather than the passage's claim, reason, effect, contrast, limitation, or mechanism.
 - Keep the blank recoverable from the surrounding passage, not from isolated dictionary meaning alone.
 """.strip()
 
@@ -443,6 +451,7 @@ Single-word vocab targets:
 
 Selection reminders:
 - Use exactly five targets from the provided inventory.
+- `target_span_ids` are the authoritative contract; exact source words will be resolved deterministically from those IDs.
 - The corrupted word should stay grammatically readable, but its meaning should clash with the passage context.
 """.strip()
 
@@ -463,7 +472,7 @@ Previous validation error:
 Repair rules:
 - Return a fully corrected answer.
 - Re-check that `target_span_ids` contains exactly five unique IDs from the provided inventory.
-- Re-check that `target_span_texts` copies those five exact source words in the same order.
+- `target_span_ids` are authoritative; copy matching source words into `target_span_texts`, but resolve your final selection by ID first.
 - Re-check that `corrupted_span_id` is one of `target_span_ids`.
 - Re-check that `corrupted_word` is a single English word and differs from the original target word.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
@@ -487,6 +496,7 @@ def build_grammar_prompt(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
             f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
+            f"allowed_variants={','.join(sorted(allowed_verb_form_variants(span.text) - {span.text.lower()})) or 'none'}; "
             f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
         )
         for rank, span in enumerate(grammar_target_inventory(prepared_source), start=1)
@@ -515,6 +525,7 @@ Single-word grammar targets:
 
 Selection reminders:
 - Use exactly five targets from the provided inventory.
+- `target_span_ids` are the authoritative contract; exact source words will be resolved deterministically from those IDs.
 - The corrupted word must stay in the same narrow verb-form family as the original target.
 """.strip()
 
@@ -535,7 +546,7 @@ Previous validation error:
 Repair rules:
 - Return a fully corrected answer.
 - Re-check that `target_span_ids` contains exactly five unique IDs from the provided grammar-target inventory.
-- Re-check that `target_span_texts` copies those five exact source words in the same order.
+- `target_span_ids` are authoritative; copy matching source words into `target_span_texts`, but resolve your final selection by ID first.
 - Re-check that `corrupted_span_id` is one of `target_span_ids`.
 - Re-check that `corrupted_word` is a single English word and a verb-form variant of the original target word.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.

@@ -12,6 +12,8 @@ NUMBERED_UNDERLINE_CLOSE_TEMPLATE = "[/밑줄{marker}]"
 
 _SINGLE_WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*$")
 _ENGLISH_WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*$")
+_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'’][A-Za-z]+)*")
+_CROSS_PUNCTUATION_RE = re.compile(r"[,;:()]|(?:\s[-–—]\s)")
 
 _FINITE_AUXILIARIES = {
     "am",
@@ -37,6 +39,99 @@ _FINITE_AUXILIARIES = {
     "were",
     "will",
     "would",
+}
+_FINITE_VERB_CUES = _FINITE_AUXILIARIES | {
+    "did",
+}
+_FUNCTION_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "being",
+    "but",
+    "by",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "there",
+    "they",
+    "this",
+    "to",
+    "was",
+    "were",
+    "with",
+    "without",
+    "you",
+}
+_PROPOSITION_CUE_WORDS = {
+    "because",
+    "despite",
+    "if",
+    "rather",
+    "than",
+    "therefore",
+    "though",
+    "while",
+    "without",
+}
+_EVALUATIVE_CUE_WORDS = {
+    "even",
+    "merely",
+    "only",
+    "still",
+}
+_INCOMPLETE_EDGE_WORDS = {
+    "a",
+    "an",
+    "another",
+    "but",
+    "few",
+    "her",
+    "his",
+    "its",
+    "less",
+    "many",
+    "more",
+    "my",
+    "much",
+    "older",
+    "other",
+    "our",
+    "rather",
+    "same",
+    "several",
+    "such",
+    "that",
+    "the",
+    "their",
+    "these",
+    "this",
+    "those",
+    "who",
+    "which",
+    "whose",
+    "your",
 }
 _IRREGULAR_VARIANTS = {
     "be": {"am", "are", "be", "been", "being", "is", "was", "were"},
@@ -73,6 +168,24 @@ def phrase_span_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
         for span in prepared_source.span_units
         if "single_word" not in span.heuristic_tags
     ]
+
+
+def underlined_phrase_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
+    candidates = [
+        span
+        for span in phrase_span_inventory(prepared_source)
+        if underlined_span_quality_error(span) is None
+    ]
+    return sorted(candidates, key=_underlined_span_sort_key)
+
+
+def fill_blank_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
+    candidates = [
+        span
+        for span in phrase_span_inventory(prepared_source)
+        if fill_blank_span_quality_error(span) is None
+    ]
+    return sorted(candidates, key=_fill_blank_span_sort_key)
 
 
 def vocab_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
@@ -158,6 +271,77 @@ def is_auxiliary_like(word: str) -> bool:
     return normalize_english_word(word) in _FINITE_AUXILIARIES
 
 
+def span_crosses_punctuation(text: str) -> bool:
+    return _CROSS_PUNCTUATION_RE.search(text) is not None
+
+
+def span_shape_label(span: SpanUnit) -> str:
+    tags = set(span.heuristic_tags)
+    if _has_proposition_signal(span.text, tags):
+        return "proposition"
+    if "claim_bearing" in tags:
+        return "claim"
+    if "phrase_frame" in tags or "abstract_term" in tags:
+        return "phrase"
+    return "local"
+
+
+def underlined_span_quality_error(span: SpanUnit) -> str | None:
+    tags = set(span.heuristic_tags)
+    tokens = _span_tokens(span.text)
+    content_count = _content_word_count(tokens)
+    has_clause_signal = _has_clause_signal(span.text, tags)
+    has_proposition_signal = _has_proposition_signal(span.text, tags)
+
+    if not tokens:
+        return "Selected span is empty for underlined_phrase_meaning."
+    if "single_word" in tags:
+        return "Selected span is too short for underlined_phrase_meaning."
+    if content_count < 2:
+        return "Selected span is too short or too function-word heavy for underlined_phrase_meaning."
+    if _has_incomplete_edge(tokens, span):
+        return "Selected span is fragmentary and leaves an awkward semantic chunk."
+    if span_crosses_punctuation(span.text) and not has_clause_signal:
+        return "Selected span crosses punctuation without forming a complete clause-level unit."
+    if span.priority_score < 5:
+        return "Selected span is too literal or weak for underlined_phrase_meaning."
+    if "surface_comparison" in tags and "abstract_term" not in tags:
+        return "Selected span is a surface comparison phrase, not a central contextual target."
+    if not (
+        {"abstract_term", "claim_bearing", "phrase_frame"} & tags
+        or (has_proposition_signal and ("evaluative" in tags or "abstract_term" in tags))
+    ):
+        return "Selected span is not central enough to the passage claim for underlined_phrase_meaning."
+    if "embedded_phrase" in tags and not (has_proposition_signal or "claim_bearing" in tags):
+        return "Selected span is too local for underlined_phrase_meaning."
+    return None
+
+
+def fill_blank_span_quality_error(span: SpanUnit) -> str | None:
+    tags = set(span.heuristic_tags)
+    tokens = _span_tokens(span.text)
+    token_count = len(tokens)
+    content_count = _content_word_count(tokens)
+    has_clause_signal = _has_clause_signal(span.text, tags)
+    has_proposition_signal = _has_proposition_signal(span.text, tags)
+
+    if not tokens:
+        return "Selected span is empty and cannot support a blank."
+    if "single_word" in tags:
+        return "Selected span is too short and becomes a lexical deletion rather than a blank-inference target."
+    if token_count < 4 or content_count < 2:
+        return "Selected span is too short for a proposition-level blank target."
+    if _has_incomplete_edge(tokens, span):
+        return "Selected span is a surface-restoration fragment rather than a self-contained idea unit."
+    if span_crosses_punctuation(span.text) and not has_clause_signal:
+        return "Selected span crosses punctuation without forming a complete clause-level blank target."
+    if not (has_proposition_signal or has_clause_signal):
+        return "Selected span is not proposition-like enough for fill_in_the_blank."
+    if "embedded_phrase" in tags and not has_proposition_signal:
+        return "Selected span is too local and reads like a cloze fragment rather than a central blank target."
+    return None
+
+
 def _dedupe_by_text(spans: Iterable[SpanUnit]) -> list[SpanUnit]:
     ordered = sorted(
         spans,
@@ -202,3 +386,95 @@ def _approximate_base_form(word: str) -> str:
     if word.endswith("s") and len(word) > 3 and not word.endswith("ss"):
         return word[:-1]
     return word
+
+
+def _underlined_span_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
+    tags = set(span.heuristic_tags)
+    bonus = 0
+    if _has_proposition_signal(span.text, tags):
+        bonus += 3
+    elif "claim_bearing" in tags:
+        bonus += 2
+    elif "abstract_term" in tags or "phrase_frame" in tags:
+        bonus += 1
+    if span_crosses_punctuation(span.text):
+        bonus -= 2
+    if "embedded_phrase" in tags and "claim_bearing" not in tags:
+        bonus -= 1
+    return (-(span.priority_score + bonus), span.char_start, span.char_end - span.char_start, span.char_end)
+
+
+def _fill_blank_span_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
+    tags = set(span.heuristic_tags)
+    bonus = 0
+    if _has_proposition_signal(span.text, tags):
+        bonus += 4
+    elif _has_clause_signal(span.text, tags):
+        bonus += 2
+    if "claim_bearing" in tags:
+        bonus += 1
+    if span_crosses_punctuation(span.text):
+        bonus -= 2
+    return (-(span.priority_score + bonus), span.char_start, span.char_end - span.char_start, span.char_end)
+
+
+def _span_tokens(text: str) -> list[str]:
+    return [normalize_english_word(match.group(0)) for match in _TOKEN_RE.finditer(text)]
+
+
+def _content_word_count(tokens: list[str]) -> int:
+    return sum(1 for token in tokens if token not in _FUNCTION_WORDS)
+
+
+def _has_clause_signal(text: str, tags: set[str]) -> bool:
+    tokens = _span_tokens(text)
+    if "claim_bearing" in tags:
+        return True
+    if any(token in _PROPOSITION_CUE_WORDS for token in tokens):
+        return True
+    for token in tokens:
+        if token in _FINITE_VERB_CUES:
+            return True
+        if len(token) > 4 and token.endswith("ed"):
+            return True
+        if len(token) > 4 and token.endswith("ing"):
+            return True
+        if len(token) > 4 and token.endswith("s") and token not in _FUNCTION_WORDS:
+            return True
+    return False
+
+
+def _has_proposition_signal(text: str, tags: set[str]) -> bool:
+    tokens = _span_tokens(text)
+    if {"claim_bearing", "abstract_term"} <= tags:
+        return True
+    if "claim_bearing" in tags and any(token in _EVALUATIVE_CUE_WORDS for token in tokens):
+        return True
+    if _has_clause_signal(text, tags) and ("contextual_cue" in tags or "abstract_term" in tags):
+        return True
+    return False
+
+
+def _has_incomplete_edge(tokens: list[str], span: SpanUnit) -> bool:
+    if not tokens:
+        return True
+    if tokens[0] in _INCOMPLETE_EDGE_WORDS or tokens[-1] in _INCOMPLETE_EDGE_WORDS:
+        return True
+    next_token = _neighbor_first_token(span.context_after)
+    if next_token in {"a", "an", "his", "her", "its", "my", "our", "that", "the", "their", "these", "this", "those", "your"}:
+        if tokens[-1].endswith("ing") or tokens[-1].endswith("ed") or tokens[-1].endswith("er"):
+            return True
+        if len(tokens) >= 2 and tokens[-2] in {"to", "can", "could", "may", "might", "must", "should", "will", "would"}:
+            return True
+    if next_token and len(tokens) >= 2 and tokens[-2] in {"a", "an", "his", "her", "its", "my", "our", "that", "the", "their", "these", "this", "those", "your"}:
+        return True
+    return False
+
+
+def _neighbor_first_token(text: str | None) -> str:
+    if not text:
+        return ""
+    match = _TOKEN_RE.search(text)
+    if match is None:
+        return ""
+    return normalize_english_word(match.group(0))
