@@ -11,7 +11,7 @@ from typing import Sequence
 from ..batch import run_batch_files
 from ..config import create_structured_llm
 from ..graph import compile_question_graph
-from ..question_types import QUESTION_TYPES
+from ..question_types import QUESTION_TYPE_SPECS_BY_FAMILY, QUESTION_TYPES
 
 DEFAULT_DATA_DIR = Path("/content/drive/MyDrive/QuestionGenData")
 DEFAULT_API_KEY_PATH = DEFAULT_DATA_DIR / "secrets" / "api_key.txt"
@@ -221,6 +221,11 @@ def _run_from_ui(
             raise ValueError("OPENAI_API_KEY is not set. Provide an api_key.txt path or pre-load the env var.")
 
         selected_question_types = normalize_question_type_keys(question_type_keys)
+        expanded_subtype_count = sum(
+            len(QUESTION_TYPE_SPECS_BY_FAMILY[family_key])
+            for family_key in selected_question_types
+            if family_key in QUESTION_TYPE_SPECS_BY_FAMILY
+        )
         input_csv = resolve_input_csv(input_mode, uploaded_csv_path, drive_csv_path)
         output_csv, output_json, output_markdown = _artifact_paths(output_dir, input_csv)
 
@@ -248,7 +253,8 @@ def _run_from_ui(
                 "",
                 f"- Input mode: `{input_mode}`",
                 f"- Input CSV: `{input_csv}`",
-                f"- Question types: `{', '.join(selected_question_types)}`",
+                f"- Question families: `{', '.join(selected_question_types)}`",
+                f"- Expanded subtypes: `{expanded_subtype_count}`",
                 f"- Total rows: `{len(results)}`",
                 f"- Status counts: `{dict(status_counts)}`",
                 f"- CSV: `{output_csv}`",

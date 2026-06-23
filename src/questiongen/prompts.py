@@ -7,11 +7,15 @@ from .question_types import QuestionTypeSpec
 from .schemas import PreparedSource
 from .targeting import (
     allowed_verb_form_variants,
+    fill_blank_connective_inventory,
+    fill_blank_summary_inventory,
     fill_blank_target_inventory,
+    grammar_subtype_inventory,
     grammar_target_inventory,
     span_crosses_punctuation,
     span_shape_label,
     underlined_phrase_inventory,
+    vocab_choice_inventory,
     vocab_target_inventory,
     vocab_target_is_antonym_invertible,
 )
@@ -85,7 +89,7 @@ Return only structured data matching the required schema.
 
 Question type:
 - Key: sentence_insertion
-- Label: {type_spec.label_ko}
+- Label: {type_spec.family_label_ko}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -162,7 +166,7 @@ Return only structured data matching the required schema.
 
 Question type:
 - Key: paragraph_ordering
-- Label: {type_spec.label_ko}
+- Label: {type_spec.family_label_ko}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -224,6 +228,7 @@ def build_mood_atmosphere_prompt(
         f"- {unit.id}: {unit.text}"
         for unit in prepared_source.sentence_units
     )
+    active_subtype = type_spec.subtype_key.replace("_5", "")
     return f"""
 You are planning an English exam mood/atmosphere question.
 
@@ -231,8 +236,8 @@ Return only structured data matching the required schema.
 
 Question type:
 - Key: mood_atmosphere
-- Label: {type_spec.label_ko}
-- Active subtype: emotion_shift
+- Label: {type_spec.family_label_ko}
+- Active subtype: {active_subtype}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -261,11 +266,11 @@ Previous validation error:
 
 Repair rules:
 - Return a fully corrected answer.
-- Keep the subtype as emotion_shift.
+- Keep the subtype required by the active schema and prompt.
 - Re-check that `initial_emotion` and `final_emotion` are different.
-- Re-check that `choice_pairs` contains exactly five unique English `emotion -> emotion` choices.
-- Re-check that `correct_choice` is one of `choice_pairs` and exactly matches `initial_emotion -> final_emotion`.
-- Re-check that `initial_evidence`, `final_evidence`, and optional `shift_trigger` are copied as exact passage snippets.
+- Re-check that `choice_pairs` contains exactly five unique readable English choices in the required format for the active subtype.
+- Re-check that `correct_choice` is one of `choice_pairs` and matches the active subtype's target emotion or atmosphere field.
+- Re-check that the required evidence fields for the active subtype are copied as exact passage snippets.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that uses emotional evidence rather than schema fields or mechanics.
 - Return only structured data matching the schema.
@@ -306,7 +311,7 @@ Return only structured data matching the required schema.
 
 Question type:
 - Key: underlined_phrase_meaning
-- Label: {type_spec.label_ko}
+- Label: {type_spec.family_label_ko}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -339,7 +344,12 @@ def build_fill_in_the_blank_prompt(
         f"- {unit.id}: {unit.text}"
         for unit in prepared_source.sentence_units
     )
-    blank_candidates = fill_blank_target_inventory(prepared_source)
+    if type_spec.subtype_key == "blank_connective_relation_5_choices":
+        blank_candidates = fill_blank_connective_inventory(prepared_source)
+    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
+        blank_candidates = fill_blank_summary_inventory(prepared_source)
+    else:
+        blank_candidates = fill_blank_target_inventory(prepared_source)
     span_inventory = "\n".join(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; "
@@ -360,7 +370,7 @@ Return only structured data matching the required schema.
 
 Question type:
 - Key: fill_in_the_blank
-- Label: {type_spec.label_ko}
+- Label: {type_spec.family_label_ko}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -376,7 +386,8 @@ Phrase-span candidates:
 {span_inventory}
 
 Selection reminders:
-- Prefer `shape=proposition` spans first and `shape=claim` spans second.
+- Prefer the candidates that best fit the active subtype's intended evidence class.
+- Prefer `shape=proposition` spans first and `shape=claim` spans second unless the active subtype explicitly prioritizes relation or summary cues.
 - Avoid `punctuation=crossing` candidates unless the full span remains a complete clause-level idea.
 - Reject local restorations that mainly test surface phrase recovery rather than the passage's claim, reason, effect, contrast, limitation, or mechanism.
 - Keep the blank recoverable from the surrounding passage, not from isolated dictionary meaning alone.
@@ -420,6 +431,11 @@ def build_vocab_prompt(
         f"- {unit.id}: {unit.text}"
         for unit in prepared_source.sentence_units
     )
+    inventory_source = (
+        vocab_choice_inventory(prepared_source)
+        if type_spec.subtype_key == "contextual_vocab_choice_5"
+        else vocab_target_inventory(prepared_source)
+    )
     target_inventory = "\n".join(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
@@ -427,7 +443,7 @@ def build_vocab_prompt(
             f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
             f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
         )
-        for rank, span in enumerate(vocab_target_inventory(prepared_source), start=1)
+        for rank, span in enumerate(inventory_source, start=1)
     )
     return f"""
 You are planning an English exam contextual vocabulary question.
@@ -436,7 +452,7 @@ Return only structured data matching the required schema.
 
 Question type:
 - Key: vocab
-- Label: {type_spec.label_ko}
+- Label: {type_spec.family_label_ko}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -452,11 +468,9 @@ Single-word vocab targets:
 {target_inventory}
 
 Selection reminders:
-- Use exactly five targets from the provided inventory.
-- Prefer targets marked `antonym_invertible=YES`. These have a clear opposite direction and produce an unambiguous contextual error.
-- `target_span_ids` are the authoritative contract; exact source words will be resolved deterministically from those IDs.
-- The corrupted word must REVERSE or clearly DISTORT the sentence meaning. Replacing a word with its near-synonym (e.g. stick → adhere, help → aid) is NOT valid because the meaning barely changes.
-- The corrupted word should stay grammatically readable, but its meaning should clash with the passage context.
+- Follow the active subtype exactly: either choose five underlined error targets or choose one target plus five lexical options.
+- Prefer targets marked `antonym_invertible=YES` when the subtype is the contextual error format.
+- Source-owned IDs remain the authoritative contract; exact source words will be resolved deterministically from those IDs.
 """.strip()
 
 
@@ -498,6 +512,7 @@ def build_grammar_prompt(
         f"- {unit.id}: {unit.text}"
         for unit in prepared_source.sentence_units
     )
+    subtype_inventory = grammar_subtype_inventory(prepared_source, type_spec.subtype_key)
     target_inventory = "\n".join(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
@@ -505,7 +520,7 @@ def build_grammar_prompt(
             f"allowed_variants={','.join(sorted(allowed_verb_form_variants(span.text) - {span.text.lower()})) or 'none'}; "
             f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
         )
-        for rank, span in enumerate(grammar_target_inventory(prepared_source), start=1)
+        for rank, span in enumerate(subtype_inventory, start=1)
     )
     return f"""
 You are planning an English exam grammar question.
@@ -514,7 +529,7 @@ Return only structured data matching the required schema.
 
 Question type:
 - Key: grammar
-- Label: {type_spec.label_ko}
+- Label: {type_spec.family_label_ko}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -535,8 +550,8 @@ Selection reminders:
 - CRITICAL: The corrupted word MUST be a real, standard English word. NEVER invent pseudo-words.
   - BAD: 'increaseed', 'reduceing', 'understanded', 'emergeed'
   - GOOD: 'increasing', 'reduced', 'understood', 'emerged'
-- Keep the corruption inside the current verb-form family only.
-- Use the `allowed_variants` list for the selected target. Never produce a form that is not in that list.
+- Keep the corruption inside the active grammar subtype's controlled local family.
+- When the target is verb-form-based, use the `allowed_variants` list for the selected target.
 """.strip()
 
 

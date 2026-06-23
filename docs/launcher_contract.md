@@ -82,7 +82,7 @@ The current backend contract is:
 
 - build the runner with `compile_question_graph(...)`
 - pass that runner into `run_batch_files(...)` as `runner=...`
-- pass explicit `question_type_keys`
+- pass explicit broad-family `question_type_keys`
 
 Current launcher-safe pattern:
 
@@ -114,12 +114,14 @@ results = run_batch_files(
 Notes:
 
 - The user-facing product direction is "run all registered question types."
-- The current API still requires explicit `question_type_keys`, so the launcher must derive them from `QUESTION_TYPES`.
+- The current API still requires explicit broad-family `question_type_keys`, so the launcher must derive them from `QUESTION_TYPES`.
+- Each selected broad family now expands into one or more live concrete subtype runs inside the batch layer.
+- Exported row counts therefore scale with `input rows x enabled subtype count`, not merely `input rows x broad family count`.
 - This preserves the current backend API while delivering the intended launcher behavior.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
-- The live registry currently includes `sentence_insertion`, `paragraph_ordering`, `underlined_phrase_meaning`, `fill_in_the_blank`, `vocab`, and `grammar`.
-- This MVP rollout intentionally favors family coverage over item polish for `fill_in_the_blank`, `vocab`, and `grammar`; launcher-derived defaults should still include them because the product direction is to run all registered families.
-- The `mood_atmosphere` implementation remains in the codebase as deferred future work, but it is intentionally excluded from `QUESTION_TYPES` and from launcher-derived default selections.
+- The live registry currently includes `sentence_insertion`, `paragraph_ordering`, `mood_atmosphere`, `underlined_phrase_meaning`, `fill_in_the_blank`, `vocab`, and `grammar`.
+- Launcher-derived defaults should include all of those broad families because the product direction is to run all registered families.
+- Subtype metadata is now part of the exported contract: `QuestionFormatKey`, `QuestionSubtypeKey`, and `QuestionSubtype`.
 
 ## Output Artifacts
 
@@ -132,6 +134,7 @@ For the current debugging phase, the launcher should write:
 Rules:
 
 - CSV and JSON must represent the same `BatchResultRow` results.
+- `QuestionTypeKey` remains the broad family key, while `QuestionFormatKey` and `QuestionSubtypeKey` identify the concrete runnable subtype row.
 - Failed type/passage combinations must remain visible in the exported artifacts.
 - Expected incompatibility between a valid passage and a specific question type should surface as `qtype_incompatibility_error`, not be collapsed into generic source or planner failure.
 - `source_error` should be reserved for malformed inputs, failed source preparation, or broken deterministic prepared-source invariants.
@@ -142,8 +145,9 @@ Rules:
 - `validation_passed` rows are expected to be structurally intact, including abbreviation-safe sentence preparation and fragment-safe rendered text, not just schema-valid fields.
 - `underlined_phrase_meaning` should preserve the original passage exactly except for wrapping the chosen source span as `[밑줄]...[/밑줄]` in exported `student_paragraph`.
 - `fill_in_the_blank` should preserve the original passage exactly except for replacing one selected source span with the single blank marker `_____` in exported `student_paragraph`.
-- `vocab` and `grammar` should preserve the original passage except for the agreed numbered underline wrappers and exactly one intended corruption among the five numbered targets.
-- The deferred `mood_atmosphere` implementation must not appear in default launcher or batch outputs unless it is explicitly reactivated in the live registry later.
+- `vocab` now includes both a five-target contextual error subtype and a single-target five-choice lexical selection subtype.
+- `grammar` now fans out into multiple controlled subtype rows under the broad family key, with subtype-specific compatibility gating.
+- `mood_atmosphere` is live again and currently expands into three concrete subtype rows.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
 - Teacher-facing explanation writing is now treated as a post-render concern rather than as part of structural planning for the live types.
 - Planner rationale may remain internal, but exported explanations for the live types are now rewritten from rendered item context and textual evidence rather than copied directly from planner-internal IDs or schema fields.

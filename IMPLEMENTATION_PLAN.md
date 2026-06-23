@@ -15,6 +15,8 @@
 - [x] Ship one cheaper default model first: `gpt-5-mini`.
 - [x] Defer per-question-type model routing until after the live pipeline is stable.
 - [x] Keep the current batch execution path synchronous and serial; defer async or concurrent orchestration as a later performance-only track.
+- [x] Keep broad family keys as the launcher/UI selection surface while expanding execution into concrete subtype rows underneath each family.
+- [x] Preserve subtype metadata in runtime state and exports through `QuestionFormatKey`, `QuestionSubtypeKey`, and `QuestionSubtype`.
 
 ## Wave 1: Backend Foundation
 
@@ -147,9 +149,11 @@
   - shipped v1 policy: self-select one phrase, prefer abstract or claim-bearing spans, use Korean contextual paraphrase choices, and render `[밑줄]...[/밑줄]` in exports
 - [x] `fill_in_the_blank`
   - rollout policy: live now for MVP, even if distractor quality and semantic recoverability remain rough
-  - first supported format: `blank_inference_proposition_5_choices`
-  - first-release target: 빈칸추론, not generic phrase deletion
-  - shipped v1 policy: one selected multi-word span is replaced with a single blank marker, five English completion choices are rendered, and only core structural validation is enforced
+  - live subtype set:
+    - `blank_inference_proposition_5_choices`
+    - `blank_connective_relation_5_choices`
+    - `blank_summary_completion_5_choices`
+  - shipped policy: selected broad-family runs expand to multiple blank subtypes, each with subtype-specific inventories and incompatibility gates
 
 ### Single-span acceptance
 
@@ -163,18 +167,24 @@
 ### Recommended implementation order
 
 - [x] `vocab`
-  - rollout policy: live now for MVP, with target selection anchored primarily to source-owned IDs rather than planner-copied text
-  - first supported format: `contextual_vocab_error_5`
-  - first-release target: one controlled contextual corruption with four still-valid underlined items
-  - shipped v1 policy: exactly five numbered single-word targets are rendered, exactly one is replaced by a readable but contextually wrong word, and the other four remain source-preserving
+  - rollout policy: live now with broad-key preservation and subtype fan-out
+  - live subtype set:
+    - `contextual_vocab_error_5`
+    - `contextual_vocab_choice_5`
+  - shipped policy: broad-family runs now produce both the five-target corruption item and the single-target lexical choice item
   - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs, prefer opposition-capable targets through conservative planner hints, and deterministically reject obvious near-synonym corruptions
 - [x] `grammar`
-  - rollout policy: live now for MVP, with the first pass still constrained to controlled verb-form corruption only
-  - first supported format: `grammar_error_5`
-  - first-release target: one controlled structural corruption with four still-valid grammar-bearing items
-  - shipped v1 policy: exactly five numbered single-word verb-form targets are rendered, exactly one is replaced by a controlled verb-form variant, and the other four remain source-preserving
-  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs, keep the live scope on verb-form-only corruption, and deterministically reject malformed pseudo-word variants
-  - deferred expansion policy: broader grammar families such as role-dependent preposition/conjunction confusion remain future work and are not part of the live runtime contract
+  - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
+  - live subtype set:
+    - `grammar_error_verb_form_5`
+    - `grammar_error_subject_verb_agreement_5`
+    - `grammar_error_finite_nonfinite_5`
+    - `grammar_error_participle_voice_5`
+    - `grammar_error_relative_clause_5`
+    - `grammar_error_noun_clause_introducer_5`
+    - `grammar_error_parallel_structure_5`
+    - `grammar_error_conjunction_preposition_5`
+  - shipped policy: the broad `grammar` family now expands into multiple controlled subtype rows instead of one generic verb-form row
 
 ### Multi-span acceptance
 
@@ -182,13 +192,15 @@
 - [x] The validator can prove there is exactly one structurally rendered corruption.
 - [ ] Real-batch outputs remain diagnostically readable in CSV/JSON when passages do not fit these families.
 
-## Wave 8: Deferred Affective Family
+## Wave 8: Affective Family
 
-- [ ] `mood_atmosphere`
-  - status: inactive and incomplete; implementation code is retained but removed from the live registry
-  - current dormant format draft: `emotion_shift_pair_choice_5`
-  - deferral policy: keep it out of the default live registry while the MVP focuses on full coverage of `fill_in_the_blank`, `vocab`, and `grammar`
-  - reactivation gate: only revisit after explicit user confirmation
+- [x] `mood_atmosphere`
+  - status: reactivated in the live registry
+  - live subtype set:
+    - `emotion_shift_pair_choice_5`
+    - `emotion_state_choice_5`
+    - `atmosphere_choice_5`
+  - shipped policy: broad-family selection stays stable while execution expands into multiple mood/atmosphere subtype rows
 
 ## Acceptance Checklist
 
@@ -199,7 +211,7 @@
 - [x] The launcher attempts all registered question types without manual type selection.
 - [x] CSV and JSON are both produced for debugging runs.
 - [x] Failed type/passage combinations remain visible and readable in exported results.
-- [x] The live registry includes `fill_in_the_blank`, `vocab`, and `grammar`, while still excluding deferred `mood_atmosphere`.
+- [x] The live registry includes `mood_atmosphere`, `fill_in_the_blank`, `vocab`, and `grammar` under subtype-expanded broad families.
 - [x] `qtype_incompatibility_error` is distinguishable from malformed-source failure and planner malfunction in exported results.
 - [x] `planning_error` continues to cover both planner-quality defects and upstream LLM service failures; quota exhaustion does not introduce a new `PipelineStatus`.
 
@@ -217,6 +229,7 @@
 - [x] Invalid deterministic plans surface as `planning_error` before rendering rather than leaking into `rendering_error`.
 - [x] Planner rationale and exported explanation do not need to share the same generation step.
 - [x] Future Wave 4 registry entries should keep broad `QuestionTypeKey` values and move exact first supported shapes into `format_key`.
+- [x] Broad-family launcher selections may now expand into multiple subtype rows; exported results preserve both the broad family key and the concrete subtype metadata.
 - [x] Batch execution may short-circuit further LLM attempts after the first `insufficient_quota` failure, but exported result counts must still equal input rows times active question types.
 - [x] Future async exploration, if any, should start at the batch or row/type orchestration layer without changing current question-type semantics or exported row counts.
 - [x] After the current hardening baseline, reopen qtype-specific refinement planning with priority on `grammar` and `vocab`.

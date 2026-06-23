@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from .parsers import content_tokens, looks_fragmentary_sentence, normalize_text
-from .question_types import QUESTION_TYPES, QuestionTypeSpec
+from .question_types import QUESTION_SUBTYPE_SPECS, QUESTION_TYPES, QuestionTypeSpec, resolve_question_type_spec
 from .renderers import (
     DISPLAY_PERMUTATIONS,
     MARKER_CHOICES,
@@ -24,13 +24,19 @@ from .schemas import (
     QuestionState,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabChoicePlan,
     VocabPlan,
 )
 from .targeting import (
     BLANK_MARKER,
     allowed_verb_form_variants,
+    fill_blank_connective_inventory,
+    fill_blank_connective_quality_error,
+    fill_blank_summary_inventory,
+    fill_blank_summary_quality_error,
     fill_blank_span_quality_error,
     fill_blank_target_inventory,
+    grammar_subtype_inventory,
     grammar_target_inventory,
     is_auxiliary_like,
     is_near_synonym_corruption,
@@ -42,6 +48,7 @@ from .targeting import (
     render_numbered_span_edits,
     underlined_phrase_inventory,
     underlined_span_quality_error,
+    vocab_choice_inventory,
     vocab_target_inventory,
 )
 
@@ -143,9 +150,25 @@ def input_check(
     question_types: Mapping[str, QuestionTypeSpec] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
-    registry = question_types or QUESTION_TYPES
-    if state["QuestionTypeKey"] not in registry:
+    subtype_registry = question_types or QUESTION_SUBTYPE_SPECS
+    question_subtype_key = state.get("QuestionSubtypeKey")
+    question_format_key = state.get("QuestionFormatKey")
+    if state["QuestionTypeKey"] not in QUESTION_TYPES:
         errors.append(f"Unknown QuestionTypeKey: {state['QuestionTypeKey']}")
+    resolved_spec = resolve_question_type_spec(
+        state["QuestionTypeKey"],
+        question_subtype_key,
+    )
+    if state["QuestionTypeKey"] in QUESTION_TYPES and resolved_spec is None:
+        errors.append(
+            f"Unknown QuestionSubtypeKey for {state['QuestionTypeKey']}: {question_subtype_key}"
+        )
+    if question_subtype_key is not None and question_subtype_key not in subtype_registry:
+        errors.append(f"Unknown concrete subtype key: {question_subtype_key}")
+    if resolved_spec is not None and question_format_key not in {None, resolved_spec.format_key}:
+        errors.append(
+            f"QuestionFormatKey must match subtype {resolved_spec.subtype_key}: {resolved_spec.format_key}."
+        )
     if not isinstance(state["OriginalQuestionNumber"], str) or not state["OriginalQuestionNumber"].strip():
         errors.append("OriginalQuestionNumber must be a non-empty string.")
     if not isinstance(state["BatchRowId"], int) or state["BatchRowId"] < 0:
@@ -341,15 +364,15 @@ def validate_plan_against_prepared_source(
     if type_spec.validator_key == "paragraph_ordering":
         return _validate_paragraph_ordering_plan(prepared_source, plan)
     if type_spec.validator_key == "mood_atmosphere":
-        return _validate_mood_atmosphere_plan(prepared_source, plan)
+        return _validate_mood_atmosphere_plan(prepared_source, plan, type_spec)
     if type_spec.validator_key == "underlined_phrase_meaning":
         return _validate_underlined_phrase_meaning_plan(prepared_source, plan)
     if type_spec.validator_key == "fill_in_the_blank":
-        return _validate_fill_in_the_blank_plan(prepared_source, plan)
+        return _validate_fill_in_the_blank_plan(prepared_source, plan, type_spec)
     if type_spec.validator_key == "vocab":
-        return _validate_vocab_plan(prepared_source, plan)
+        return _validate_vocab_plan(prepared_source, plan, type_spec)
     if type_spec.validator_key == "grammar":
-        return _validate_grammar_plan(prepared_source, plan)
+        return _validate_grammar_plan(prepared_source, plan, type_spec)
     return [f"No deterministic plan validator is registered for {type_spec.validator_key}."]
 
 
@@ -363,15 +386,15 @@ def validate_question_type_compatibility(
     if type_spec.validator_key == "paragraph_ordering":
         return _validate_paragraph_ordering_compatibility(prepared_source)
     if type_spec.validator_key == "mood_atmosphere":
-        return _validate_mood_atmosphere_compatibility(source_paragraph, prepared_source)
+        return _validate_mood_atmosphere_compatibility(source_paragraph, prepared_source, type_spec)
     if type_spec.validator_key == "underlined_phrase_meaning":
         return _validate_underlined_phrase_meaning_compatibility(prepared_source)
     if type_spec.validator_key == "fill_in_the_blank":
-        return _validate_fill_in_the_blank_compatibility(prepared_source)
+        return _validate_fill_in_the_blank_compatibility(prepared_source, type_spec)
     if type_spec.validator_key == "vocab":
-        return _validate_vocab_compatibility(prepared_source)
+        return _validate_vocab_compatibility(prepared_source, type_spec)
     if type_spec.validator_key == "grammar":
-        return _validate_grammar_compatibility(prepared_source)
+        return _validate_grammar_compatibility(prepared_source, type_spec)
     return []
 
 
@@ -464,35 +487,58 @@ def _validate_paragraph_ordering_plan(prepared_source: PreparedSource, plan: obj
     return []
 
 
-def _validate_mood_atmosphere_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+def _validate_mood_atmosphere_plan(
+    prepared_source: PreparedSource,
+    plan: object,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
     if not isinstance(plan, MoodAtmospherePlan):
         return ["MoodAtmospherePlan is missing for deterministic plan checks."]
 
     errors: list[str] = []
     source_text = normalize_text(" ".join(unit.text for unit in prepared_source.sentence_units))
-    for field_name in ("initial_evidence", "final_evidence"):
-        evidence = getattr(plan, field_name)
-        if normalize_text(evidence) not in source_text:
-            errors.append(f"MoodAtmospherePlan {field_name} must be copied from the source passage.")
-    if plan.shift_trigger and normalize_text(plan.shift_trigger) not in source_text:
-        errors.append("MoodAtmospherePlan shift_trigger must be copied from the source passage.")
+    if type_spec.subtype_key == "emotion_shift_pair_choice_5":
+        for field_name in ("initial_evidence", "final_evidence"):
+            evidence = getattr(plan, field_name)
+            if evidence and normalize_text(evidence) not in source_text:
+                errors.append(f"MoodAtmospherePlan {field_name} must be copied from the source passage.")
+        if plan.shift_trigger and normalize_text(plan.shift_trigger) not in source_text:
+            errors.append("MoodAtmospherePlan shift_trigger must be copied from the source passage.")
+    elif type_spec.subtype_key == "emotion_state_choice_5":
+        if plan.state_evidence and normalize_text(plan.state_evidence) not in source_text:
+            errors.append("MoodAtmospherePlan state_evidence must be copied from the source passage.")
+    elif type_spec.subtype_key == "atmosphere_choice_5":
+        if plan.atmosphere_evidence and normalize_text(plan.atmosphere_evidence) not in source_text:
+            errors.append("MoodAtmospherePlan atmosphere_evidence must be copied from the source passage.")
     return errors
 
 
 def _validate_mood_atmosphere_compatibility(
     source_paragraph: str,
     prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
 ) -> list[str]:
     source_text = normalize_text(source_paragraph)
     affective_cues = {match.group(0).lower() for match in _AFFECTIVE_CUE_RE.finditer(source_text)}
-    if len(affective_cues) < 2:
-        return ["Passage does not contain enough clear affective cues for an emotion-shift item."]
-
-    if _HOLDER_CUE_RE.search(source_text) is None:
-        return ["Passage does not provide a clear feeling-holder cue for an emotion-shift item."]
-
-    if len(prepared_source.sentence_units) < 2:
-        return ["Passage does not contain enough sentence-level development for an emotion-shift item."]
+    holder_match = _HOLDER_CUE_RE.search(source_text)
+    if type_spec.subtype_key == "emotion_shift_pair_choice_5":
+        if len(affective_cues) < 2:
+            return ["Passage does not contain enough clear affective cues for an emotion-shift item."]
+        if holder_match is None:
+            return ["Passage does not provide a clear feeling-holder cue for an emotion-shift item."]
+        if len(prepared_source.sentence_units) < 2:
+            return ["Passage does not contain enough sentence-level development for an emotion-shift item."]
+        return []
+    if type_spec.subtype_key == "emotion_state_choice_5":
+        if len(affective_cues) < 1:
+            return ["Passage does not contain enough clear affective cues for an emotion-state item."]
+        if holder_match is None:
+            return ["Passage does not provide a clear feeling-holder cue for an emotion-state item."]
+        return []
+    if len(affective_cues) < 1:
+        return ["Passage does not contain enough atmospheric cues for an atmosphere item."]
+    if holder_match and len(affective_cues) == 1:
+        return ["Passage looks closer to one holder's isolated emotion than to a passage-level atmosphere item."]
 
     return []
 
@@ -618,12 +664,22 @@ def _validate_underlined_phrase_meaning_compatibility(prepared_source: PreparedS
     return []
 
 
-def _validate_fill_in_the_blank_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+def _validate_fill_in_the_blank_plan(
+    prepared_source: PreparedSource,
+    plan: object,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
     if not isinstance(plan, FillInTheBlankPlan):
         return ["FillInTheBlankPlan is missing for deterministic plan checks."]
 
     errors: list[str] = []
-    span_map = {span.id: span for span in fill_blank_target_inventory(prepared_source)}
+    if type_spec.subtype_key == "blank_connective_relation_5_choices":
+        inventory = fill_blank_connective_inventory(prepared_source)
+    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
+        inventory = fill_blank_summary_inventory(prepared_source)
+    else:
+        inventory = fill_blank_target_inventory(prepared_source)
+    span_map = {span.id: span for span in inventory}
     selected_span = span_map.get(plan.selected_span_id)
     if selected_span is None:
         return [f"Unknown selected span ID: {plan.selected_span_id}"]
@@ -641,21 +697,51 @@ def _validate_fill_in_the_blank_plan(prepared_source: PreparedSource, plan: obje
     if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
         errors.append("FillInTheBlankPlan supporting_evidence must be copied from the source passage.")
 
-    span_quality_error = fill_blank_span_quality_error(selected_span)
+    if type_spec.subtype_key == "blank_connective_relation_5_choices":
+        span_quality_error = fill_blank_connective_quality_error(selected_span)
+    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
+        span_quality_error = fill_blank_summary_quality_error(selected_span)
+    else:
+        span_quality_error = fill_blank_span_quality_error(selected_span)
     if span_quality_error is not None:
         errors.append(span_quality_error)
 
     return errors
 
 
-def _validate_fill_in_the_blank_compatibility(prepared_source: PreparedSource) -> list[str]:
-    viable_spans = fill_blank_target_inventory(prepared_source)
+def _validate_fill_in_the_blank_compatibility(
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if type_spec.subtype_key == "blank_connective_relation_5_choices":
+        viable_spans = fill_blank_connective_inventory(prepared_source)
+    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
+        viable_spans = fill_blank_summary_inventory(prepared_source)
+    else:
+        viable_spans = fill_blank_target_inventory(prepared_source)
     if not viable_spans:
-        return ["Passage has no proposition-like contextual span for fill_in_the_blank."]
+        return [f"Passage has no suitable contextual span for {type_spec.subtype_key}."]
     return []
 
 
-def _validate_vocab_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+def _validate_vocab_plan(
+    prepared_source: PreparedSource,
+    plan: object,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if isinstance(plan, VocabChoicePlan):
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
+        selected_span = inventory.get(plan.selected_span_id)
+        if selected_span is None:
+            return [f"Unknown selected span ID: {plan.selected_span_id}"]
+        errors: list[str] = []
+        if plan.selected_span_text != selected_span.text:
+            errors.append("VocabChoicePlan selected_span_text must exactly match the selected span text.")
+        if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
+            errors.append("VocabChoicePlan supporting_evidence must be copied from the source passage.")
+        if is_auxiliary_like(selected_span.text):
+            errors.append("Vocab choice target must not collapse into an auxiliary-like grammar target.")
+        return errors
     if not isinstance(plan, VocabPlan):
         return ["VocabPlan is missing for deterministic plan checks."]
 
@@ -672,32 +758,54 @@ def _validate_vocab_plan(prepared_source: PreparedSource, plan: object) -> list[
     )
 
 
-def _validate_vocab_compatibility(prepared_source: PreparedSource) -> list[str]:
+def _validate_vocab_compatibility(
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if type_spec.subtype_key == "contextual_vocab_choice_5":
+        if len(vocab_choice_inventory(prepared_source)) < 1:
+            return ["Passage does not contain a workable single-word vocab target for contextual_vocab_choice_5."]
+        return []
     if len(vocab_target_inventory(prepared_source)) < 5:
         return ["Passage does not contain five workable single-word vocab targets."]
     return []
 
 
-def _validate_grammar_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+def _validate_grammar_plan(
+    prepared_source: PreparedSource,
+    plan: object,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
     if not isinstance(plan, GrammarPlan):
         return ["GrammarPlan is missing for deterministic plan checks."]
 
     return _validate_single_word_error_plan(
         prepared_source=prepared_source,
-        target_inventory=grammar_target_inventory(prepared_source),
+        target_inventory=grammar_subtype_inventory(prepared_source, type_spec.subtype_key),
         target_span_ids=plan.target_span_ids,
         target_span_texts=plan.target_span_texts,
         corrupted_span_id=plan.corrupted_span_id,
         corrupted_word=plan.corrupted_word,
         supporting_evidence=plan.supporting_evidence,
         question_type_key="grammar",
-        require_verb_variant=True,
+        require_verb_variant=type_spec.subtype_key in {
+            "grammar_error_verb_form_5",
+            "grammar_error_finite_nonfinite_5",
+            "grammar_error_participle_voice_5",
+            "grammar_error_parallel_structure_5",
+        },
+        grammar_subtype_key=type_spec.subtype_key,
     )
 
 
-def _validate_grammar_compatibility(prepared_source: PreparedSource) -> list[str]:
-    if len(grammar_target_inventory(prepared_source)) < 5:
-        return ["Passage does not contain five workable verb-form targets for grammar."]
+def _validate_grammar_compatibility(
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if len(grammar_subtype_inventory(prepared_source, type_spec.subtype_key)) < 5:
+        if type_spec.subtype_key == "grammar_error_verb_form_5":
+            return ["Passage does not contain five workable verb-form targets for grammar."]
+        return [f"Passage does not contain five workable targets for {type_spec.subtype_key}."]
     return []
 
 
@@ -718,6 +826,28 @@ def validate_generated_question(
     }
 
 
+def _validate_generated_metadata(
+    *,
+    state: QuestionState,
+    generated: GeneratedQuestion,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    errors: list[str] = []
+    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
+        errors.append("GeneratedQuestion OriginalQuestionNumber must match the state.")
+    if generated.BatchRowId != state["BatchRowId"]:
+        errors.append("GeneratedQuestion BatchRowId must match the state.")
+    if generated.QuestionType != type_spec.family_label_ko:
+        errors.append(f"QuestionType should be '{type_spec.family_label_ko}', got '{generated.QuestionType}'.")
+    if generated.QuestionFormatKey not in {None, type_spec.format_key}:
+        errors.append(f"QuestionFormatKey should be '{type_spec.format_key}', got '{generated.QuestionFormatKey}'.")
+    if generated.QuestionSubtypeKey not in {None, type_spec.subtype_key}:
+        errors.append(f"QuestionSubtypeKey should be '{type_spec.subtype_key}', got '{generated.QuestionSubtypeKey}'.")
+    if generated.QuestionSubtype not in {None, type_spec.subtype_label_ko}:
+        errors.append(f"QuestionSubtype should be '{type_spec.subtype_label_ko}', got '{generated.QuestionSubtype}'.")
+    return errors
+
+
 def _validate_sentence_insertion_state(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
@@ -732,10 +862,9 @@ def _validate_sentence_insertion_state(
         return ["SentenceInsertionPlan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
-    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
-        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
-    if generated.BatchRowId != state["BatchRowId"]:
-        return ["GeneratedQuestion BatchRowId must match the state."]
+    metadata_errors = _validate_generated_metadata(state=state, generated=generated, type_spec=type_spec)
+    if metadata_errors:
+        return metadata_errors
 
     return validate_sentence_insertion_output(
         prepared_source=prepared_source,
@@ -780,8 +909,8 @@ def validate_sentence_insertion_output(
             )
 
     expected_choices = MARKER_CHOICES[: type_spec.choice_count]
-    if generated.QuestionType != type_spec.label_ko:
-        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.QuestionType != type_spec.family_label_ko:
+        errors.append(f"QuestionType should be '{type_spec.family_label_ko}', got '{generated.QuestionType}'.")
     if generated.question_stem != type_spec.question_stem:
         errors.append("question_stem does not match the question type metadata.")
     if generated.choices != expected_choices:
@@ -850,10 +979,9 @@ def _validate_paragraph_ordering_state(
         return ["ParagraphOrderingPlan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
-    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
-        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
-    if generated.BatchRowId != state["BatchRowId"]:
-        return ["GeneratedQuestion BatchRowId must match the state."]
+    metadata_errors = _validate_generated_metadata(state=state, generated=generated, type_spec=type_spec)
+    if metadata_errors:
+        return metadata_errors
 
     return validate_paragraph_ordering_output(
         prepared_source=prepared_source,
@@ -877,10 +1005,9 @@ def _validate_mood_atmosphere_state(
         return ["MoodAtmospherePlan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
-    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
-        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
-    if generated.BatchRowId != state["BatchRowId"]:
-        return ["GeneratedQuestion BatchRowId must match the state."]
+    metadata_errors = _validate_generated_metadata(state=state, generated=generated, type_spec=type_spec)
+    if metadata_errors:
+        return metadata_errors
 
     return validate_mood_atmosphere_output(
         prepared_source=prepared_source,
@@ -904,10 +1031,9 @@ def _validate_underlined_phrase_meaning_state(
         return ["UnderlinedPhraseMeaningPlan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
-    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
-        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
-    if generated.BatchRowId != state["BatchRowId"]:
-        return ["GeneratedQuestion BatchRowId must match the state."]
+    metadata_errors = _validate_generated_metadata(state=state, generated=generated, type_spec=type_spec)
+    if metadata_errors:
+        return metadata_errors
 
     return validate_underlined_phrase_meaning_output(
         prepared_source=prepared_source,
@@ -931,10 +1057,9 @@ def _validate_fill_in_the_blank_state(
         return ["FillInTheBlankPlan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
-    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
-        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
-    if generated.BatchRowId != state["BatchRowId"]:
-        return ["GeneratedQuestion BatchRowId must match the state."]
+    metadata_errors = _validate_generated_metadata(state=state, generated=generated, type_spec=type_spec)
+    if metadata_errors:
+        return metadata_errors
 
     return validate_fill_in_the_blank_output(
         prepared_source=prepared_source,
@@ -954,14 +1079,13 @@ def _validate_vocab_state(
 
     if prepared_source is None:
         return ["PreparedSource is missing for validation."]
-    if not isinstance(plan, VocabPlan):
-        return ["VocabPlan is missing for validation."]
+    if not isinstance(plan, (VocabPlan, VocabChoicePlan)):
+        return ["A vocab plan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
-    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
-        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
-    if generated.BatchRowId != state["BatchRowId"]:
-        return ["GeneratedQuestion BatchRowId must match the state."]
+    metadata_errors = _validate_generated_metadata(state=state, generated=generated, type_spec=type_spec)
+    if metadata_errors:
+        return metadata_errors
 
     return validate_vocab_output(
         prepared_source=prepared_source,
@@ -985,10 +1109,9 @@ def _validate_grammar_state(
         return ["GrammarPlan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
-    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
-        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
-    if generated.BatchRowId != state["BatchRowId"]:
-        return ["GeneratedQuestion BatchRowId must match the state."]
+    metadata_errors = _validate_generated_metadata(state=state, generated=generated, type_spec=type_spec)
+    if metadata_errors:
+        return metadata_errors
 
     return validate_grammar_output(
         prepared_source=prepared_source,
@@ -1013,8 +1136,8 @@ def validate_paragraph_ordering_output(
         errors.append("ParagraphOrderingPlan must cover all sentence IDs exactly once in source order.")
         return errors
 
-    if generated.QuestionType != type_spec.label_ko:
-        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.QuestionType != type_spec.family_label_ko:
+        errors.append(f"QuestionType should be '{type_spec.family_label_ko}', got '{generated.QuestionType}'.")
     if generated.question_stem != type_spec.question_stem:
         errors.append("question_stem does not match the question type metadata.")
 
@@ -1082,11 +1205,8 @@ def validate_mood_atmosphere_output(
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
     errors: list[str] = []
-    expected_choices = [_normalize_choice_pair(choice) for choice in plan.choice_pairs]
     source_text = normalize_text(" ".join(unit.text for unit in prepared_source.sentence_units))
 
-    if generated.QuestionType != type_spec.label_ko:
-        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
     if generated.question_stem != type_spec.question_stem:
         errors.append("question_stem does not match the question type metadata.")
     if generated.given_sentence is not None:
@@ -1097,31 +1217,41 @@ def validate_mood_atmosphere_output(
     if generated.choices is None or len(generated.choices) != type_spec.choice_count:
         errors.append(f"choices must contain exactly {type_spec.choice_count} items.")
     else:
-        normalized_choices = [_normalize_choice_pair(choice) for choice in generated.choices]
+        if plan.subtype == "emotion_shift":
+            expected_choices = [_normalize_choice_pair(choice) for choice in plan.choice_pairs]
+            normalized_choices = [_normalize_choice_pair(choice) for choice in generated.choices]
+        else:
+            expected_choices = [normalize_english_choice(choice) for choice in plan.choice_pairs]
+            normalized_choices = [normalize_english_choice(choice) for choice in generated.choices]
         if len(set(normalized_choices)) != len(normalized_choices):
             errors.append("choices must be unique.")
-        if any(_MOOD_CHOICE_PAIR_RE.match(choice) is None for choice in normalized_choices):
+        if plan.subtype == "emotion_shift" and any(_MOOD_CHOICE_PAIR_RE.match(choice) is None for choice in normalized_choices):
             errors.append("choices must use English 'emotion -> emotion' format.")
         if normalized_choices != expected_choices:
             errors.append(f"choices must be exactly {expected_choices}.")
         if generated.answer not in MARKER_CHOICES[: len(generated.choices)]:
             errors.append("answer must be one of the rendered marker choices.")
         else:
-            expected_answer = MARKER_CHOICES[expected_choices.index(_normalize_choice_pair(plan.correct_choice))]
+            plan_choice = _normalize_choice_pair(plan.correct_choice) if plan.subtype == "emotion_shift" else normalize_english_choice(plan.correct_choice)
+            expected_answer = MARKER_CHOICES[expected_choices.index(plan_choice)]
             if generated.answer != expected_answer:
-                errors.append(
-                    f"answer should map to the correct emotion shift as {expected_answer}, got {generated.answer}."
-                )
+                errors.append(f"answer should map to the correct mood choice as {expected_answer}, got {generated.answer}.")
 
-    if plan.initial_emotion.strip().lower() == plan.final_emotion.strip().lower():
-        errors.append("initial_emotion and final_emotion must differ.")
-
-    for field_name in ("initial_evidence", "final_evidence"):
-        evidence = getattr(plan, field_name)
-        if normalize_text(evidence) not in source_text:
-            errors.append(f"{field_name} must appear in the source passage.")
-    if plan.shift_trigger and normalize_text(plan.shift_trigger) not in source_text:
-        errors.append("shift_trigger must appear in the source passage.")
+    if plan.subtype == "emotion_shift":
+        if (plan.initial_emotion or "").strip().lower() == (plan.final_emotion or "").strip().lower():
+            errors.append("initial_emotion and final_emotion must differ.")
+        for field_name in ("initial_evidence", "final_evidence"):
+            evidence = getattr(plan, field_name)
+            if evidence and normalize_text(evidence) not in source_text:
+                errors.append(f"{field_name} must appear in the source passage.")
+        if plan.shift_trigger and normalize_text(plan.shift_trigger) not in source_text:
+            errors.append("shift_trigger must appear in the source passage.")
+    elif plan.subtype == "emotion_state":
+        if plan.state_evidence and normalize_text(plan.state_evidence) not in source_text:
+            errors.append("state_evidence must appear in the source passage.")
+    elif plan.subtype == "atmosphere":
+        if plan.atmosphere_evidence and normalize_text(plan.atmosphere_evidence) not in source_text:
+            errors.append("atmosphere_evidence must appear in the source passage.")
 
     errors.extend(
         validate_teacher_facing_explanation(
@@ -1149,8 +1279,8 @@ def validate_underlined_phrase_meaning_output(
         errors.append(f"Unknown selected span ID: {plan.selected_span_id}")
         return errors
 
-    if generated.QuestionType != type_spec.label_ko:
-        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.QuestionType != type_spec.family_label_ko:
+        errors.append(f"QuestionType should be '{type_spec.family_label_ko}', got '{generated.QuestionType}'.")
     if generated.question_stem != type_spec.question_stem:
         errors.append("question_stem does not match the question type metadata.")
     if generated.given_sentence is not None:
@@ -1211,7 +1341,13 @@ def validate_fill_in_the_blank_output(
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
     errors: list[str] = []
-    span_map = {span.id: span for span in fill_blank_target_inventory(prepared_source)}
+    if type_spec.subtype_key == "blank_connective_relation_5_choices":
+        inventory = fill_blank_connective_inventory(prepared_source)
+    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
+        inventory = fill_blank_summary_inventory(prepared_source)
+    else:
+        inventory = fill_blank_target_inventory(prepared_source)
+    span_map = {span.id: span for span in inventory}
     selected_span = span_map.get(plan.selected_span_id)
     expected_choices = [normalize_english_choice(choice) for choice in plan.completion_choices]
 
@@ -1219,8 +1355,6 @@ def validate_fill_in_the_blank_output(
         errors.append(f"Unknown selected span ID: {plan.selected_span_id}")
         return errors
 
-    if generated.QuestionType != type_spec.label_ko:
-        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
     if generated.question_stem != type_spec.question_stem:
         errors.append("question_stem does not match the question type metadata.")
     if generated.given_sentence is not None:
@@ -1268,10 +1402,41 @@ def validate_fill_in_the_blank_output(
 def validate_vocab_output(
     *,
     prepared_source: PreparedSource,
-    plan: VocabPlan,
+    plan: VocabPlan | VocabChoicePlan,
     generated: GeneratedQuestion,
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
+    if isinstance(plan, VocabChoicePlan):
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
+        selected_span = inventory.get(plan.selected_span_id)
+        if selected_span is None:
+            return [f"Unknown selected span ID: {plan.selected_span_id}"]
+        errors: list[str] = []
+        expected_choices = [normalize_english_choice(choice) for choice in plan.choice_words]
+        if generated.question_stem != type_spec.question_stem:
+            errors.append("question_stem does not match the question type metadata.")
+        if generated.given_sentence is not None:
+            errors.append("given_sentence must be None for vocab.")
+        if generated.choices is None or generated.choices != expected_choices:
+            errors.append(f"choices must be exactly {expected_choices}.")
+        expected_answer = MARKER_CHOICES[expected_choices.index(normalize_english_choice(plan.correct_choice))]
+        if generated.answer != expected_answer:
+            errors.append(f"answer should map to the correct vocab choice as {expected_answer}, got {generated.answer}.")
+        expected_paragraph = (
+            prepared_source.source_text[: selected_span.char_start]
+            + BLANK_MARKER
+            + prepared_source.source_text[selected_span.char_end :]
+        )
+        if generated.student_paragraph != expected_paragraph:
+            errors.append("student_paragraph must preserve the source except for one exact vocab-choice blank replacement.")
+        errors.extend(
+            validate_teacher_facing_explanation(
+                generated.explanation,
+                question_type_key="vocab",
+            )
+        )
+        return errors
+
     return _validate_single_word_error_output(
         prepared_source=prepared_source,
         target_inventory=vocab_target_inventory(prepared_source),
@@ -1294,7 +1459,7 @@ def validate_grammar_output(
 ) -> list[str]:
     return _validate_single_word_error_output(
         prepared_source=prepared_source,
-        target_inventory=grammar_target_inventory(prepared_source),
+        target_inventory=grammar_subtype_inventory(prepared_source, type_spec.subtype_key),
         target_span_ids=plan.target_span_ids,
         target_span_texts=plan.target_span_texts,
         corrupted_span_id=plan.corrupted_span_id,
@@ -1390,6 +1555,7 @@ def _validate_single_word_error_plan(
     supporting_evidence: str,
     question_type_key: str,
     require_verb_variant: bool,
+    grammar_subtype_key: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     inventory = {span.id: span for span in target_inventory}
@@ -1441,9 +1607,11 @@ def _validate_single_word_error_plan(
             if "grammar_candidate" not in getattr(corrupted_span, "heuristic_tags", []):
                 errors.append("grammar corrupted target must come from the grammar-target inventory.")
         else:
-            if is_auxiliary_like(corrupted_word):
+            if question_type_key == "grammar":
+                errors.extend(_validate_non_verb_grammar_corruption(corrupted_span.text, corrupted_word, grammar_subtype_key))
+            if question_type_key == "vocab" and is_auxiliary_like(corrupted_word):
                 errors.append("vocab corrupted_word should not collapse into an auxiliary-only grammar target.")
-            if is_near_synonym_corruption(corrupted_span.text, corrupted_word):
+            if question_type_key == "vocab" and is_near_synonym_corruption(corrupted_span.text, corrupted_word):
                 errors.append(
                     "vocab corrupted_word is a near-synonym of the original word and does not "
                     "produce a clear contextual error. Choose a word that reverses or clearly "
@@ -1451,6 +1619,47 @@ def _validate_single_word_error_plan(
                 )
 
     return errors
+
+
+def _validate_non_verb_grammar_corruption(
+    original_word: str,
+    corrupted_word: str,
+    grammar_subtype_key: str | None,
+) -> list[str]:
+    original = normalize_english_word(original_word)
+    corrupted = normalize_english_word(corrupted_word)
+    if original == corrupted:
+        return ["grammar corrupted_word must differ from the original target word."]
+
+    if grammar_subtype_key == "grammar_error_subject_verb_agreement_5":
+        if {original, corrupted} not in (
+            {"is", "are"},
+            {"was", "were"},
+            {"has", "have"},
+            {"does", "do"},
+        ) and not (original.endswith("s") ^ corrupted.endswith("s")):
+            return ["grammar subject_verb_agreement corruption must flip agreement while staying readable."]
+        return []
+
+    if grammar_subtype_key == "grammar_error_relative_clause_5":
+        allowed = {"who", "whom", "whose", "which", "where", "when", "that"}
+        if original not in allowed or corrupted not in allowed:
+            return ["grammar relative_clause corruption must stay inside a controlled relative-clause choice set."]
+        return []
+
+    if grammar_subtype_key == "grammar_error_noun_clause_introducer_5":
+        allowed = {"what", "whether", "if", "how", "why", "that"}
+        if original not in allowed or corrupted not in allowed:
+            return ["grammar noun_clause_introducer corruption must stay inside a controlled noun-clause introducer set."]
+        return []
+
+    if grammar_subtype_key == "grammar_error_conjunction_preposition_5":
+        allowed = {"because", "although", "despite", "during", "since", "though", "unless", "while", "without", "like", "than", "if"}
+        if original not in allowed or corrupted not in allowed:
+            return ["grammar conjunction_preposition corruption must stay inside a controlled local connector set."]
+        return []
+
+    return []
 
 
 def _validate_single_word_error_output(
@@ -1481,8 +1690,8 @@ def _validate_single_word_error_output(
     ordered_spans = sorted(selected_spans, key=lambda span: (span.char_start, span.char_end))
     ordered_ids = [span.id for span in ordered_spans]
 
-    if generated.QuestionType != type_spec.label_ko:
-        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.QuestionType != type_spec.family_label_ko:
+        errors.append(f"QuestionType should be '{type_spec.family_label_ko}', got '{generated.QuestionType}'.")
     if generated.question_stem != type_spec.question_stem:
         errors.append("question_stem does not match the question type metadata.")
     if generated.given_sentence is not None:

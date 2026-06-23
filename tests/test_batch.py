@@ -231,13 +231,19 @@ class BatchTests(unittest.TestCase):
             ],
             self.runner,
         )
-        self.assertEqual(len(results), 7)
-        self.assertEqual(results[0].status, "validation_passed")
-        self.assertEqual(results[1].status, "planning_error")
-        self.assertEqual(results[2].status, "qtype_incompatibility_error")
-        self.assertEqual(results[3].status, "validation_passed")
-        self.assertEqual(results[4].status, "validation_passed")
-        self.assertEqual(results[5].status, "validation_passed")
+        self.assertEqual(len(results), 17)
+        by_subtype = {result.QuestionSubtypeKey: result for result in results}
+        self.assertEqual(by_subtype["sentence_insertion_5_gaps"].status, "validation_passed")
+        self.assertEqual(by_subtype["abc_ordering_after_intro"].status, "planning_error")
+        self.assertEqual(by_subtype["underlined_phrase_meaning_5_ko"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["blank_inference_proposition_5_choices"].status, "validation_passed")
+        self.assertEqual(by_subtype["blank_connective_relation_5_choices"].status, "validation_passed")
+        self.assertEqual(by_subtype["blank_summary_completion_5_choices"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["contextual_vocab_error_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_choice_5"].status, "planning_error")
+        self.assertEqual(by_subtype["grammar_error_verb_form_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["grammar_error_subject_verb_agreement_5"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["grammar_error_finite_nonfinite_5"].status, "validation_passed")
         self.assertEqual(results[-1].status, "input_error")
 
     def test_per_row_failure_is_captured(self) -> None:

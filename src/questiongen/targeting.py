@@ -195,6 +195,24 @@ def fill_blank_target_inventory(prepared_source: PreparedSource) -> list[SpanUni
     return sorted(candidates, key=_fill_blank_span_sort_key)
 
 
+def fill_blank_connective_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
+    candidates = [
+        span
+        for span in phrase_span_inventory(prepared_source)
+        if fill_blank_connective_quality_error(span) is None
+    ]
+    return sorted(candidates, key=_fill_blank_connective_sort_key)
+
+
+def fill_blank_summary_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
+    candidates = [
+        span
+        for span in phrase_span_inventory(prepared_source)
+        if fill_blank_summary_quality_error(span) is None
+    ]
+    return sorted(candidates, key=_fill_blank_summary_sort_key)
+
+
 def vocab_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
     return _dedupe_by_text(
         span
@@ -203,12 +221,42 @@ def vocab_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
     )
 
 
+def vocab_choice_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
+    candidates = [
+        span
+        for span in vocab_target_inventory(prepared_source)
+        if not is_auxiliary_like(span.text)
+    ]
+    return sorted(candidates, key=lambda span: (-span.priority_score, span.char_start, span.char_end))
+
+
 def grammar_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
     return _dedupe_by_text(
         span
         for span in prepared_source.span_units
         if "single_word" in span.heuristic_tags and "grammar_candidate" in span.heuristic_tags
     )
+
+
+def grammar_subtype_inventory(prepared_source: PreparedSource, subtype_key: str) -> list[SpanUnit]:
+    inventory = grammar_target_inventory(prepared_source)
+    if subtype_key == "grammar_error_verb_form_5":
+        return [span for span in inventory if "verb_form_candidate" in span.heuristic_tags]
+    if subtype_key == "grammar_error_subject_verb_agreement_5":
+        return [span for span in inventory if "subject_verb_agreement_candidate" in span.heuristic_tags]
+    if subtype_key == "grammar_error_finite_nonfinite_5":
+        return [span for span in inventory if "finite_nonfinite_candidate" in span.heuristic_tags]
+    if subtype_key == "grammar_error_participle_voice_5":
+        return [span for span in inventory if "participle_voice_candidate" in span.heuristic_tags]
+    if subtype_key == "grammar_error_relative_clause_5":
+        return [span for span in inventory if "relative_clause_candidate" in span.heuristic_tags]
+    if subtype_key == "grammar_error_noun_clause_introducer_5":
+        return [span for span in inventory if "noun_clause_candidate" in span.heuristic_tags]
+    if subtype_key == "grammar_error_parallel_structure_5":
+        return [span for span in inventory if "parallel_structure_candidate" in span.heuristic_tags]
+    if subtype_key == "grammar_error_conjunction_preposition_5":
+        return [span for span in inventory if "conjunction_preposition_candidate" in span.heuristic_tags]
+    return inventory
 
 
 def numbered_underline_open(marker: str) -> str:
@@ -349,6 +397,34 @@ def fill_blank_span_quality_error(span: SpanUnit) -> str | None:
     return None
 
 
+def fill_blank_connective_quality_error(span: SpanUnit) -> str | None:
+    base_error = fill_blank_span_quality_error(span)
+    if base_error is not None:
+        return base_error
+    lowered = normalize_text(span.text).lower()
+    tags = set(span.heuristic_tags)
+    if not (
+        {"contextual_cue", "clause_like", "proposition_like"} & tags
+        or any(token in lowered.split() for token in _PROPOSITION_CUE_WORDS)
+    ):
+        return "Selected span is not relation-bearing enough for a connective blank."
+    if len(_span_tokens(span.text)) > 7:
+        return "Selected span is too long for a connective-relation blank."
+    return None
+
+
+def fill_blank_summary_quality_error(span: SpanUnit) -> str | None:
+    base_error = fill_blank_span_quality_error(span)
+    if base_error is not None:
+        return base_error
+    tags = set(span.heuristic_tags)
+    if "claim_bearing" not in tags and "abstract_term" not in tags:
+        return "Selected span is not summary-worthy enough for a summary-completion blank."
+    if span.priority_score < 5:
+        return "Selected span is too weak for a summary-completion blank."
+    return None
+
+
 def _dedupe_by_text(spans: Iterable[SpanUnit]) -> list[SpanUnit]:
     ordered = sorted(
         spans,
@@ -467,6 +543,28 @@ def _fill_blank_span_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
     if span_crosses_punctuation(span.text):
         bonus -= 2
     return (-(span.priority_score + bonus), span.char_start, span.char_end - span.char_start, span.char_end)
+
+
+def _fill_blank_connective_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
+    tags = set(span.heuristic_tags)
+    bonus = 0
+    if "contextual_cue" in tags:
+        bonus += 4
+    if _has_proposition_signal(span.text, tags):
+        bonus += 2
+    token_penalty = max(0, len(_span_tokens(span.text)) - 5)
+    return (-(span.priority_score + bonus), token_penalty, span.char_start, span.char_end)
+
+
+def _fill_blank_summary_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
+    tags = set(span.heuristic_tags)
+    bonus = 0
+    if "claim_bearing" in tags:
+        bonus += 4
+    if "abstract_term" in tags:
+        bonus += 2
+    sentence_bias = -(span.sentence_index or 0)
+    return (-(span.priority_score + bonus), sentence_bias, span.char_start, span.char_end)
 
 
 def _span_tokens(text: str) -> list[str]:

@@ -13,9 +13,10 @@ from .schemas import (
     QuestionState,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabChoicePlan,
     VocabPlan,
 )
-from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_target_inventory
+from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_choice_inventory, vocab_target_inventory
 
 
 def build_explanation_context(state: QuestionState) -> dict[str, Any]:
@@ -91,13 +92,13 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
         }
 
     if question_type_key == "vocab":
-        if not isinstance(plan, VocabPlan):
+        if not isinstance(plan, (VocabPlan, VocabChoicePlan)):
             return {
                 "status": "rendering_error",
-                "errors": ["VocabPlan is required before explanation generation."],
+                "errors": ["A vocab plan is required before explanation generation."],
             }
         return {
-            "explanation_context": _build_vocab_context(prepared_source, plan),
+            "explanation_context": _build_vocab_context(prepared_source, plan, generated),
             "status": "rendered",
             "errors": [],
         }
@@ -225,12 +226,17 @@ def _build_mood_atmosphere_context(
     correct_marker = generated.answer
     correct_choice = generated.choices[["①", "②", "③", "④", "⑤"].index(correct_marker)] if generated.choices else plan.correct_choice
     return {
+        "subtype": plan.subtype,
         "target_holder": plan.target_holder,
         "initial_emotion": plan.initial_emotion,
         "final_emotion": plan.final_emotion,
+        "state_emotion": plan.state_emotion,
+        "atmosphere_label": plan.atmosphere_label,
         "initial_evidence": plan.initial_evidence,
         "final_evidence": plan.final_evidence,
         "shift_trigger": plan.shift_trigger,
+        "state_evidence": plan.state_evidence,
+        "atmosphere_evidence": plan.atmosphere_evidence,
         "correct_marker": correct_marker,
         "correct_choice": correct_choice,
     }
@@ -270,24 +276,40 @@ def _build_fill_in_the_blank_context(
 
 def _build_vocab_context(
     prepared_source: PreparedSource,
-    plan: VocabPlan,
+    plan: VocabPlan | VocabChoicePlan,
+    generated: GeneratedQuestion,
 ) -> dict[str, str]:
-    inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
     sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
-    ordered_spans = sorted(
-        [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
-        key=lambda span: (span.char_start, span.char_end),
-    )
-    ordered_ids = [span.id for span in ordered_spans]
-    corrupted_span = inventory[plan.corrupted_span_id]
-    correct_marker = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
-    original_word = corrupted_span.text
+    if isinstance(plan, VocabPlan):
+        inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
+        ordered_spans = sorted(
+            [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
+            key=lambda span: (span.char_start, span.char_end),
+        )
+        ordered_ids = [span.id for span in ordered_spans]
+        corrupted_span = inventory[plan.corrupted_span_id]
+        correct_marker = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
+        return {
+            "subtype": "contextual_error",
+            "original_word": corrupted_span.text,
+            "corrupted_word": plan.corrupted_word,
+            "source_sentence": sentence_map.get(corrupted_span.sentence_unit_id or "", ""),
+            "supporting_evidence": plan.supporting_evidence,
+            "correct_marker": correct_marker,
+        }
+
+    inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
+    selected_span = inventory[plan.selected_span_id]
+    choice_index = MARKER_CHOICES.index(generated.answer)
+    correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
     return {
-        "original_word": original_word,
-        "corrupted_word": plan.corrupted_word,
-        "source_sentence": sentence_map.get(corrupted_span.sentence_unit_id or "", ""),
+        "subtype": "contextual_choice",
+        "original_word": selected_span.text,
+        "correct_choice": correct_choice,
+        "source_sentence": sentence_map.get(selected_span.sentence_unit_id or "", ""),
         "supporting_evidence": plan.supporting_evidence,
-        "correct_marker": correct_marker,
+        "correct_marker": generated.answer,
+        "contextual_meaning_ko": plan.contextual_meaning_ko,
     }
 
 
@@ -361,14 +383,31 @@ def _write_paragraph_ordering_explanation(context: dict[str, Any]) -> str:
 
 
 def _write_mood_atmosphere_explanation(context: dict[str, str | None]) -> str:
+    subtype = context.get("subtype") or "emotion_shift"
     target_holder = context["target_holder"] or "중심 인물"
     initial_emotion = context["initial_emotion"] or "initial"
     final_emotion = context["final_emotion"] or "final"
+    state_emotion = context.get("state_emotion") or "state"
+    atmosphere_label = context.get("atmosphere_label") or "atmosphere"
     initial_evidence = context["initial_evidence"] or ""
     final_evidence = context["final_evidence"] or ""
     shift_trigger = context["shift_trigger"]
+    state_evidence = context.get("state_evidence") or ""
+    atmosphere_evidence = context.get("atmosphere_evidence") or ""
     correct_marker = context["correct_marker"] or "①"
     correct_choice = context["correct_choice"] or f"{initial_emotion} -> {final_emotion}"
+
+    if subtype == "emotion_state":
+        return (
+            f"글에서 {target_holder}의 중심 심경은 '{state_evidence}'에서 드러나듯 {state_emotion}한 상태입니다. "
+            f"이 정서가 passage 전체에서 가장 안정적으로 유지되므로 정답은 {correct_marker} {correct_choice}입니다."
+        )
+
+    if subtype == "atmosphere":
+        return (
+            f"글 전체 분위기는 '{atmosphere_evidence}'에서 드러나듯 {atmosphere_label}한 쪽으로 읽는 것이 가장 자연스럽습니다. "
+            f"한 인물의 순간 감정보다 passage 전반의 tone을 묻는 문항이므로 정답은 {correct_marker} {correct_choice}입니다."
+        )
 
     if shift_trigger:
         return (
@@ -411,6 +450,13 @@ def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
 
 
 def _write_vocab_explanation(context: dict[str, str]) -> str:
+    if context.get("subtype") == "contextual_choice":
+        return (
+            f"빈칸 자리는 '{_sentence_snippet(context['source_sentence'])}'라는 문맥에서 "
+            f"{context['contextual_meaning_ko']}의 의미를 가져야 합니다. "
+            f"특히 '{context['supporting_evidence']}'라는 내용이 그 방향을 뒷받침하므로 "
+            f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+        )
     return (
         f"{context['correct_marker']}의 '{context['corrupted_word']}'는 "
         f"'{_sentence_snippet(context['source_sentence'])}'라는 문맥과 맞지 않습니다. "

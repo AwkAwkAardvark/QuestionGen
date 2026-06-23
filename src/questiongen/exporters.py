@@ -11,6 +11,9 @@ CSV_FIELDS = [
     "OriginalQuestionNumber",
     "BatchRowId",
     "QuestionTypeKey",
+    "QuestionFormatKey",
+    "QuestionSubtypeKey",
+    "QuestionSubtype",
     "QuestionType",
     "status",
     "errors",
@@ -53,9 +56,14 @@ def batch_results_to_markdown(results: Iterable[BatchResultRow]) -> str:
     lines = ["# QuestionGen Batch Results", ""]
     for result in results:
         lines.append(
-            f"## row {result.BatchRowId} / {result.OriginalQuestionNumber} / {result.QuestionTypeKey} / {result.status}"
+            f"## row {result.BatchRowId} / {result.OriginalQuestionNumber} / {result.QuestionTypeKey}"
+            f" / {result.QuestionSubtypeKey or '-'} / {result.status}"
         )
         lines.append(f"- BatchRowId: {result.BatchRowId}")
+        if result.QuestionSubtypeKey:
+            lines.append(f"- Subtype: {result.QuestionSubtypeKey}")
+        if result.QuestionSubtype:
+            lines.append(f"- Subtype Label: {result.QuestionSubtype}")
         if result.errors:
             lines.append(f"- Errors: {' | '.join(result.errors)}")
         else:

@@ -9,15 +9,19 @@ from .schemas import (
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabChoicePlan,
     VocabPlan,
 )
 
 SENTENCE_INSERTION_STEM = "글의 흐름으로 보아, 주어진 문장이 들어가기에 가장 적절한 곳은?"
 PARAGRAPH_ORDERING_STEM = "주어진 글 다음에 이어질 글의 순서로 가장 적절한 것은?"
-MOOD_ATMOSPHERE_STEM = "다음 글에 나타난 심경 변화로 가장 적절한 것은?"
+MOOD_SHIFT_STEM = "다음 글에 나타난 심경 변화로 가장 적절한 것은?"
+MOOD_STATE_STEM = "다음 글의 인물의 심경으로 가장 적절한 것은?"
+ATMOSPHERE_STEM = "다음 글의 분위기로 가장 적절한 것은?"
 UNDERLINED_PHRASE_MEANING_STEM = "다음 글의 밑줄 친 부분의 의미로 가장 적절한 것은?"
 FILL_IN_THE_BLANK_STEM = "다음 빈칸에 들어갈 말로 가장 적절한 것은?"
-VOCAB_STEM = "다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 적절하지 않은 것은?"
+VOCAB_ERROR_STEM = "다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 적절하지 않은 것은?"
+VOCAB_CHOICE_STEM = "다음 글의 빈칸에 들어갈 낱말로 가장 적절한 것은?"
 GRAMMAR_STEM = "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?"
 
 SENTENCE_INSERTION_PLANNER_PROMPT = """
@@ -59,12 +63,12 @@ PARAGRAPH_ORDERING_PLANNER_PROMPT = """
 - The explanation must be teacher-facing: explain the thematic or logical progression, not internal sentence IDs, block inventories, or schema mechanics.
 """.strip()
 
-MOOD_ATMOSPHERE_PLANNER_PROMPT = """
-- Treat this first rollout as the emotion_shift subtype under the broad key mood_atmosphere.
+MOOD_SHIFT_PLANNER_PROMPT = """
 - Use the source passage unchanged; do not remove, reorder, or underline any text.
 - Only create an item if the passage contains one clear feeling-holder such as the writer, narrator, or a single clearly identifiable character.
 - Reject neutral, informational, or weakly affective passages rather than forcing an emotion question onto them.
 - Identify a real emotional change from an initial state to a different final state.
+- Set `subtype` to `emotion_shift`.
 - Set `target_holder` to a short natural label for that one clear holder.
 - Set `initial_emotion` and `final_emotion` to distinct English emotion adjectives or short adjective phrases.
 - Create exactly five unique English answer choices in `emotion -> emotion` format.
@@ -74,11 +78,36 @@ MOOD_ATMOSPHERE_PLANNER_PROMPT = """
 - `shift_trigger` may be omitted, but if present it must be a short exact snippet from the passage that helps explain the change.
 - Write the explanation entirely in Korean.
 - The explanation must be teacher-facing: explain the emotional movement using textual evidence, not schema fields, internal labels, or mechanics.
-- Do not generate final student-facing paragraph text.
+""".strip()
+
+MOOD_STATE_PLANNER_PROMPT = """
+- Use the source passage unchanged; do not remove, reorder, or underline any text.
+- Only create an item if the passage contains one clear feeling-holder and a stable dominant emotional state.
+- Reject passages whose emotional direction is mixed, weak, or holder-ambiguous.
+- Set `subtype` to `emotion_state`.
+- Set `target_holder` to a short natural label for the one clear holder.
+- Set `state_emotion` to the best English adjective or short adjective phrase naming the holder's dominant state.
+- Create exactly five unique English answer choices as single-state adjectives or short adjective phrases.
+- Set `correct_choice` to the one option that matches `state_emotion`.
+- Copy `state_evidence` as a short exact passage snippet showing that dominant feeling.
+- Write the explanation entirely in Korean.
+- The explanation must explain the stable feeling state from passage evidence rather than a before/after change arc.
+""".strip()
+
+ATMOSPHERE_PLANNER_PROMPT = """
+- Use the source passage unchanged; do not remove, reorder, or underline any text.
+- Create an item only if the passage has a strong passage-level atmosphere or tone that is distinct from one person's private feeling.
+- Reject passages where the evidence is mainly one holder's emotion or where multiple incompatible atmospheres compete.
+- Set `subtype` to `atmosphere`.
+- Set `atmosphere_label` to the best English adjective or short phrase naming the passage-level atmosphere.
+- Create exactly five unique English answer choices as atmosphere adjectives or short adjective phrases.
+- Set `correct_choice` to the one option that matches `atmosphere_label`.
+- Copy `atmosphere_evidence` as a short exact passage snippet showing the passage-level mood or tone.
+- Write the explanation entirely in Korean.
+- The explanation must focus on atmosphere or tone cues in the passage, not on a single holder's private emotion unless the whole passage atmosphere depends on it.
 """.strip()
 
 UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT = """
-- Treat this first rollout as a single-span contextual paraphrase item under the broad key underlined_phrase_meaning.
 - Self-select exactly one span candidate from the provided span inventory.
 - Use the ranked span inventory and prefer the strongest claim-bearing or proposition-bearing target unless it is clearly unusable.
 - Treat weak or local centrality hints as a sign to pick a different span rather than forcing a merely valid phrase boundary.
@@ -99,8 +128,8 @@ UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT = """
 - The explanation must be teacher-facing: explain the phrase through passage evidence, not schema fields, internal IDs, or mechanics.
 """.strip()
 
-FILL_IN_THE_BLANK_PLANNER_PROMPT = """
-- Treat this first rollout as the blank_inference_proposition_5_choices format under the broad key fill_in_the_blank.
+FILL_PROPOSITION_PLANNER_PROMPT = """
+- Set `subtype` to `proposition_inference`.
 - Self-select exactly one span candidate from the provided phrase-span inventory.
 - Prefer a proposition-like, clause-level, claim-bearing, reason-bearing, effect-bearing, contrast-bearing, or limitation-bearing span.
 - If no strongly proposition-like span exists, still prefer the most readable clause-sized contextual span rather than falling back to a local phrase fragment.
@@ -111,52 +140,150 @@ FILL_IN_THE_BLANK_PLANNER_PROMPT = """
 - Do not alter the source passage text or generate final student-facing paragraph text.
 - Create exactly five unique English completion choices in `completion_choices`.
 - Set `correct_choice` to the one option that best restores the original passage meaning.
-- Keep distractors readable English and broadly on-topic, even if they are rough.
+- Keep distractors readable English and broadly on-topic while changing claim, scope, polarity, or relation.
 - Set `contextual_meaning_ko` to a short Korean teacher-facing note describing what idea the blank must convey.
 - Copy `supporting_evidence` as a short exact snippet from the passage that best supports the correct completion.
 - Write the explanation entirely in Korean.
-- The explanation must be teacher-facing: explain what the blank should mean in context, not internal IDs, schema fields, or renderer mechanics.
 """.strip()
 
-VOCAB_PLANNER_PROMPT = """
-- Treat this first rollout as the contextual_vocab_error_5 format under the broad key vocab.
+FILL_CONNECTIVE_PLANNER_PROMPT = """
+- Set `subtype` to `connective_relation`.
+- Self-select exactly one short relation-bearing span from the provided connective-oriented span inventory.
+- Prefer spans whose core work is to restore contrast, cause, concession, condition, consequence, or emphasis between adjacent clauses.
+- Reject long summary-like spans, lexical-only blanks, or blanks that are recoverable without discourse relation reading.
+- Copy the selected span ID into `selected_span_id` and the exact source text into `selected_span_text`.
+- Do not alter the source passage text or generate final student-facing paragraph text.
+- Create exactly five unique English completion choices.
+- Exactly one choice should preserve the original discourse relation; distractors should stay readable but shift relation, polarity, or logical direction.
+- Set `correct_choice` to the one option that restores the intended relation.
+- Set `contextual_meaning_ko` to a short Korean note naming the relation the blank must restore.
+- Copy `supporting_evidence` as a short exact snippet from the surrounding passage that reveals that relation.
+- Write the explanation entirely in Korean.
+""".strip()
+
+FILL_SUMMARY_PLANNER_PROMPT = """
+- Set `subtype` to `summary_completion`.
+- Self-select exactly one summary-worthy span from the provided summary-oriented span inventory.
+- Prefer conclusion-like, compression-friendly, claim-bearing, or passage-payoff spans, especially near the end of the passage.
+- Reject short connectives, local phrase fragments, or spans that only restore a surface wording detail.
+- Copy the selected span ID into `selected_span_id` and the exact source text into `selected_span_text`.
+- Do not alter the source passage text or generate final student-facing paragraph text.
+- Create exactly five unique English completion choices.
+- Exactly one choice should best complete the passage-level takeaway; distractors should stay passage-relevant but distort the main point, scope, or conclusion.
+- Set `correct_choice` to the one option that restores the intended summary/compression.
+- Set `contextual_meaning_ko` to a short Korean note describing the passage-level takeaway the blank must complete.
+- Copy `supporting_evidence` as a short exact snippet that anchors that takeaway.
+- Write the explanation entirely in Korean.
+""".strip()
+
+VOCAB_ERROR_PLANNER_PROMPT = """
+- Set `subtype` to `contextual_error`.
 - Select exactly five unique single-word target IDs from the provided vocab-target inventory.
 - Treat `target_span_ids` as the authoritative source-owned contract; `target_span_texts` should simply mirror those selected IDs.
 - Choose exactly one of those five targets as `corrupted_span_id`.
 - Replace only that one target with one single English word in `corrupted_word`.
 - Prefer targets whose corruption can reverse or clearly distort the passage meaning, not flat content words with weak semantic pressure.
 - The corrupted word should remain grammatically readable in the sentence, but it must reverse or clearly distort the passage meaning.
-- Do not use a near-synonym or near-paraphrase of the original word. Replacements such as `stick -> adhere`, `help -> aid`, or `large -> big` are invalid because they preserve the meaning too closely.
+- Do not use a near-synonym or near-paraphrase of the original word.
 - Keep the other four target words unchanged from the source.
 - Set `correction_basis_ko` to a short Korean note explaining why the corrupted word does not fit and what meaning the original word supports instead.
 - Copy `supporting_evidence` as a short exact snippet from the passage that helps show why the original word fits the context.
 - Write the explanation entirely in Korean.
-- The explanation must be teacher-facing: explain the contextual mismatch, not internal IDs, schema fields, or renderer mechanics.
-- Do not generate final student-facing paragraph text.
 """.strip()
 
-GRAMMAR_PLANNER_PROMPT = """
-- Treat this first rollout as the grammar_error_5 format under the broad key grammar.
-- Narrow the task to one controlled verb-form corruption family only.
+VOCAB_CHOICE_PLANNER_PROMPT = """
+- Set `subtype` to `contextual_choice`.
+- Select exactly one single-word target ID from the provided vocab-target inventory.
+- Treat `selected_span_id` as the authoritative source-owned contract and set `selected_span_text` to the exact source word.
+- Create exactly five unique English lexical choices in `choice_words`.
+- Set `correct_choice` to the one option that best preserves the original contextual meaning at that position.
+- Keep distractors readable, passage-relevant, and semantically close enough to tempt, but wrong in polarity, scope, nuance, or collocation.
+- Set `contextual_meaning_ko` to a short Korean teacher-facing note describing the meaning the target position must carry.
+- Copy `supporting_evidence` as a short exact passage snippet that supports the correct lexical choice.
+- Write the explanation entirely in Korean.
+""".strip()
+
+GRAMMAR_BASE_PLANNER_PROMPT = """
 - Select exactly five unique single-word target IDs from the provided grammar-target inventory.
 - Treat `target_span_ids` as the authoritative source-owned contract; `target_span_texts` should simply mirror those selected IDs.
 - Choose exactly one of those five targets as `corrupted_span_id`.
 - Replace only that one target with one single English word in `corrupted_word`.
-- The corrupted word must be a real English verb form chosen from the deterministic allowed family for the original target.
-- Never invent malformed pseudo-words such as `increaseed`, `reduceing`, `understanded`, or `rethinked`.
 - Keep the other four target words unchanged from the source.
-- Set `correction_basis_ko` to a short Korean note explaining what structural cue makes the original verb form correct and the corrupted form wrong.
+- Set `correction_basis_ko` to a short Korean note explaining what structural cue makes the original form correct and the corrupted form wrong.
 - Copy `supporting_evidence` as a short exact snippet from the passage that helps show the governing structural cue.
 - Write the explanation entirely in Korean.
-- The explanation must be teacher-facing: explain the structural mismatch, not internal IDs, schema fields, or renderer mechanics.
-- Do not generate final student-facing paragraph text.
+- The explanation must be teacher-facing: explain the structural mismatch, not schema fields or renderer mechanics.
 """.strip()
+
+GRAMMAR_SUBTYPE_PROMPTS: dict[str, str] = {
+    "grammar_error_verb_form_5": (
+        "- Set `subtype` to `verb_form`.\n"
+        "- Keep the corruption inside the controlled verb-form family only.\n"
+        "- The corrupted word must be a real English verb form chosen from the deterministic allowed family for the original target.\n"
+        "- Never invent malformed pseudo-words such as `increaseed`, `reduceing`, `understanded`, or `rethinked`."
+    ),
+    "grammar_error_subject_verb_agreement_5": (
+        "- Set `subtype` to `subject_verb_agreement`.\n"
+        "- Choose targets whose form is controlled by subject-verb agreement.\n"
+        "- Corrupt the original so the resulting verb clashes with singular/plural agreement while staying a real English word."
+    ),
+    "grammar_error_finite_nonfinite_5": (
+        "- Set `subtype` to `finite_nonfinite`.\n"
+        "- Choose targets whose form is controlled by infinitive, gerund, participle, or finite-vs-nonfinite selection.\n"
+        "- Corrupt the original so it violates that finite/nonfinite requirement while staying a real English word."
+    ),
+    "grammar_error_participle_voice_5": (
+        "- Set `subtype` to `participle_voice`.\n"
+        "- Choose targets whose form is controlled by participle choice or voice-sensitive participial structure.\n"
+        "- Corrupt the original into a wrong participial or voice-related form while staying a real English word."
+    ),
+    "grammar_error_relative_clause_5": (
+        "- Set `subtype` to `relative_clause`.\n"
+        "- Choose targets whose local clause link or clause-internal form is anchored by a relative-clause structure.\n"
+        "- Corrupt the target so the resulting wording clashes with the relative-clause pattern while staying readable English."
+    ),
+    "grammar_error_noun_clause_introducer_5": (
+        "- Set `subtype` to `noun_clause_introducer`.\n"
+        "- Choose targets whose local structure depends on an appropriate noun-clause introducer or clause-selecting form.\n"
+        "- Corrupt the target so the resulting clause selection becomes structurally wrong while staying readable English."
+    ),
+    "grammar_error_parallel_structure_5": (
+        "- Set `subtype` to `parallel_structure`.\n"
+        "- Choose targets participating in a local parallel structure.\n"
+        "- Corrupt one target so the parallel series no longer matches in form while staying readable English."
+    ),
+    "grammar_error_conjunction_preposition_5": (
+        "- Set `subtype` to `conjunction_preposition`.\n"
+        "- Choose targets whose local role depends on conjunction/preposition choice.\n"
+        "- Corrupt one target into a wrong conjunction/preposition-type form or role while staying readable English."
+    ),
+}
+
+
+@dataclass(frozen=True)
+class QuestionFamilySpec:
+    label_ko: str
+    family_label_ko: str | None = None
+    subtype_key: str | None = None
+    subtype_label_ko: str | None = None
+    format_key: str | None = None
+    planner_prompt: str | None = None
+    question_stem: str | None = None
+    unit_level: str | None = None
+    renderer_key: str | None = None
+    validator_key: str | None = None
+    plan_schema: type | None = None
+    min_source_units: int | None = None
+    choice_count: int | None = None
 
 
 @dataclass(frozen=True)
 class QuestionTypeSpec:
+    family_key: str
+    family_label_ko: str
+    subtype_key: str
+    subtype_label_ko: str
     format_key: str
-    label_ko: str
     planner_prompt: str
     question_stem: str
     unit_level: str
@@ -166,91 +293,293 @@ class QuestionTypeSpec:
     min_source_units: int | None = None
     choice_count: int | None = None
 
+    @property
+    def label_ko(self) -> str:
+        return self.family_label_ko
 
-QUESTION_TYPES: dict[str, QuestionTypeSpec] = {
-    "sentence_insertion": QuestionTypeSpec(
-        format_key="sentence_insertion_5_gaps",
-        label_ko="문장 삽입",
-        planner_prompt=SENTENCE_INSERTION_PLANNER_PROMPT,
-        question_stem=SENTENCE_INSERTION_STEM,
-        unit_level="sentence",
-        renderer_key="sentence_insertion",
-        validator_key="sentence_insertion",
-        plan_schema=SentenceInsertionPlan,
-        min_source_units=5,
-        choice_count=5,
+
+QUESTION_TYPES: dict[str, QuestionFamilySpec] = {
+    "sentence_insertion": QuestionFamilySpec(label_ko="문장 삽입"),
+    "paragraph_ordering": QuestionFamilySpec(label_ko="글의 순서"),
+    "mood_atmosphere": QuestionFamilySpec(label_ko="심경·분위기"),
+    "underlined_phrase_meaning": QuestionFamilySpec(label_ko="밑줄 친 부분 의미"),
+    "fill_in_the_blank": QuestionFamilySpec(label_ko="빈칸 추론"),
+    "vocab": QuestionFamilySpec(label_ko="어휘"),
+    "grammar": QuestionFamilySpec(label_ko="어법"),
+}
+
+
+def _spec(
+    *,
+    family_key: str,
+    subtype_key: str,
+    subtype_label_ko: str,
+    format_key: str,
+    planner_prompt: str,
+    question_stem: str,
+    unit_level: str,
+    renderer_key: str,
+    validator_key: str,
+    plan_schema: type,
+    min_source_units: int | None,
+    choice_count: int | None,
+) -> QuestionTypeSpec:
+    return QuestionTypeSpec(
+        family_key=family_key,
+        family_label_ko=QUESTION_TYPES[family_key].label_ko,
+        subtype_key=subtype_key,
+        subtype_label_ko=subtype_label_ko,
+        format_key=format_key,
+        planner_prompt=planner_prompt,
+        question_stem=question_stem,
+        unit_level=unit_level,
+        renderer_key=renderer_key,
+        validator_key=validator_key,
+        plan_schema=plan_schema,
+        min_source_units=min_source_units,
+        choice_count=choice_count,
+    )
+
+
+QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
+    "sentence_insertion": (
+        _spec(
+            family_key="sentence_insertion",
+            subtype_key="sentence_insertion_5_gaps",
+            subtype_label_ko="5개 위치 문장 삽입",
+            format_key="sentence_insertion_5_gaps",
+            planner_prompt=SENTENCE_INSERTION_PLANNER_PROMPT,
+            question_stem=SENTENCE_INSERTION_STEM,
+            unit_level="sentence",
+            renderer_key="sentence_insertion",
+            validator_key="sentence_insertion",
+            plan_schema=SentenceInsertionPlan,
+            min_source_units=5,
+            choice_count=5,
+        ),
     ),
-    "paragraph_ordering": QuestionTypeSpec(
-        format_key="abc_ordering_after_intro",
-        label_ko="글의 순서",
-        planner_prompt=PARAGRAPH_ORDERING_PLANNER_PROMPT,
-        question_stem=PARAGRAPH_ORDERING_STEM,
-        unit_level="sentence",
-        renderer_key="paragraph_ordering",
-        validator_key="paragraph_ordering",
-        plan_schema=ParagraphOrderingPlan,
-        min_source_units=6,
-        choice_count=5,
+    "paragraph_ordering": (
+        _spec(
+            family_key="paragraph_ordering",
+            subtype_key="abc_ordering_after_intro",
+            subtype_label_ko="도입 후 이어지는 글 순서",
+            format_key="abc_ordering_after_intro",
+            planner_prompt=PARAGRAPH_ORDERING_PLANNER_PROMPT,
+            question_stem=PARAGRAPH_ORDERING_STEM,
+            unit_level="sentence",
+            renderer_key="paragraph_ordering",
+            validator_key="paragraph_ordering",
+            plan_schema=ParagraphOrderingPlan,
+            min_source_units=6,
+            choice_count=5,
+        ),
     ),
-    "underlined_phrase_meaning": QuestionTypeSpec(
-        format_key="underlined_phrase_meaning_5_ko",
-        label_ko="밑줄 친 부분 의미",
-        planner_prompt=UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT,
-        question_stem=UNDERLINED_PHRASE_MEANING_STEM,
-        unit_level="span",
-        renderer_key="underlined_phrase_meaning",
-        validator_key="underlined_phrase_meaning",
-        plan_schema=UnderlinedPhraseMeaningPlan,
-        min_source_units=2,
-        choice_count=5,
+    "mood_atmosphere": (
+        _spec(
+            family_key="mood_atmosphere",
+            subtype_key="emotion_shift_pair_choice_5",
+            subtype_label_ko="심경 변화",
+            format_key="emotion_shift_pair_choice_5",
+            planner_prompt=MOOD_SHIFT_PLANNER_PROMPT,
+            question_stem=MOOD_SHIFT_STEM,
+            unit_level="passage",
+            renderer_key="mood_atmosphere",
+            validator_key="mood_atmosphere",
+            plan_schema=MoodAtmospherePlan,
+            min_source_units=5,
+            choice_count=5,
+        ),
+        _spec(
+            family_key="mood_atmosphere",
+            subtype_key="emotion_state_choice_5",
+            subtype_label_ko="심경 상태",
+            format_key="emotion_state_choice_5",
+            planner_prompt=MOOD_STATE_PLANNER_PROMPT,
+            question_stem=MOOD_STATE_STEM,
+            unit_level="passage",
+            renderer_key="mood_atmosphere",
+            validator_key="mood_atmosphere",
+            plan_schema=MoodAtmospherePlan,
+            min_source_units=4,
+            choice_count=5,
+        ),
+        _spec(
+            family_key="mood_atmosphere",
+            subtype_key="atmosphere_choice_5",
+            subtype_label_ko="분위기",
+            format_key="atmosphere_choice_5",
+            planner_prompt=ATMOSPHERE_PLANNER_PROMPT,
+            question_stem=ATMOSPHERE_STEM,
+            unit_level="passage",
+            renderer_key="mood_atmosphere",
+            validator_key="mood_atmosphere",
+            plan_schema=MoodAtmospherePlan,
+            min_source_units=4,
+            choice_count=5,
+        ),
     ),
-    "fill_in_the_blank": QuestionTypeSpec(
-        format_key="blank_inference_proposition_5_choices",
-        label_ko="빈칸 추론",
-        planner_prompt=FILL_IN_THE_BLANK_PLANNER_PROMPT,
-        question_stem=FILL_IN_THE_BLANK_STEM,
-        unit_level="span",
-        renderer_key="fill_in_the_blank",
-        validator_key="fill_in_the_blank",
-        plan_schema=FillInTheBlankPlan,
-        min_source_units=2,
-        choice_count=5,
+    "underlined_phrase_meaning": (
+        _spec(
+            family_key="underlined_phrase_meaning",
+            subtype_key="underlined_phrase_meaning_5_ko",
+            subtype_label_ko="문맥상 밑줄 의미 파악",
+            format_key="underlined_phrase_meaning_5_ko",
+            planner_prompt=UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT,
+            question_stem=UNDERLINED_PHRASE_MEANING_STEM,
+            unit_level="span",
+            renderer_key="underlined_phrase_meaning",
+            validator_key="underlined_phrase_meaning",
+            plan_schema=UnderlinedPhraseMeaningPlan,
+            min_source_units=2,
+            choice_count=5,
+        ),
     ),
-    "vocab": QuestionTypeSpec(
-        format_key="contextual_vocab_error_5",
-        label_ko="어휘",
-        planner_prompt=VOCAB_PLANNER_PROMPT,
-        question_stem=VOCAB_STEM,
-        unit_level="span",
-        renderer_key="vocab",
-        validator_key="vocab",
-        plan_schema=VocabPlan,
-        min_source_units=2,
-        choice_count=5,
+    "fill_in_the_blank": (
+        _spec(
+            family_key="fill_in_the_blank",
+            subtype_key="blank_inference_proposition_5_choices",
+            subtype_label_ko="명제 복원 빈칸 추론",
+            format_key="blank_inference_proposition_5_choices",
+            planner_prompt=FILL_PROPOSITION_PLANNER_PROMPT,
+            question_stem=FILL_IN_THE_BLANK_STEM,
+            unit_level="span",
+            renderer_key="fill_in_the_blank",
+            validator_key="fill_in_the_blank",
+            plan_schema=FillInTheBlankPlan,
+            min_source_units=2,
+            choice_count=5,
+        ),
+        _spec(
+            family_key="fill_in_the_blank",
+            subtype_key="blank_connective_relation_5_choices",
+            subtype_label_ko="연결 관계 복원 빈칸",
+            format_key="blank_connective_relation_5_choices",
+            planner_prompt=FILL_CONNECTIVE_PLANNER_PROMPT,
+            question_stem=FILL_IN_THE_BLANK_STEM,
+            unit_level="span",
+            renderer_key="fill_in_the_blank",
+            validator_key="fill_in_the_blank",
+            plan_schema=FillInTheBlankPlan,
+            min_source_units=2,
+            choice_count=5,
+        ),
+        _spec(
+            family_key="fill_in_the_blank",
+            subtype_key="blank_summary_completion_5_choices",
+            subtype_label_ko="요약 완성 빈칸",
+            format_key="blank_summary_completion_5_choices",
+            planner_prompt=FILL_SUMMARY_PLANNER_PROMPT,
+            question_stem=FILL_IN_THE_BLANK_STEM,
+            unit_level="span",
+            renderer_key="fill_in_the_blank",
+            validator_key="fill_in_the_blank",
+            plan_schema=FillInTheBlankPlan,
+            min_source_units=2,
+            choice_count=5,
+        ),
     ),
-    "grammar": QuestionTypeSpec(
-        format_key="grammar_error_5",
-        label_ko="어법",
-        planner_prompt=GRAMMAR_PLANNER_PROMPT,
-        question_stem=GRAMMAR_STEM,
-        unit_level="span",
-        renderer_key="grammar",
-        validator_key="grammar",
-        plan_schema=GrammarPlan,
-        min_source_units=2,
-        choice_count=5,
+    "vocab": (
+        _spec(
+            family_key="vocab",
+            subtype_key="contextual_vocab_error_5",
+            subtype_label_ko="어휘 오류 찾기",
+            format_key="contextual_vocab_error_5",
+            planner_prompt=VOCAB_ERROR_PLANNER_PROMPT,
+            question_stem=VOCAB_ERROR_STEM,
+            unit_level="span",
+            renderer_key="vocab",
+            validator_key="vocab",
+            plan_schema=VocabPlan,
+            min_source_units=2,
+            choice_count=5,
+        ),
+        _spec(
+            family_key="vocab",
+            subtype_key="contextual_vocab_choice_5",
+            subtype_label_ko="문맥상 어휘 선택",
+            format_key="contextual_vocab_choice_5",
+            planner_prompt=VOCAB_CHOICE_PLANNER_PROMPT,
+            question_stem=VOCAB_CHOICE_STEM,
+            unit_level="span",
+            renderer_key="vocab",
+            validator_key="vocab",
+            plan_schema=VocabChoicePlan,
+            min_source_units=2,
+            choice_count=5,
+        ),
+    ),
+    "grammar": tuple(
+        _spec(
+            family_key="grammar",
+            subtype_key=subtype_key,
+            subtype_label_ko=subtype_label_ko,
+            format_key=subtype_key,
+            planner_prompt=f"{GRAMMAR_BASE_PLANNER_PROMPT}\n{GRAMMAR_SUBTYPE_PROMPTS[subtype_key]}",
+            question_stem=GRAMMAR_STEM,
+            unit_level="span",
+            renderer_key="grammar",
+            validator_key="grammar",
+            plan_schema=GrammarPlan,
+            min_source_units=2,
+            choice_count=5,
+        )
+        for subtype_key, subtype_label_ko in (
+            ("grammar_error_verb_form_5", "동사 형태"),
+            ("grammar_error_subject_verb_agreement_5", "수 일치"),
+            ("grammar_error_finite_nonfinite_5", "정형/비정형"),
+            ("grammar_error_participle_voice_5", "분사/태"),
+            ("grammar_error_relative_clause_5", "관계절"),
+            ("grammar_error_noun_clause_introducer_5", "명사절 연결"),
+            ("grammar_error_parallel_structure_5", "병렬 구조"),
+            ("grammar_error_conjunction_preposition_5", "접속사/전치사"),
+        )
     ),
 }
 
-MOOD_ATMOSPHERE_SPEC = QuestionTypeSpec(
-    format_key="emotion_shift_pair_choice_5",
-    label_ko="심경·분위기",
-    planner_prompt=MOOD_ATMOSPHERE_PLANNER_PROMPT,
-    question_stem=MOOD_ATMOSPHERE_STEM,
-    unit_level="passage",
-    renderer_key="mood_atmosphere",
-    validator_key="mood_atmosphere",
-    plan_schema=MoodAtmospherePlan,
-    min_source_units=5,
-    choice_count=5,
-)
+QUESTION_SUBTYPE_SPECS: dict[str, QuestionTypeSpec] = {
+    spec.subtype_key: spec
+    for specs in QUESTION_TYPE_SPECS_BY_FAMILY.values()
+    for spec in specs
+}
+
+QUESTION_TYPES = {
+    family_key: QuestionFamilySpec(
+        label_ko=family_spec.label_ko,
+        family_label_ko=family_spec.label_ko,
+        subtype_key=specs[0].subtype_key,
+        subtype_label_ko=specs[0].subtype_label_ko,
+        format_key=specs[0].format_key,
+        planner_prompt=specs[0].planner_prompt,
+        question_stem=specs[0].question_stem,
+        unit_level=specs[0].unit_level,
+        renderer_key=specs[0].renderer_key,
+        validator_key=specs[0].validator_key,
+        plan_schema=specs[0].plan_schema,
+        min_source_units=specs[0].min_source_units,
+        choice_count=specs[0].choice_count,
+    )
+    for family_key, (family_spec, specs) in (
+        (family_key, (QUESTION_TYPES[family_key], specs))
+        for family_key, specs in QUESTION_TYPE_SPECS_BY_FAMILY.items()
+    )
+}
+
+MOOD_ATMOSPHERE_SPEC = QUESTION_SUBTYPE_SPECS["emotion_shift_pair_choice_5"]
+
+
+def resolve_question_type_spec(question_type_key: str, question_subtype_key: str | None = None) -> QuestionTypeSpec | None:
+    specs = QUESTION_TYPE_SPECS_BY_FAMILY.get(question_type_key)
+    if not specs:
+        return None
+    if question_subtype_key is None:
+        return specs[0]
+    return next((spec for spec in specs if spec.subtype_key == question_subtype_key), None)
+
+
+def expand_question_type_keys(question_type_keys: list[str] | tuple[str, ...]) -> list[QuestionTypeSpec]:
+    expanded: list[QuestionTypeSpec] = []
+    for family_key in question_type_keys:
+        specs = QUESTION_TYPE_SPECS_BY_FAMILY.get(family_key)
+        if specs:
+            expanded.extend(specs)
+    return expanded

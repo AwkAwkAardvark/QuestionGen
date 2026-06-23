@@ -358,6 +358,32 @@ _GRAMMAR_LEFT_CONTEXT_CUES = {
     "would",
     "you",
 }
+_RELATIVE_CLAUSE_WORDS = {"who", "whom", "whose", "which", "where", "when"}
+_NOUN_CLAUSE_WORDS = {"what", "whether", "if", "how", "why", "that"}
+_CONJUNCTION_PREPOSITION_WORDS = {
+    "although",
+    "because",
+    "besides",
+    "despite",
+    "during",
+    "except",
+    "if",
+    "like",
+    "since",
+    "than",
+    "though",
+    "unless",
+    "unlike",
+    "while",
+    "without",
+}
+_PARALLEL_MARKER_WORDS = {"and", "or", "than"}
+_GRAMMAR_FUNCTION_TARGET_WORDS = (
+    _RELATIVE_CLAUSE_WORDS
+    | _NOUN_CLAUSE_WORDS
+    | _CONJUNCTION_PREPOSITION_WORDS
+    | _PARALLEL_MARKER_WORDS
+)
 
 
 def normalize_text(text: str) -> str:
@@ -599,7 +625,7 @@ def _collect_single_word_span_candidates(
     for token_index, token_match in enumerate(token_matches):
         token_text = token_match.group(0)
         lowered = _normalize_token(token_text)
-        if lowered in _FUNCTION_WORDS or len(lowered) < 4:
+        if lowered not in _GRAMMAR_FUNCTION_TARGET_WORDS and (lowered in _FUNCTION_WORDS or len(lowered) < 4):
             continue
 
         priority_score, heuristic_tags = _score_single_word_candidate(
@@ -751,6 +777,54 @@ def _score_single_word_candidate(
             tags.append("modal_context")
         if previous_token in {"am", "are", "be", "been", "being", "is", "was", "were"}:
             tags.append("be_context")
+    if lowered in {"is", "are", "was", "were", "has", "have", "does", "do"} or (
+        lowered.endswith("s") and previous_token in {"he", "it", "she", "this", "that"}
+    ):
+        score += 1
+        tags.append("grammar_candidate")
+        tags.append("subject_verb_agreement_candidate")
+    if lowered.endswith(("ing", "ed", "en")) or previous_token in {
+        "to",
+        "can",
+        "could",
+        "may",
+        "might",
+        "must",
+        "should",
+        "will",
+        "would",
+        "am",
+        "are",
+        "be",
+        "been",
+        "being",
+        "is",
+        "was",
+        "were",
+    }:
+        score += 1
+        tags.append("grammar_candidate")
+        tags.append("finite_nonfinite_candidate")
+    if lowered.endswith(("ing", "ed", "en")) or previous_token in {"be", "been", "being", "is", "was", "were", "are", "am"}:
+        score += 1
+        tags.append("grammar_candidate")
+        tags.append("participle_voice_candidate")
+    if lowered in _RELATIVE_CLAUSE_WORDS:
+        score += 2
+        tags.append("grammar_candidate")
+        tags.append("relative_clause_candidate")
+    if lowered in _NOUN_CLAUSE_WORDS:
+        score += 2
+        tags.append("grammar_candidate")
+        tags.append("noun_clause_candidate")
+    if lowered in _CONJUNCTION_PREPOSITION_WORDS:
+        score += 2
+        tags.append("grammar_candidate")
+        tags.append("conjunction_preposition_candidate")
+    if lowered in _PARALLEL_MARKER_WORDS or previous_token in _PARALLEL_MARKER_WORDS or next_token in _PARALLEL_MARKER_WORDS:
+        score += 1
+        tags.append("grammar_candidate")
+        tags.append("parallel_structure_candidate")
 
     if previous_token in _GRAMMAR_LEFT_CONTEXT_CUES:
         score += 1

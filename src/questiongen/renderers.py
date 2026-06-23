@@ -15,16 +15,21 @@ from .schemas import (
     QuestionState,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabChoicePlan,
     VocabPlan,
 )
 from .targeting import (
     BLANK_MARKER,
+    fill_blank_connective_inventory,
+    fill_blank_summary_inventory,
     grammar_target_inventory,
+    grammar_subtype_inventory,
     normalize_english_choice,
     numbered_underline_close,
     numbered_underline_open,
     phrase_span_inventory,
     render_numbered_span_edits,
+    vocab_choice_inventory,
     vocab_target_inventory,
 )
 
@@ -227,21 +232,36 @@ def render_vocab(
     prepared_source = state["prepared_source"]
     plan = state["plan"]
 
-    if prepared_source is None or not isinstance(plan, VocabPlan):
+    if prepared_source is None:
         return {
             "status": "rendering_error",
-            "errors": ["PreparedSource and VocabPlan are required for rendering."],
+            "errors": ["PreparedSource is required for rendering."],
         }
 
     try:
-        generated = _build_vocab_question(
-            original_question_number=state["OriginalQuestionNumber"],
-            batch_row_id=state["BatchRowId"],
-            source_paragraph=state["source_paragraph"],
-            prepared_source=prepared_source,
-            plan=plan,
-            type_spec=type_spec,
-        )
+        if isinstance(plan, VocabPlan):
+            generated = _build_vocab_question(
+                original_question_number=state["OriginalQuestionNumber"],
+                batch_row_id=state["BatchRowId"],
+                source_paragraph=state["source_paragraph"],
+                prepared_source=prepared_source,
+                plan=plan,
+                type_spec=type_spec,
+            )
+        elif isinstance(plan, VocabChoicePlan):
+            generated = _build_vocab_choice_question(
+                original_question_number=state["OriginalQuestionNumber"],
+                batch_row_id=state["BatchRowId"],
+                source_paragraph=state["source_paragraph"],
+                prepared_source=prepared_source,
+                plan=plan,
+                type_spec=type_spec,
+            )
+        else:
+            return {
+                "status": "rendering_error",
+                "errors": ["PreparedSource and a vocab plan are required for rendering."],
+            }
     except Exception as exc:
         return {
             "status": "rendering_error",
@@ -333,7 +353,10 @@ def _build_sentence_insertion_question(
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
         BatchRowId=batch_row_id,
-        QuestionType=type_spec.label_ko,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
         student_paragraph=student_paragraph,
         question_stem=type_spec.question_stem,
         given_sentence=sentence_map[target_id].text,
@@ -394,7 +417,10 @@ def _build_paragraph_ordering_question(
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
         BatchRowId=batch_row_id,
-        QuestionType=type_spec.label_ko,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
         student_paragraph=student_paragraph,
         question_stem=type_spec.question_stem,
         choices=choices,
@@ -417,13 +443,20 @@ def _build_mood_atmosphere_question(
     if plan.correct_choice not in plan.choice_pairs:
         raise ValueError("MoodAtmospherePlan correct_choice must be included in choice_pairs.")
 
-    choices = [_normalize_choice_pair(choice) for choice in plan.choice_pairs]
-    answer = MARKER_CHOICES[choices.index(_normalize_choice_pair(plan.correct_choice))]
+    if plan.subtype == "emotion_shift":
+        choices = [_normalize_choice_pair(choice) for choice in plan.choice_pairs]
+        answer = MARKER_CHOICES[choices.index(_normalize_choice_pair(plan.correct_choice))]
+    else:
+        choices = [normalize_english_choice(choice) for choice in plan.choice_pairs]
+        answer = MARKER_CHOICES[choices.index(normalize_english_choice(plan.correct_choice))]
 
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
         BatchRowId=batch_row_id,
-        QuestionType=type_spec.label_ko,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
         student_paragraph=normalize_text(source_paragraph),
         question_stem=type_spec.question_stem,
         given_sentence=None,
@@ -467,7 +500,10 @@ def _build_underlined_phrase_meaning_question(
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
         BatchRowId=batch_row_id,
-        QuestionType=type_spec.label_ko,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
         student_paragraph=wrapped_paragraph,
         question_stem=type_spec.question_stem,
         given_sentence=None,
@@ -489,7 +525,13 @@ def _build_fill_in_the_blank_question(
     if type_spec.choice_count != len(MARKER_CHOICES):
         raise ValueError("Fill-in-the-blank renderer expects exactly five choices.")
 
-    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
+    if type_spec.subtype_key == "blank_connective_relation_5_choices":
+        inventory = fill_blank_connective_inventory(prepared_source)
+    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
+        inventory = fill_blank_summary_inventory(prepared_source)
+    else:
+        inventory = phrase_span_inventory(prepared_source)
+    span_map = {span.id: span for span in inventory}
     selected_span = span_map.get(plan.selected_span_id)
     if selected_span is None:
         raise ValueError(f"Unknown selected span ID: {plan.selected_span_id}")
@@ -510,7 +552,10 @@ def _build_fill_in_the_blank_question(
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
         BatchRowId=batch_row_id,
-        QuestionType=type_spec.label_ko,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
         student_paragraph=student_paragraph,
         question_stem=type_spec.question_stem,
         given_sentence=None,
@@ -532,7 +577,7 @@ def _build_vocab_question(
     if type_spec.choice_count != len(MARKER_CHOICES):
         raise ValueError("Vocab renderer expects exactly five targets.")
 
-    inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
+    inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
     selected_spans = _ordered_target_spans(
         inventory=inventory,
         target_span_ids=plan.target_span_ids,
@@ -552,11 +597,60 @@ def _build_vocab_question(
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
         BatchRowId=batch_row_id,
-        QuestionType=type_spec.label_ko,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
         student_paragraph=student_paragraph,
         question_stem=type_spec.question_stem,
         given_sentence=None,
         choices=MARKER_CHOICES[: type_spec.choice_count],
+        answer=answer,
+        explanation=plan.explanation,
+    )
+
+
+def _build_vocab_choice_question(
+    *,
+    original_question_number: str,
+    batch_row_id: int,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    plan: VocabChoicePlan,
+    type_spec: QuestionTypeSpec,
+) -> GeneratedQuestion:
+    if type_spec.choice_count != len(MARKER_CHOICES):
+        raise ValueError("Vocab choice renderer expects exactly five choices.")
+
+    inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
+    selected_span = inventory.get(plan.selected_span_id)
+    if selected_span is None:
+        raise ValueError(f"Unknown selected span ID: {plan.selected_span_id}")
+    if plan.selected_span_text != selected_span.text:
+        raise ValueError("selected_span_text must exactly match the selected span text.")
+
+    student_paragraph = (
+        source_paragraph[: selected_span.char_start]
+        + BLANK_MARKER
+        + source_paragraph[selected_span.char_end :]
+    )
+    choices = [normalize_english_choice(choice) for choice in plan.choice_words]
+    correct_choice = normalize_english_choice(plan.correct_choice)
+    if correct_choice not in choices:
+        raise ValueError("correct_choice must be included in choice_words.")
+    answer = MARKER_CHOICES[choices.index(correct_choice)]
+
+    return GeneratedQuestion(
+        OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
+        student_paragraph=student_paragraph,
+        question_stem=type_spec.question_stem,
+        given_sentence=None,
+        choices=choices,
         answer=answer,
         explanation=plan.explanation,
     )
@@ -574,7 +668,7 @@ def _build_grammar_question(
     if type_spec.choice_count != len(MARKER_CHOICES):
         raise ValueError("Grammar renderer expects exactly five targets.")
 
-    inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
+    inventory = {span.id: span for span in grammar_subtype_inventory(prepared_source, type_spec.subtype_key)}
     selected_spans = _ordered_target_spans(
         inventory=inventory,
         target_span_ids=plan.target_span_ids,
@@ -594,7 +688,10 @@ def _build_grammar_question(
     return GeneratedQuestion(
         OriginalQuestionNumber=original_question_number,
         BatchRowId=batch_row_id,
-        QuestionType=type_spec.label_ko,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
         student_paragraph=student_paragraph,
         question_stem=type_spec.question_stem,
         given_sentence=None,

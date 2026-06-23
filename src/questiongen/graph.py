@@ -6,7 +6,7 @@ from typing import Any, Callable, Mapping
 from .explanations import build_explanation_context, write_teacher_facing_explanation
 from .parsers import prepare_source
 from .planners import PLANNERS, StructuredLLMFactory
-from .question_types import QUESTION_TYPES, QuestionTypeSpec
+from .question_types import QUESTION_SUBTYPE_SPECS, QuestionTypeSpec, resolve_question_type_spec
 from .renderers import RENDERERS
 from .schemas import QuestionState
 from .validators import input_check, plan_check, source_check, validate_generated_question
@@ -39,7 +39,22 @@ class LocalQuestionGraphRunner:
             },
         )
 
-        type_spec = self.question_types[working_state["QuestionTypeKey"]]
+        question_subtype_key = working_state.get("QuestionSubtypeKey")
+        type_spec = self.question_types.get(question_subtype_key or "")
+        if type_spec is None:
+            resolved = resolve_question_type_spec(
+                working_state["QuestionTypeKey"],
+                question_subtype_key,
+            )
+            if resolved is None:
+                return {
+                    **working_state,
+                    "status": "input_error",
+                    "errors": [
+                        f"Unknown subtype for {working_state['QuestionTypeKey']}: {question_subtype_key}"
+                    ],
+                }
+            type_spec = resolved
         self._apply_result(working_state, source_check(working_state, type_spec))
         if working_state["status"] != "source_passed":
             return working_state
@@ -84,6 +99,6 @@ def compile_question_graph(
     question_types: Mapping[str, QuestionTypeSpec] | None = None,
 ) -> LocalQuestionGraphRunner:
     return LocalQuestionGraphRunner(
-        question_types=question_types or QUESTION_TYPES,
+        question_types=question_types or QUESTION_SUBTYPE_SPECS,
         structured_llm_factory=structured_llm_factory,
     )

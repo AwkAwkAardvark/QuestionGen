@@ -11,7 +11,7 @@ from .planners import (
     is_quota_planning_error,
     normalize_planner_error,
 )
-from .question_types import QUESTION_TYPES
+from .question_types import QUESTION_TYPE_SPECS_BY_FAMILY, QUESTION_TYPES, expand_question_type_keys
 from .schemas import BatchInputRow, BatchResultRow, GeneratedQuestion, QuestionState, make_initial_state
 
 
@@ -28,15 +28,19 @@ def run_batch_rows(
     _ensure_runner(runner)
     results: list[BatchResultRow] = []
     quota_exhausted = False
+    concrete_specs = expand_question_type_keys(list(question_type_keys))
+    unknown_question_type_keys = [key for key in question_type_keys if key not in QUESTION_TYPE_SPECS_BY_FAMILY]
 
     for row in rows:
         input_row = row if isinstance(row, BatchInputRow) else BatchInputRow.model_validate(row)
-        for question_type_key in question_type_keys:
+        for type_spec in concrete_specs:
             state = make_initial_state(
                 source_paragraph=input_row.source_paragraph,
                 original_question_number=input_row.OriginalQuestionNumber,
                 batch_row_id=input_row.BatchRowId,
-                question_type_key=question_type_key,
+                question_type_key=type_spec.family_key,
+                question_format_key=type_spec.format_key,
+                question_subtype_key=type_spec.subtype_key,
             )
             if quota_exhausted:
                 results.append(
@@ -64,6 +68,21 @@ def run_batch_rows(
             if final_state["status"] == "planning_error" and is_quota_planning_error(final_state["errors"]):
                 quota_exhausted = True
             results.append(_state_to_result_row(final_state))
+        for question_type_key in unknown_question_type_keys:
+            results.append(
+                _state_to_result_row(
+                    {
+                        **make_initial_state(
+                            source_paragraph=input_row.source_paragraph,
+                            original_question_number=input_row.OriginalQuestionNumber,
+                            batch_row_id=input_row.BatchRowId,
+                            question_type_key=question_type_key,
+                        ),
+                        "status": "input_error",
+                        "errors": [f"Unknown QuestionTypeKey: {question_type_key}"],
+                    }
+                )
+            )
 
     return results
 
@@ -116,7 +135,15 @@ def _coerce_tabular_row(row: dict[str, object], *, batch_row_id: int) -> dict[st
 
 def _state_to_result_row(state: QuestionState) -> BatchResultRow:
     question_type_key = state["QuestionTypeKey"]
-    type_spec = QUESTION_TYPES.get(question_type_key)
+    type_spec = next(
+        (
+            spec
+            for spec in QUESTION_TYPE_SPECS_BY_FAMILY.get(question_type_key, ())
+            if spec.subtype_key == state["QuestionSubtypeKey"]
+        ),
+        None,
+    )
+    family_spec = QUESTION_TYPES.get(question_type_key)
     generated = state["generated"]
     generated_payload = generated if isinstance(generated, GeneratedQuestion) else None
 
@@ -124,7 +151,16 @@ def _state_to_result_row(state: QuestionState) -> BatchResultRow:
         OriginalQuestionNumber=state["OriginalQuestionNumber"],
         BatchRowId=state["BatchRowId"],
         QuestionTypeKey=question_type_key,
-        QuestionType=generated_payload.QuestionType if generated_payload else (type_spec.label_ko if type_spec else None),
+        QuestionFormatKey=(
+            generated_payload.QuestionFormatKey if generated_payload else (type_spec.format_key if type_spec else state["QuestionFormatKey"])
+        ),
+        QuestionSubtypeKey=(
+            generated_payload.QuestionSubtypeKey if generated_payload else (type_spec.subtype_key if type_spec else state["QuestionSubtypeKey"])
+        ),
+        QuestionSubtype=(
+            generated_payload.QuestionSubtype if generated_payload else (type_spec.subtype_label_ko if type_spec else None)
+        ),
+        QuestionType=generated_payload.QuestionType if generated_payload else (family_spec.label_ko if family_spec else None),
         status=state["status"],
         errors=list(state["errors"]),
         source_paragraph=state["source_paragraph"],
