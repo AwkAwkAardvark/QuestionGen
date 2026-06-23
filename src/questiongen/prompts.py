@@ -5,6 +5,7 @@ import re
 from .parsers import content_tokens, normalize_text
 from .question_types import QuestionTypeSpec
 from .schemas import PreparedSource
+from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_target_inventory
 
 _TRANSITION_STARTERS = {
     "accordingly",
@@ -272,6 +273,7 @@ def build_underlined_phrase_meaning_prompt(
         f"- {unit.id}: {unit.text}"
         for unit in prepared_source.sentence_units
     )
+    candidate_spans = phrase_span_inventory(prepared_source)
     span_inventory = "\n".join(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; "
@@ -283,7 +285,7 @@ def build_underlined_phrase_meaning_prompt(
         )
         for rank, span in enumerate(
             sorted(
-                prepared_source.span_units,
+                candidate_spans,
                 key=lambda span: (-span.priority_score, span.char_start, span.char_end),
             ),
             start=1,
@@ -314,6 +316,232 @@ Span candidates:
 Selection reminders:
 - Prefer candidates marked `priority=top` or `priority=strong` and avoid `centrality=weak` or `centrality=local` when a stronger candidate exists.
 - Never choose a span just because its boundaries are valid; the span must still carry a central claim, mechanism, evaluation, contrast, or limitation.
+""".strip()
+
+
+def build_fill_in_the_blank_prompt(
+    *,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> str:
+    sentence_inventory = "\n".join(
+        f"- {unit.id}: {unit.text}"
+        for unit in prepared_source.sentence_units
+    )
+    span_inventory = "\n".join(
+        (
+            f"- rank {rank}: {span.id}; score={span.priority_score}; "
+            f"priority={_span_priority_label(span.priority_score)}; "
+            f"centrality={_span_centrality_label(span.heuristic_tags)}; "
+            f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; "
+            f"tags={','.join(span.heuristic_tags) or 'none'}; "
+            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
+        )
+        for rank, span in enumerate(
+            sorted(
+                phrase_span_inventory(prepared_source),
+                key=lambda span: (-span.priority_score, span.char_start, span.char_end),
+            ),
+            start=1,
+        )
+    )
+    return f"""
+You are planning an English exam fill-in-the-blank question.
+
+Return only structured data matching the required schema.
+
+Question type:
+- Key: fill_in_the_blank
+- Label: {type_spec.label_ko}
+- Student-facing stem: {type_spec.question_stem}
+
+Planning rules:
+{type_spec.planner_prompt}
+
+Source paragraph:
+{source_paragraph}
+
+Sentence units:
+{sentence_inventory}
+
+Phrase-span candidates:
+{span_inventory}
+
+Selection reminders:
+- Prefer claim-bearing or clause-like spans, but if none are ideal, choose the most readable multi-word contextual span rather than failing.
+- Keep the blank recoverable from the surrounding passage, not from isolated dictionary meaning alone.
+""".strip()
+
+
+def build_fill_in_the_blank_repair_prompt(
+    *,
+    base_prompt: str,
+    previous_error: str,
+) -> str:
+    return f"""
+{base_prompt}
+
+Your previous answer did not satisfy the required schema.
+
+Previous validation error:
+{previous_error}
+
+Repair rules:
+- Return a fully corrected answer.
+- Re-check that `selected_span_id` is one of the provided phrase-span IDs.
+- Re-check that `selected_span_text` exactly matches the source text for that selected span.
+- Re-check that `completion_choices` contains exactly five unique readable English choices.
+- Re-check that `correct_choice` is one of `completion_choices`.
+- Re-check that `supporting_evidence` is copied as an exact passage snippet.
+- If the previous error says the selected span is invalid, pick a new readable multi-word span instead of forcing the same one.
+- Keep the explanation in Korean.
+- Rewrite the explanation as teacher-facing Korean prose that explains what idea the blank must express, without schema fields or mechanics.
+- Return only structured data matching the schema.
+""".strip()
+
+
+def build_vocab_prompt(
+    *,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> str:
+    sentence_inventory = "\n".join(
+        f"- {unit.id}: {unit.text}"
+        for unit in prepared_source.sentence_units
+    )
+    target_inventory = "\n".join(
+        (
+            f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
+            f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
+            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
+        )
+        for rank, span in enumerate(vocab_target_inventory(prepared_source), start=1)
+    )
+    return f"""
+You are planning an English exam contextual vocabulary question.
+
+Return only structured data matching the required schema.
+
+Question type:
+- Key: vocab
+- Label: {type_spec.label_ko}
+- Student-facing stem: {type_spec.question_stem}
+
+Planning rules:
+{type_spec.planner_prompt}
+
+Source paragraph:
+{source_paragraph}
+
+Sentence units:
+{sentence_inventory}
+
+Single-word vocab targets:
+{target_inventory}
+
+Selection reminders:
+- Use exactly five targets from the provided inventory.
+- The corrupted word should stay grammatically readable, but its meaning should clash with the passage context.
+""".strip()
+
+
+def build_vocab_repair_prompt(
+    *,
+    base_prompt: str,
+    previous_error: str,
+) -> str:
+    return f"""
+{base_prompt}
+
+Your previous answer did not satisfy the required schema.
+
+Previous validation error:
+{previous_error}
+
+Repair rules:
+- Return a fully corrected answer.
+- Re-check that `target_span_ids` contains exactly five unique IDs from the provided inventory.
+- Re-check that `target_span_texts` copies those five exact source words in the same order.
+- Re-check that `corrupted_span_id` is one of `target_span_ids`.
+- Re-check that `corrupted_word` is a single English word and differs from the original target word.
+- Re-check that `supporting_evidence` is copied as an exact passage snippet.
+- Keep the explanation in Korean.
+- Rewrite the explanation as teacher-facing Korean prose about contextual mismatch, without schema fields or mechanics.
+- Return only structured data matching the schema.
+""".strip()
+
+
+def build_grammar_prompt(
+    *,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> str:
+    sentence_inventory = "\n".join(
+        f"- {unit.id}: {unit.text}"
+        for unit in prepared_source.sentence_units
+    )
+    target_inventory = "\n".join(
+        (
+            f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
+            f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
+            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
+        )
+        for rank, span in enumerate(grammar_target_inventory(prepared_source), start=1)
+    )
+    return f"""
+You are planning an English exam grammar question.
+
+Return only structured data matching the required schema.
+
+Question type:
+- Key: grammar
+- Label: {type_spec.label_ko}
+- Student-facing stem: {type_spec.question_stem}
+
+Planning rules:
+{type_spec.planner_prompt}
+
+Source paragraph:
+{source_paragraph}
+
+Sentence units:
+{sentence_inventory}
+
+Single-word grammar targets:
+{target_inventory}
+
+Selection reminders:
+- Use exactly five targets from the provided inventory.
+- The corrupted word must stay in the same narrow verb-form family as the original target.
+""".strip()
+
+
+def build_grammar_repair_prompt(
+    *,
+    base_prompt: str,
+    previous_error: str,
+) -> str:
+    return f"""
+{base_prompt}
+
+Your previous answer did not satisfy the required schema.
+
+Previous validation error:
+{previous_error}
+
+Repair rules:
+- Return a fully corrected answer.
+- Re-check that `target_span_ids` contains exactly five unique IDs from the provided grammar-target inventory.
+- Re-check that `target_span_texts` copies those five exact source words in the same order.
+- Re-check that `corrupted_span_id` is one of `target_span_ids`.
+- Re-check that `corrupted_word` is a single English word and a verb-form variant of the original target word.
+- Re-check that `supporting_evidence` is copied as an exact passage snippet.
+- Keep the explanation in Korean.
+- Rewrite the explanation as teacher-facing Korean prose about the structural cue, without schema fields or mechanics.
+- Return only structured data matching the schema.
 """.strip()
 
 

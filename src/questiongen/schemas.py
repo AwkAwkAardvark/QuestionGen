@@ -157,6 +157,8 @@ class ParagraphOrderingPlan(BaseModel):
 
 
 _CHOICE_PAIR_RE = re.compile(r"^[A-Za-z][A-Za-z '\-/]*(?:\s*->\s*)[A-Za-z][A-Za-z '\-/]*$")
+_ENGLISH_CHOICE_RE = re.compile(r"^[A-Za-z][A-Za-z '\-/,;:()]*[A-Za-z.]$")
+_ENGLISH_WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*$")
 
 
 def _normalize_choice_pair(value: str) -> str:
@@ -247,6 +249,121 @@ class UnderlinedPhraseMeaningPlan(BaseModel):
             raise ValueError("UnderlinedPhraseMeaningPlan explanation is required.")
         if not _HANGUL_RE.search(self.explanation):
             raise ValueError("UnderlinedPhraseMeaningPlan explanation must contain Korean text.")
+        return self
+
+
+class FillInTheBlankPlan(BaseModel):
+    selected_span_id: str
+    selected_span_text: str
+    completion_choices: list[str] = Field(default_factory=list)
+    correct_choice: str
+    contextual_meaning_ko: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_plan(self) -> FillInTheBlankPlan:
+        if not self.selected_span_id:
+            raise ValueError("FillInTheBlankPlan selected_span_id is required.")
+        if not self.selected_span_text or not self.selected_span_text.strip():
+            raise ValueError("FillInTheBlankPlan selected_span_text is required.")
+        if len(self.completion_choices) != 5:
+            raise ValueError("FillInTheBlankPlan requires exactly five completion_choices.")
+        normalized_choices = [" ".join(choice.split()) for choice in self.completion_choices]
+        if len(set(normalized_choices)) != 5:
+            raise ValueError("FillInTheBlankPlan completion_choices must be unique.")
+        if any(_ENGLISH_CHOICE_RE.fullmatch(choice) is None for choice in normalized_choices):
+            raise ValueError("FillInTheBlankPlan completion_choices must be readable English text.")
+        if " ".join(self.correct_choice.split()) not in normalized_choices:
+            raise ValueError("FillInTheBlankPlan correct_choice must be included in completion_choices.")
+        if not self.contextual_meaning_ko or not self.contextual_meaning_ko.strip():
+            raise ValueError("FillInTheBlankPlan contextual_meaning_ko is required.")
+        if not _HANGUL_RE.search(self.contextual_meaning_ko):
+            raise ValueError("FillInTheBlankPlan contextual_meaning_ko must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("FillInTheBlankPlan supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("FillInTheBlankPlan explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("FillInTheBlankPlan explanation must contain Korean text.")
+        return self
+
+
+class VocabPlan(BaseModel):
+    target_span_ids: list[str] = Field(default_factory=list)
+    target_span_texts: list[str] = Field(default_factory=list)
+    corrupted_span_id: str
+    corrupted_word: str
+    correction_basis_ko: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_plan(self) -> VocabPlan:
+        if len(self.target_span_ids) != 5:
+            raise ValueError("VocabPlan requires exactly five target_span_ids.")
+        if len(set(self.target_span_ids)) != 5:
+            raise ValueError("VocabPlan target_span_ids must be unique.")
+        if len(self.target_span_texts) != 5:
+            raise ValueError("VocabPlan requires exactly five target_span_texts.")
+        normalized_texts = [text.strip().lower() for text in self.target_span_texts]
+        if len(set(normalized_texts)) != 5:
+            raise ValueError("VocabPlan target_span_texts must be unique.")
+        if any(_ENGLISH_WORD_RE.fullmatch(text.strip()) is None for text in self.target_span_texts):
+            raise ValueError("VocabPlan target_span_texts must all be single English words.")
+        if self.corrupted_span_id not in self.target_span_ids:
+            raise ValueError("VocabPlan corrupted_span_id must be included in target_span_ids.")
+        if _ENGLISH_WORD_RE.fullmatch(self.corrupted_word.strip()) is None:
+            raise ValueError("VocabPlan corrupted_word must be a single English word.")
+        if not self.correction_basis_ko or not self.correction_basis_ko.strip():
+            raise ValueError("VocabPlan correction_basis_ko is required.")
+        if not _HANGUL_RE.search(self.correction_basis_ko):
+            raise ValueError("VocabPlan correction_basis_ko must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("VocabPlan supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("VocabPlan explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("VocabPlan explanation must contain Korean text.")
+        return self
+
+
+class GrammarPlan(BaseModel):
+    target_span_ids: list[str] = Field(default_factory=list)
+    target_span_texts: list[str] = Field(default_factory=list)
+    corrupted_span_id: str
+    corrupted_word: str
+    correction_basis_ko: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_plan(self) -> GrammarPlan:
+        if len(self.target_span_ids) != 5:
+            raise ValueError("GrammarPlan requires exactly five target_span_ids.")
+        if len(set(self.target_span_ids)) != 5:
+            raise ValueError("GrammarPlan target_span_ids must be unique.")
+        if len(self.target_span_texts) != 5:
+            raise ValueError("GrammarPlan requires exactly five target_span_texts.")
+        normalized_texts = [text.strip().lower() for text in self.target_span_texts]
+        if len(set(normalized_texts)) != 5:
+            raise ValueError("GrammarPlan target_span_texts must be unique.")
+        if any(_ENGLISH_WORD_RE.fullmatch(text.strip()) is None for text in self.target_span_texts):
+            raise ValueError("GrammarPlan target_span_texts must all be single English words.")
+        if self.corrupted_span_id not in self.target_span_ids:
+            raise ValueError("GrammarPlan corrupted_span_id must be included in target_span_ids.")
+        if _ENGLISH_WORD_RE.fullmatch(self.corrupted_word.strip()) is None:
+            raise ValueError("GrammarPlan corrupted_word must be a single English word.")
+        if not self.correction_basis_ko or not self.correction_basis_ko.strip():
+            raise ValueError("GrammarPlan correction_basis_ko is required.")
+        if not _HANGUL_RE.search(self.correction_basis_ko):
+            raise ValueError("GrammarPlan correction_basis_ko must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("GrammarPlan supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("GrammarPlan explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("GrammarPlan explanation must contain Korean text.")
         return self
 
 

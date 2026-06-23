@@ -5,18 +5,30 @@ import unittest
 from questiongen.parsers import prepare_source
 from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
 from questiongen.schemas import (
+    FillInTheBlankPlan,
     GapUnit,
     GeneratedQuestion,
+    GrammarPlan,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
     PreparedSource,
+    VocabPlan,
     SentenceInsertionPlan,
     SourceUnit,
     UnderlinedPhraseMeaningPlan,
 )
+from questiongen.targeting import (
+    allowed_verb_form_variants,
+    grammar_target_inventory,
+    phrase_span_inventory,
+    render_numbered_span_edits,
+    vocab_target_inventory,
+)
 from questiongen.validators import (
     plan_check,
     source_check,
+    validate_fill_in_the_blank_output,
+    validate_grammar_output,
     validate_mood_atmosphere_output,
     validate_plan_against_prepared_source,
     validate_prepared_source,
@@ -24,6 +36,7 @@ from questiongen.validators import (
     validate_sentence_insertion_output,
     validate_teacher_facing_explanation,
     validate_underlined_phrase_meaning_output,
+    validate_vocab_output,
 )
 
 
@@ -859,6 +872,197 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any("choices must contain Korean text" in error for error in errors))
         self.assertTrue(any("wrap the selected span text exactly once" in error for error in errors))
         self.assertTrue(any("must not mention schema fields" in error for error in errors))
+
+    def test_fill_in_the_blank_source_check_accepts_workable_span_inventory(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        result = source_check(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "MVP-01",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "fill_in_the_blank",
+                "prepared_source": prepare_source(source),
+                "plan": None,
+                "generated": None,
+                "status": "source_prepared",
+                "errors": [],
+            },
+            QUESTION_TYPES["fill_in_the_blank"],
+        )
+        self.assertEqual(result["status"], "source_passed")
+
+    def test_vocab_and_grammar_source_checks_accept_single_word_targets(self) -> None:
+        source = (
+            "The city can reduce energy use without raising taxes. "
+            "Officials plan to expand the lighting system next month. "
+            "Residents say the brighter streets feel safer at night. "
+            "Engineers are testing whether the new lamps last longer in winter. "
+            "The mayor hopes to show that the project saves money over time. "
+            "Teachers report that students now walk home with more confidence."
+        )
+        prepared = prepare_source(source)
+        vocab_result = source_check(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "MVP-02",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "vocab",
+                "prepared_source": prepared,
+                "plan": None,
+                "generated": None,
+                "status": "source_prepared",
+                "errors": [],
+            },
+            QUESTION_TYPES["vocab"],
+        )
+        grammar_result = source_check(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "MVP-03",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "grammar",
+                "prepared_source": prepared,
+                "plan": None,
+                "generated": None,
+                "status": "source_prepared",
+                "errors": [],
+            },
+            QUESTION_TYPES["grammar"],
+        )
+        self.assertEqual(vocab_result["status"], "source_passed")
+        self.assertEqual(grammar_result["status"], "source_passed")
+
+    def test_fill_in_the_blank_validator_accepts_valid_output(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(span for span in phrase_span_inventory(prepared) if "electricity" in span.text and "older" in span.text)
+        plan = FillInTheBlankPlan(
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            completion_choices=[
+                selected_span.text,
+                "more confusion among the residents",
+                "a weaker plan for nearby roads",
+                "fewer reasons to expand the system",
+                "higher costs for the city budget",
+            ],
+            correct_choice=selected_span.text,
+            contextual_meaning_ko="원문의 핵심 설명이 복원되어야 한다는 의미",
+            supporting_evidence=selected_span.text,
+            explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="MVP-01",
+            BatchRowId=0,
+            QuestionType=QUESTION_TYPES["fill_in_the_blank"].label_ko,
+            student_paragraph=source.replace(selected_span.text, "_____", 1),
+            question_stem=QUESTION_TYPES["fill_in_the_blank"].question_stem,
+            choices=[
+                selected_span.text,
+                "more confusion among the residents",
+                "a weaker plan for nearby roads",
+                "fewer reasons to expand the system",
+                "higher costs for the city budget",
+            ],
+            answer="①",
+            explanation=(
+                f"빈칸은 원문에서 '{selected_span.text}'에 해당하는 부분으로, "
+                "이 자리에는 원문의 핵심 설명이 복원되어야 한다는 의미가 들어가야 합니다. "
+                f"특히 '{selected_span.text}'라는 내용이 그 방향을 뒷받침하므로 "
+                f"정답은 ① {selected_span.text}입니다."
+            ),
+        )
+        self.assertEqual(
+            validate_fill_in_the_blank_output(
+                prepared_source=prepared,
+                plan=plan,
+                generated=generated,
+                type_spec=QUESTION_TYPES["fill_in_the_blank"],
+            ),
+            [],
+        )
+
+    def test_vocab_validator_rejects_duplicate_targets(self) -> None:
+        source = (
+            "The city can reduce energy use without raising taxes. "
+            "Officials plan to expand the lighting system next month. "
+            "Residents say the brighter streets feel safer at night. "
+            "Engineers are testing whether the new lamps last longer in winter. "
+            "The mayor hopes to show that the project saves money over time. "
+            "Teachers report that students now walk home with more confidence."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(vocab_target_inventory(prepared)[:5], key=lambda span: span.char_start)
+        with self.assertRaises(ValueError):
+            VocabPlan(
+                target_span_ids=[targets[0].id, targets[0].id, targets[2].id, targets[3].id, targets[4].id],
+                target_span_texts=[targets[0].text, targets[0].text, targets[2].text, targets[3].text, targets[4].text],
+                corrupted_span_id=targets[2].id,
+                corrupted_word="heavier",
+                correction_basis_ko="문맥상 맞지 않는 단어입니다",
+                supporting_evidence="Residents say the brighter streets feel safer at night.",
+                explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
+            )
+
+    def test_grammar_validator_accepts_valid_output(self) -> None:
+        source = (
+            "The city can reduce energy use without raising taxes. "
+            "Officials plan to expand the lighting system next month. "
+            "Residents say the brighter streets feel safer at night. "
+            "Engineers are testing whether the new lamps last longer in winter. "
+            "The mayor hopes to show that the project saves money over time. "
+            "Teachers report that students now walk home with more confidence."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(grammar_target_inventory(prepared)[:5], key=lambda span: span.char_start)
+        replacement = next(iter(sorted(allowed_verb_form_variants(targets[1].text) - {targets[1].text.lower()})))
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=targets[1].id,
+            corrupted_word=replacement,
+            correction_basis_ko="이 자리에는 주변 구조에 맞는 원래 동사 형태가 필요합니다",
+            supporting_evidence="Officials plan to expand the lighting system next month.",
+            explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="MVP-03",
+            BatchRowId=0,
+            QuestionType=QUESTION_TYPES["grammar"].label_ko,
+            student_paragraph=render_numbered_span_edits(
+                source_text=source,
+                selected_spans=targets,
+                replacement_by_span_id={targets[1].id: replacement},
+                markers=["①", "②", "③", "④", "⑤"],
+            ),
+            question_stem=QUESTION_TYPES["grammar"].question_stem,
+            choices=["①", "②", "③", "④", "⑤"],
+            answer="②",
+            explanation="②의 잘못된 형태는 주변 구조와 맞지 않으므로 원래 형태가 와야 합니다.",
+        )
+        self.assertEqual(
+            validate_grammar_output(
+                prepared_source=prepared,
+                plan=plan,
+                generated=generated,
+                type_spec=QUESTION_TYPES["grammar"],
+            ),
+            [],
+        )
 
 
 if __name__ == "__main__":

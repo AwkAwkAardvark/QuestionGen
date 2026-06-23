@@ -1,28 +1,39 @@
 from __future__ import annotations
 
+import re
 import unittest
 
 from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
 from questiongen.planners import (
     PLANNER_QUOTA_EXHAUSTED_ERROR,
+    plan_fill_in_the_blank,
+    plan_grammar,
     plan_mood_atmosphere,
     plan_paragraph_ordering,
     plan_sentence_insertion,
     plan_underlined_phrase_meaning,
+    plan_vocab,
 )
 from questiongen.prompts import (
+    build_fill_in_the_blank_prompt,
+    build_grammar_prompt,
     build_paragraph_ordering_prompt,
     build_sentence_insertion_prompt,
     build_underlined_phrase_meaning_prompt,
+    build_vocab_prompt,
 )
 from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
 from questiongen.schemas import (
+    FillInTheBlankPlan,
+    GrammarPlan,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabPlan,
 )
+from questiongen.targeting import allowed_verb_form_variants
 
 
 class _ValidPlanner:
@@ -290,6 +301,59 @@ class _DeterministicUnderlinedRetryPlanner:
         }
 
 
+class _FillInTheBlankPlanner:
+    def invoke(self, prompt: str) -> FillInTheBlankPlan:
+        match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+        span_id = match.group(1) if match else "P0"
+        span_text = match.group(2) if match else "less electricity than the older"
+        return FillInTheBlankPlan(
+            selected_span_id=span_id,
+            selected_span_text=span_text,
+            completion_choices=[
+                span_text,
+                "more confusion among the residents",
+                "a weaker plan for nearby roads",
+                "fewer reasons to expand the system",
+                "higher costs for the city budget",
+            ],
+            correct_choice=span_text,
+            contextual_meaning_ko="원문의 핵심 설명이 그대로 복원되어야 한다는 의미",
+            supporting_evidence=span_text,
+            explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
+        )
+
+
+class _VocabPlanner:
+    def invoke(self, prompt: str) -> VocabPlan:
+        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
+        target_ids, target_texts = zip(*targets)
+        return VocabPlan(
+            target_span_ids=list(target_ids),
+            target_span_texts=list(target_texts),
+            corrupted_span_id=target_ids[1],
+            corrupted_word="heavier",
+            correction_basis_ko="이 문맥에서는 원래 단어가 설명하는 기능이 유지되어야 합니다",
+            supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+            explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
+        )
+
+
+class _GrammarPlanner:
+    def invoke(self, prompt: str) -> GrammarPlan:
+        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
+        target_ids, target_texts = zip(*targets)
+        replacement = next(iter(sorted(allowed_verb_form_variants(target_texts[1]) - {target_texts[1].lower()})))
+        return GrammarPlan(
+            target_span_ids=list(target_ids),
+            target_span_texts=list(target_texts),
+            corrupted_span_id=target_ids[1],
+            corrupted_word=replacement,
+            correction_basis_ko="주변 구조에 맞는 동사 형태가 유지되어야 합니다",
+            supporting_evidence="Officials now plan to expand the same lighting system to nearby neighborhoods.",
+            explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
+        )
+
+
 class PlannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {
@@ -330,6 +394,14 @@ class PlannerTests(unittest.TestCase):
             "Next, curators turn that curiosity into quiet audio guides for visitors who want more detail. "
             "Those guides let each person choose how much background information to hear. "
             "Finally, the feedback gathered through those guides helps museums redesign later exhibits."
+        )
+        self.mvp_source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
         )
 
     def test_planner_output_validates(self) -> None:
@@ -641,6 +713,72 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "validation_passed")
         self.assertIn("brought only discontent", result["generated"].explanation or "")
         self.assertNotIn("surface_meaning", result["generated"].explanation or "")
+
+    def test_fill_in_the_blank_planner_output_validates(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = plan_fill_in_the_blank(
+            state,
+            QUESTION_TYPES["fill_in_the_blank"],
+            structured_llm_factory=lambda schema: _FillInTheBlankPlanner(),
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertIsInstance(result["plan"], FillInTheBlankPlan)
+
+    def test_vocab_planner_output_validates(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "vocab",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = plan_vocab(
+            state,
+            QUESTION_TYPES["vocab"],
+            structured_llm_factory=lambda schema: _VocabPlanner(),
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertIsInstance(result["plan"], VocabPlan)
+
+    def test_grammar_planner_output_validates(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "grammar",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = plan_grammar(
+            state,
+            QUESTION_TYPES["grammar"],
+            structured_llm_factory=lambda schema: _GrammarPlanner(),
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertIsInstance(result["plan"], GrammarPlan)
+
+    def test_new_type_prompts_expose_target_inventories(self) -> None:
+        prepared = prepare_source(self.mvp_source)
+        blank_prompt = build_fill_in_the_blank_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_TYPES["fill_in_the_blank"],
+        )
+        vocab_prompt = build_vocab_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_TYPES["vocab"],
+        )
+        grammar_prompt = build_grammar_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_TYPES["grammar"],
+        )
+        self.assertIn("Phrase-span candidates", blank_prompt)
+        self.assertIn("Single-word vocab targets", vocab_prompt)
+        self.assertIn("Single-word grammar targets", grammar_prompt)
 
 
 if __name__ == "__main__":

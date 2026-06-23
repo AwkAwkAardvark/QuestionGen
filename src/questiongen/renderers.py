@@ -6,6 +6,8 @@ from typing import Any
 from .parsers import normalize_text
 from .question_types import QuestionTypeSpec
 from .schemas import (
+    FillInTheBlankPlan,
+    GrammarPlan,
     GeneratedQuestion,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
@@ -13,6 +15,17 @@ from .schemas import (
     QuestionState,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabPlan,
+)
+from .targeting import (
+    BLANK_MARKER,
+    grammar_target_inventory,
+    normalize_english_choice,
+    numbered_underline_close,
+    numbered_underline_open,
+    phrase_span_inventory,
+    render_numbered_span_edits,
+    vocab_target_inventory,
 )
 
 MARKER_CHOICES = ["①", "②", "③", "④", "⑤"]
@@ -152,6 +165,111 @@ def render_underlined_phrase_meaning(
 
     try:
         generated = _build_underlined_phrase_meaning_question(
+            original_question_number=state["OriginalQuestionNumber"],
+            batch_row_id=state["BatchRowId"],
+            source_paragraph=state["source_paragraph"],
+            prepared_source=prepared_source,
+            plan=plan,
+            type_spec=type_spec,
+        )
+    except Exception as exc:
+        return {
+            "status": "rendering_error",
+            "errors": [f"Renderer failed: {exc}"],
+        }
+
+    return {
+        "generated": generated,
+        "status": "rendered",
+        "errors": [],
+    }
+
+
+def render_fill_in_the_blank(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> dict[str, Any]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+
+    if prepared_source is None or not isinstance(plan, FillInTheBlankPlan):
+        return {
+            "status": "rendering_error",
+            "errors": ["PreparedSource and FillInTheBlankPlan are required for rendering."],
+        }
+
+    try:
+        generated = _build_fill_in_the_blank_question(
+            original_question_number=state["OriginalQuestionNumber"],
+            batch_row_id=state["BatchRowId"],
+            source_paragraph=state["source_paragraph"],
+            prepared_source=prepared_source,
+            plan=plan,
+            type_spec=type_spec,
+        )
+    except Exception as exc:
+        return {
+            "status": "rendering_error",
+            "errors": [f"Renderer failed: {exc}"],
+        }
+
+    return {
+        "generated": generated,
+        "status": "rendered",
+        "errors": [],
+    }
+
+
+def render_vocab(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> dict[str, Any]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+
+    if prepared_source is None or not isinstance(plan, VocabPlan):
+        return {
+            "status": "rendering_error",
+            "errors": ["PreparedSource and VocabPlan are required for rendering."],
+        }
+
+    try:
+        generated = _build_vocab_question(
+            original_question_number=state["OriginalQuestionNumber"],
+            batch_row_id=state["BatchRowId"],
+            source_paragraph=state["source_paragraph"],
+            prepared_source=prepared_source,
+            plan=plan,
+            type_spec=type_spec,
+        )
+    except Exception as exc:
+        return {
+            "status": "rendering_error",
+            "errors": [f"Renderer failed: {exc}"],
+        }
+
+    return {
+        "generated": generated,
+        "status": "rendered",
+        "errors": [],
+    }
+
+
+def render_grammar(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> dict[str, Any]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+
+    if prepared_source is None or not isinstance(plan, GrammarPlan):
+        return {
+            "status": "rendering_error",
+            "errors": ["PreparedSource and GrammarPlan are required for rendering."],
+        }
+
+    try:
+        generated = _build_grammar_question(
             original_question_number=state["OriginalQuestionNumber"],
             batch_row_id=state["BatchRowId"],
             source_paragraph=state["source_paragraph"],
@@ -359,6 +477,135 @@ def _build_underlined_phrase_meaning_question(
     )
 
 
+def _build_fill_in_the_blank_question(
+    *,
+    original_question_number: str,
+    batch_row_id: int,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    plan: FillInTheBlankPlan,
+    type_spec: QuestionTypeSpec,
+) -> GeneratedQuestion:
+    if type_spec.choice_count != len(MARKER_CHOICES):
+        raise ValueError("Fill-in-the-blank renderer expects exactly five choices.")
+
+    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
+    selected_span = span_map.get(plan.selected_span_id)
+    if selected_span is None:
+        raise ValueError(f"Unknown selected span ID: {plan.selected_span_id}")
+    if plan.selected_span_text != selected_span.text:
+        raise ValueError("selected_span_text must exactly match the selected span text.")
+
+    student_paragraph = (
+        source_paragraph[: selected_span.char_start]
+        + BLANK_MARKER
+        + source_paragraph[selected_span.char_end :]
+    )
+    choices = [normalize_english_choice(choice) for choice in plan.completion_choices]
+    correct_choice = normalize_english_choice(plan.correct_choice)
+    if correct_choice not in choices:
+        raise ValueError("correct_choice must be included in completion_choices.")
+    answer = MARKER_CHOICES[choices.index(correct_choice)]
+
+    return GeneratedQuestion(
+        OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
+        QuestionType=type_spec.label_ko,
+        student_paragraph=student_paragraph,
+        question_stem=type_spec.question_stem,
+        given_sentence=None,
+        choices=choices,
+        answer=answer,
+        explanation=plan.explanation,
+    )
+
+
+def _build_vocab_question(
+    *,
+    original_question_number: str,
+    batch_row_id: int,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    plan: VocabPlan,
+    type_spec: QuestionTypeSpec,
+) -> GeneratedQuestion:
+    if type_spec.choice_count != len(MARKER_CHOICES):
+        raise ValueError("Vocab renderer expects exactly five targets.")
+
+    inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
+    selected_spans = _ordered_target_spans(
+        inventory=inventory,
+        target_span_ids=plan.target_span_ids,
+        target_span_texts=plan.target_span_texts,
+    )
+    if plan.corrupted_span_id not in plan.target_span_ids:
+        raise ValueError("corrupted_span_id must be included in target_span_ids.")
+
+    student_paragraph = render_numbered_span_edits(
+        source_text=source_paragraph,
+        selected_spans=selected_spans,
+        replacement_by_span_id={plan.corrupted_span_id: plan.corrupted_word.strip()},
+        markers=MARKER_CHOICES[: type_spec.choice_count],
+    )
+    ordered_ids = [span.id for span in selected_spans]
+    answer = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
+
+    return GeneratedQuestion(
+        OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
+        QuestionType=type_spec.label_ko,
+        student_paragraph=student_paragraph,
+        question_stem=type_spec.question_stem,
+        given_sentence=None,
+        choices=MARKER_CHOICES[: type_spec.choice_count],
+        answer=answer,
+        explanation=plan.explanation,
+    )
+
+
+def _build_grammar_question(
+    *,
+    original_question_number: str,
+    batch_row_id: int,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    plan: GrammarPlan,
+    type_spec: QuestionTypeSpec,
+) -> GeneratedQuestion:
+    if type_spec.choice_count != len(MARKER_CHOICES):
+        raise ValueError("Grammar renderer expects exactly five targets.")
+
+    inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
+    selected_spans = _ordered_target_spans(
+        inventory=inventory,
+        target_span_ids=plan.target_span_ids,
+        target_span_texts=plan.target_span_texts,
+    )
+    if plan.corrupted_span_id not in plan.target_span_ids:
+        raise ValueError("corrupted_span_id must be included in target_span_ids.")
+
+    student_paragraph = render_numbered_span_edits(
+        source_text=source_paragraph,
+        selected_spans=selected_spans,
+        replacement_by_span_id={plan.corrupted_span_id: plan.corrupted_word.strip()},
+        markers=MARKER_CHOICES[: type_spec.choice_count],
+    )
+    ordered_ids = [span.id for span in selected_spans]
+    answer = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
+
+    return GeneratedQuestion(
+        OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
+        QuestionType=type_spec.label_ko,
+        student_paragraph=student_paragraph,
+        question_stem=type_spec.question_stem,
+        given_sentence=None,
+        choices=MARKER_CHOICES[: type_spec.choice_count],
+        answer=answer,
+        explanation=plan.explanation,
+    )
+
+
 def rendered_gap_positions(prepared_source: PreparedSource, target_id: str) -> dict[str, tuple[str | None, str | None]]:
     positions: dict[str, tuple[str | None, str | None]] = {}
     sentence_ids = [unit.id for unit in prepared_source.sentence_units]
@@ -385,6 +632,9 @@ RENDERERS = {
     "paragraph_ordering": render_paragraph_ordering,
     "mood_atmosphere": render_mood_atmosphere,
     "underlined_phrase_meaning": render_underlined_phrase_meaning,
+    "fill_in_the_blank": render_fill_in_the_blank,
+    "vocab": render_vocab,
+    "grammar": render_grammar,
 }
 
 
@@ -394,3 +644,22 @@ def _normalize_choice_pair(value: str) -> str:
 
 def _normalize_korean_choice(value: str) -> str:
     return normalize_text(value)
+
+
+def _ordered_target_spans(
+    *,
+    inventory: dict[str, object],
+    target_span_ids: list[str],
+    target_span_texts: list[str],
+) -> list[object]:
+    if len(target_span_ids) != len(target_span_texts):
+        raise ValueError("target_span_ids and target_span_texts must have the same length.")
+    selected_spans = []
+    for span_id, expected_text in zip(target_span_ids, target_span_texts):
+        span = inventory.get(span_id)
+        if span is None:
+            raise ValueError(f"Unknown target span ID: {span_id}")
+        if getattr(span, "text") != expected_text:
+            raise ValueError(f"target_span_texts must exactly match the source text for {span_id}.")
+        selected_spans.append(span)
+    return sorted(selected_spans, key=lambda span: (span.char_start, span.char_end))

@@ -117,8 +117,8 @@ Notes:
 - The current API still requires explicit `question_type_keys`, so the launcher must derive them from `QUESTION_TYPES`.
 - This preserves the current backend API while delivering the intended launcher behavior.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
-- The live registry currently includes `sentence_insertion`, `paragraph_ordering`, and `underlined_phrase_meaning`; the current first supported span format is `underlined_phrase_meaning_5_ko`.
-- `fill_in_the_blank` remains the next planned family, but it must not appear in launcher-derived defaults until the current `gpt-5-mini` live baseline is acceptable again.
+- The live registry currently includes `sentence_insertion`, `paragraph_ordering`, `underlined_phrase_meaning`, `fill_in_the_blank`, `vocab`, and `grammar`.
+- This MVP rollout intentionally favors family coverage over item polish for `fill_in_the_blank`, `vocab`, and `grammar`; launcher-derived defaults should still include them because the product direction is to run all registered families.
 - The `mood_atmosphere` implementation remains in the codebase as deferred future work, but it is intentionally excluded from `QUESTION_TYPES` and from launcher-derived default selections.
 
 ## Output Artifacts
@@ -141,6 +141,8 @@ Rules:
 - Quota-driven `planning_error` rows are operational failures rather than live-family quality evidence and should be excluded from mixed-batch quality audits in favor of quota-clean reruns.
 - `validation_passed` rows are expected to be structurally intact, including abbreviation-safe sentence preparation and fragment-safe rendered text, not just schema-valid fields.
 - `underlined_phrase_meaning` should preserve the original passage exactly except for wrapping the chosen source span as `[밑줄]...[/밑줄]` in exported `student_paragraph`.
+- `fill_in_the_blank` should preserve the original passage exactly except for replacing one selected source span with the single blank marker `_____` in exported `student_paragraph`.
+- `vocab` and `grammar` should preserve the original passage except for the agreed numbered underline wrappers and exactly one intended corruption among the five numbered targets.
 - The deferred `mood_atmosphere` implementation must not appear in default launcher or batch outputs unless it is explicitly reactivated in the live registry later.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
 - Teacher-facing explanation writing is now treated as a post-render concern rather than as part of structural planning for the live types.

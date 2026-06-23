@@ -7,6 +7,9 @@ Current live registry:
 - `sentence_insertion`
 - `paragraph_ordering`
 - `underlined_phrase_meaning` (`underlined_phrase_meaning_5_ko` with `[밑줄]...[/밑줄]` export markers)
+- `fill_in_the_blank` (`blank_inference_proposition_5_choices` with the `_____` blank marker)
+- `vocab` (`contextual_vocab_error_5` with five numbered single-word underlines and one contextual corruption)
+- `grammar` (`grammar_error_5` with five numbered single-word verb-form targets and one controlled corruption)
 
 Current product direction:
 
@@ -17,7 +20,7 @@ Current product direction:
 - `gpt-5-mini` is the single default model for the current MVP
 - per-type model-tier routing is intentionally deferred until after live-pipeline stabilization
 
-Because the launcher runs every registered type, new types should not be added to the live registry until they are implementation-complete enough to tolerate mixed-source batches.
+Because the launcher runs every registered type, only `mood_atmosphere` remains outside the live registry. The remaining sections below are retained mainly as planning history and subtype notes rather than as a live-status checklist.
 
 Latest gating lessons from sample review:
 
@@ -34,10 +37,7 @@ Latest gating lessons from sample review:
 
 ## Recommended Order
 
-1. `fill_in_the_blank`
-2. `vocab`
-3. `grammar`
-4. `mood_atmosphere` (only after all other planned families are implemented and optimized, and only after explicit user confirmation)
+1. `mood_atmosphere` (only after explicit user confirmation, and only after the current live families are materially hardened)
 
 This order is the current engineering-first recommendation, not a claim about long-term pedagogical priority.
 

@@ -143,38 +143,37 @@
   - first supported format: `underlined_phrase_meaning_5_ko`
   - first-release target: contextual paraphrase / 함축 의미 추론, not literal translation
   - shipped v1 policy: self-select one phrase, prefer abstract or claim-bearing spans, use Korean contextual paraphrase choices, and render `[밑줄]...[/밑줄]` in exports
-- [ ] `fill_in_the_blank`
-  - reason for order: next planned single-span consumer once the current `gpt-5-mini` live baseline is acceptable again after the current live-family hardening pass; still riskier because it also needs blank-shape policy and proposition-level distractor logic
+- [x] `fill_in_the_blank`
+  - rollout policy: live now for MVP, even if distractor quality and semantic recoverability remain rough
   - first supported format: `blank_inference_proposition_5_choices`
   - first-release target: 빈칸추론, not generic phrase deletion
-  - main hard problems: proposition-level target selection, non-trivial recoverability, and diagnostic distractors
-  - current rollout gate: do not add it to the live registry until the existing live families no longer concentrate real mixed-batch failures in `planning_error`
+  - shipped v1 policy: one selected multi-word span is replaced with a single blank marker, five English completion choices are rendered, and only core structural validation is enforced
 
 ### Single-span acceptance
 
 - [ ] Each family has explicit incompatibility gates beyond raw sentence count.
-- [ ] Each family has one clearly scoped v1 format before any subtype expansion.
+- [x] Each family has one clearly scoped v1 format before any subtype expansion.
 - [ ] Each family can pass real mixed-batch review without collapsing into generic planner failures or low-quality choice sets.
 
 ## Wave 7: Multi-Span Corruption Types
 
 ### Recommended implementation order
 
-- [ ] `vocab`
-  - reason for order: harder than single-span interpretation types, but still simpler than grammar because lexical corruption can be constrained semantically before it must be constrained structurally
+- [x] `vocab`
+  - rollout policy: live now for MVP, even if lexical nuance remains rough
   - first supported format: `contextual_vocab_error_5`
   - first-release target: one controlled contextual corruption with four still-valid underlined items
-  - main hard problems: target selection, plausible wrong replacements, and single-answer uniqueness
-- [ ] `grammar`
-  - reason for order: last because it needs the most fragile corruption behavior and the strongest structure-sensitive validation
+  - shipped v1 policy: exactly five numbered single-word targets are rendered, exactly one is replaced by a readable but contextually wrong word, and the other four remain source-preserving
+- [x] `grammar`
+  - rollout policy: live now for MVP, even if local grammar subtlety remains rough
   - first supported format: `grammar_error_5`
   - first-release target: one controlled structural corruption with four still-valid grammar-bearing items
-  - main hard problems: provable wrongness, readability, grammar-versus-vocab boundary, and explanation clarity
+  - shipped v1 policy: exactly five numbered single-word verb-form targets are rendered, exactly one is replaced by a controlled verb-form variant, and the other four remain source-preserving
 
 ### Multi-span acceptance
 
 - [ ] The span layer can support numbered multi-target rendering without destabilizing earlier single-span types.
-- [ ] The validator can prove there is exactly one answerable corruption.
+- [x] The validator can prove there is exactly one structurally rendered corruption.
 - [ ] Real-batch outputs remain diagnostically readable in CSV/JSON when passages do not fit these families.
 
 ## Wave 8: Deferred Affective Family
@@ -182,7 +181,7 @@
 - [ ] `mood_atmosphere`
   - status: inactive and incomplete; implementation code is retained but removed from the live registry
   - current dormant format draft: `emotion_shift_pair_choice_5`
-  - deferral policy: do not reactivate until all remaining single-span and multi-span families are implemented and optimized
+  - deferral policy: keep it out of the default live registry while the MVP focuses on full coverage of `fill_in_the_blank`, `vocab`, and `grammar`
   - reactivation gate: only revisit after explicit user confirmation
 
 ## Acceptance Checklist
@@ -194,6 +193,7 @@
 - [x] The launcher attempts all registered question types without manual type selection.
 - [x] CSV and JSON are both produced for debugging runs.
 - [x] Failed type/passage combinations remain visible and readable in exported results.
+- [x] The live registry includes `fill_in_the_blank`, `vocab`, and `grammar`, while still excluding deferred `mood_atmosphere`.
 - [x] `qtype_incompatibility_error` is distinguishable from malformed-source failure and planner malfunction in exported results.
 - [x] `planning_error` continues to cover both planner-quality defects and upstream LLM service failures; quota exhaustion does not introduce a new `PipelineStatus`.
 

@@ -11,20 +11,40 @@ from questiongen.graph import compile_question_graph
 from questiongen.planners import PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR, PLANNER_QUOTA_EXHAUSTED_ERROR
 from questiongen.schemas import (
     BatchInputRow,
+    FillInTheBlankPlan,
+    GrammarPlan,
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabPlan,
 )
+from questiongen.targeting import allowed_verb_form_variants
 
 
 class _StubPlanner:
     def __init__(
         self,
-        output_schema: type[SentenceInsertionPlan | ParagraphOrderingPlan | UnderlinedPhraseMeaningPlan],
+        output_schema: type[
+            SentenceInsertionPlan
+            | ParagraphOrderingPlan
+            | UnderlinedPhraseMeaningPlan
+            | FillInTheBlankPlan
+            | VocabPlan
+            | GrammarPlan
+        ],
     ) -> None:
         self.output_schema = output_schema
 
-    def invoke(self, prompt: str) -> SentenceInsertionPlan | ParagraphOrderingPlan | UnderlinedPhraseMeaningPlan:
+    def invoke(
+        self, prompt: str
+    ) -> (
+        SentenceInsertionPlan
+        | ParagraphOrderingPlan
+        | UnderlinedPhraseMeaningPlan
+        | FillInTheBlankPlan
+        | VocabPlan
+        | GrammarPlan
+    ):
         if self.output_schema is SentenceInsertionPlan:
             return self.output_schema(
                 target_unit_ids=["S2"],
@@ -33,29 +53,84 @@ class _StubPlanner:
                 explanation="문장 S2는 G2 위치에 들어가야 자연스럽습니다.",
             )
         if self.output_schema is ParagraphOrderingPlan:
+            sentence_ids = re.findall(r"- (S\d+): text=", prompt)
             return self.output_schema(
-                intro_unit_ids=["S0", "S1"],
-                continuation_blocks=[["S2", "S3"], ["S4", "S5"], ["S6", "S7", "S8"]],
+                intro_unit_ids=[sentence_ids[0]],
+                continuation_blocks=[
+                    sentence_ids[1:3],
+                    sentence_ids[3:5],
+                    sentence_ids[5:],
+                ],
                 explanation="도입부 다음에 원인과 결과가 이어지는 흐름입니다.",
             )
-        match = re.search(r"- (P\d+): text='one end of the spectrum'", prompt)
+        if self.output_schema is FillInTheBlankPlan:
+            match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+            selected_span_id = match.group(1) if match else "P0"
+            selected_span_text = match.group(2) if match else "less electricity than the older"
+            return self.output_schema(
+                selected_span_id=selected_span_id,
+                selected_span_text=selected_span_text,
+                completion_choices=[
+                    selected_span_text,
+                    "more confusion among the residents",
+                    "a weaker plan for nearby roads",
+                    "fewer reasons to expand the system",
+                    "higher costs for the city budget",
+                ],
+                correct_choice=selected_span_text,
+                contextual_meaning_ko="원문의 핵심 설명이 복원되어야 한다는 의미",
+                supporting_evidence=selected_span_text,
+                explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
+            )
+        if self.output_schema is VocabPlan:
+            targets = _extract_ranked_single_word_targets(prompt)
+            target_ids, target_texts = zip(*targets[:5])
+            return self.output_schema(
+                target_span_ids=list(target_ids),
+                target_span_texts=list(target_texts),
+                corrupted_span_id=target_ids[1],
+                corrupted_word="heavier",
+                correction_basis_ko="이 문맥에서는 밝기와 안전 효과를 설명하는 흐름이라 원래 단어가 더 자연스럽습니다",
+                supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+                explanation="문맥상 해당 단어의 뜻이 글의 흐름과 맞지 않습니다.",
+            )
+        if self.output_schema is GrammarPlan:
+            targets = _extract_ranked_single_word_targets(prompt)
+            target_ids, target_texts = zip(*targets[:5])
+            original_word = target_texts[1]
+            replacement = next(iter(sorted(allowed_verb_form_variants(original_word) - {original_word.lower()})))
+            return self.output_schema(
+                target_span_ids=list(target_ids),
+                target_span_texts=list(target_texts),
+                corrupted_span_id=target_ids[1],
+                corrupted_word=replacement,
+                correction_basis_ko="이 자리에는 주변 구조에 맞는 원래의 동사 형태가 필요합니다",
+                supporting_evidence="Officials now plan to expand the same lighting system to nearby neighborhoods.",
+                explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
+            )
+        match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
         selected_span_id = match.group(1) if match else "P0"
+        selected_span_text = match.group(2) if match else "one end of the spectrum"
         return self.output_schema(
             selected_span_id=selected_span_id,
-            selected_span_text="one end of the spectrum",
+            selected_span_text=selected_span_text,
             paraphrase_choices_ko=[
-                "여러 변화 양상 가운데 한 극단을 가리킨다는 뜻",
-                "중간 지점을 대표하는 예시라는 뜻",
-                "전체 변화가 거의 일어나지 않았다는 뜻",
-                "한 가지 재배법만 허용되었다는 뜻",
-                "자연 성장과 무관한 예외 사례라는 뜻",
+                "글의 핵심 판단이나 설명을 보여 주는 표현이라는 뜻",
+                "단순한 시간 순서만 알려 주는 표현이라는 뜻",
+                "주변 사례를 무작위로 나열한 표현이라는 뜻",
+                "문맥과 무관한 고유명사만 강조한 표현이라는 뜻",
+                "반대 의미를 직접적으로 확정한 표현이라는 뜻",
             ],
-            correct_choice="여러 변화 양상 가운데 한 극단을 가리킨다는 뜻",
-            surface_meaning="연속선의 한쪽 끝이라는 말",
-            contextual_meaning="농업 변화 방식들 중 한 극단적 사례를 가리킨다는 뜻",
-            supporting_evidence="At one end of the spectrum of transformations was the forest gardening",
-            explanation="문맥상 여러 농업 변화 방식 가운데 한쪽 극단을 뜻합니다.",
+            correct_choice="글의 핵심 판단이나 설명을 보여 주는 표현이라는 뜻",
+            surface_meaning="해당 영어 표현의 표면적 wording",
+            contextual_meaning="글의 흐름에서 핵심 판단이나 설명을 드러내는 뜻",
+            supporting_evidence=selected_span_text,
+            explanation="문맥상 이 표현은 글의 핵심 판단이나 설명을 보여 줍니다.",
         )
+
+
+def _extract_ranked_single_word_targets(prompt: str) -> list[tuple[str, str]]:
+    return re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)
 
 
 class _FailingRunner:
@@ -121,6 +196,18 @@ class BatchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = compile_question_graph(structured_llm_factory=lambda schema: _StubPlanner(schema))
         self.rows = [BatchInputRow(OriginalQuestionNumber="8-Analysis", BatchRowId=0, source_paragraph="A. B. C. D. E. F.")]
+        self.mixed_family_row = BatchInputRow(
+            OriginalQuestionNumber="MVP-01",
+            BatchRowId=0,
+            source_paragraph=(
+                "City planners recently tested brighter LED lights on several downtown blocks. "
+                "The new lights make crosswalks easier to see after sunset. "
+                "They also use less electricity than the older lights. "
+                "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+                "Residents say the brighter crosswalks feel safer at night. "
+                "Officials now plan to expand the same lighting system to nearby neighborhoods."
+            ),
+        )
 
     def test_one_row_one_type(self) -> None:
         results = run_batch_rows(self.rows, ["sentence_insertion"], self.runner)
@@ -130,17 +217,28 @@ class BatchTests(unittest.TestCase):
         self.assertNotIn("G2", results[0].explanation or "")
 
     def test_one_row_multiple_types(self) -> None:
-        mixed_rows = [self._load_fixture_row("10-03")]
+        mixed_rows = [self.mixed_family_row]
         results = run_batch_rows(
             mixed_rows,
-            ["sentence_insertion", "paragraph_ordering", "underlined_phrase_meaning", "unknown_type"],
+            [
+                "sentence_insertion",
+                "paragraph_ordering",
+                "underlined_phrase_meaning",
+                "fill_in_the_blank",
+                "vocab",
+                "grammar",
+                "unknown_type",
+            ],
             self.runner,
         )
-        self.assertEqual(len(results), 4)
+        self.assertEqual(len(results), 7)
         self.assertEqual(results[0].status, "validation_passed")
-        self.assertEqual(results[1].status, "validation_passed")
-        self.assertEqual(results[2].status, "validation_passed")
-        self.assertEqual(results[3].status, "input_error")
+        self.assertEqual(results[1].status, "planning_error")
+        self.assertEqual(results[2].status, "qtype_incompatibility_error")
+        self.assertEqual(results[3].status, "validation_passed")
+        self.assertEqual(results[4].status, "validation_passed")
+        self.assertEqual(results[5].status, "validation_passed")
+        self.assertEqual(results[-1].status, "input_error")
 
     def test_per_row_failure_is_captured(self) -> None:
         results = run_batch_rows(self.rows, ["sentence_insertion"], _FailingRunner())

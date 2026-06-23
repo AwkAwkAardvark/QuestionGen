@@ -15,6 +15,8 @@ from .renderers import (
     rendered_gap_positions,
 )
 from .schemas import (
+    FillInTheBlankPlan,
+    GrammarPlan,
     GeneratedQuestion,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
@@ -22,6 +24,19 @@ from .schemas import (
     QuestionState,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabPlan,
+)
+from .targeting import (
+    BLANK_MARKER,
+    allowed_verb_form_variants,
+    grammar_target_inventory,
+    is_auxiliary_like,
+    is_single_english_word,
+    normalize_english_choice,
+    normalize_english_word,
+    phrase_span_inventory,
+    render_numbered_span_edits,
+    vocab_target_inventory,
 )
 
 _INTERNAL_EXPLANATION_ID_RE = re.compile(r"[SGP]\d+")
@@ -63,6 +78,13 @@ _INTERNAL_EXPLANATION_TERM_PATTERNS = (
     "surface_meaning",
     "contextual_meaning",
     "supporting_evidence",
+    "completion_choices",
+    "contextual_meaning_ko",
+    "target_span_ids",
+    "target_span_texts",
+    "corrupted_span_id",
+    "corrupted_word",
+    "correction_basis_ko",
     "렌더",
     "renderer",
     "schema",
@@ -316,6 +338,12 @@ def validate_plan_against_prepared_source(
         return _validate_mood_atmosphere_plan(prepared_source, plan)
     if type_spec.validator_key == "underlined_phrase_meaning":
         return _validate_underlined_phrase_meaning_plan(prepared_source, plan)
+    if type_spec.validator_key == "fill_in_the_blank":
+        return _validate_fill_in_the_blank_plan(prepared_source, plan)
+    if type_spec.validator_key == "vocab":
+        return _validate_vocab_plan(prepared_source, plan)
+    if type_spec.validator_key == "grammar":
+        return _validate_grammar_plan(prepared_source, plan)
     return [f"No deterministic plan validator is registered for {type_spec.validator_key}."]
 
 
@@ -332,6 +360,12 @@ def validate_question_type_compatibility(
         return _validate_mood_atmosphere_compatibility(source_paragraph, prepared_source)
     if type_spec.validator_key == "underlined_phrase_meaning":
         return _validate_underlined_phrase_meaning_compatibility(prepared_source)
+    if type_spec.validator_key == "fill_in_the_blank":
+        return _validate_fill_in_the_blank_compatibility(prepared_source)
+    if type_spec.validator_key == "vocab":
+        return _validate_vocab_compatibility(prepared_source)
+    if type_spec.validator_key == "grammar":
+        return _validate_grammar_compatibility(prepared_source)
     return []
 
 
@@ -518,7 +552,7 @@ def _validate_underlined_phrase_meaning_plan(prepared_source: PreparedSource, pl
         return ["UnderlinedPhraseMeaningPlan is missing for deterministic plan checks."]
 
     errors: list[str] = []
-    span_map = {span.id: span for span in prepared_source.span_units}
+    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
     selected_span = span_map.get(plan.selected_span_id)
     if selected_span is None:
         return [f"Unknown selected span ID: {plan.selected_span_id}"]
@@ -551,7 +585,7 @@ def _validate_underlined_phrase_meaning_plan(prepared_source: PreparedSource, pl
 
 
 def _validate_underlined_phrase_meaning_compatibility(prepared_source: PreparedSource) -> list[str]:
-    span_units = prepared_source.span_units
+    span_units = phrase_span_inventory(prepared_source)
     if not span_units:
         return ["Passage has no suitable contextual phrase candidate for underlined_phrase_meaning."]
 
@@ -579,6 +613,92 @@ def _validate_underlined_phrase_meaning_compatibility(prepared_source: PreparedS
     if top_score <= 6 and len(equally_ranked) >= 6:
         return ["Passage contains too many equally defensible contextual phrase targets for a stable Korean paraphrase item."]
 
+    return []
+
+
+def _validate_fill_in_the_blank_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+    if not isinstance(plan, FillInTheBlankPlan):
+        return ["FillInTheBlankPlan is missing for deterministic plan checks."]
+
+    errors: list[str] = []
+    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
+    selected_span = span_map.get(plan.selected_span_id)
+    if selected_span is None:
+        return [f"Unknown selected span ID: {plan.selected_span_id}"]
+
+    if plan.selected_span_text != selected_span.text:
+        errors.append("FillInTheBlankPlan selected_span_text must exactly match the selected span text.")
+
+    normalized_choices = [normalize_english_choice(choice) for choice in plan.completion_choices]
+    if len(normalized_choices) != 5:
+        errors.append("FillInTheBlankPlan must contain exactly five English choices.")
+    if len(set(normalized_choices)) != len(normalized_choices):
+        errors.append("FillInTheBlankPlan English choices must be unique.")
+    if normalize_english_choice(plan.correct_choice) not in normalized_choices:
+        errors.append("FillInTheBlankPlan correct_choice must be included in completion_choices.")
+    if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
+        errors.append("FillInTheBlankPlan supporting_evidence must be copied from the source passage.")
+
+    if _fill_blank_span_quality_error(selected_span.text, selected_span.heuristic_tags) is not None:
+        errors.append(_fill_blank_span_quality_error(selected_span.text, selected_span.heuristic_tags) or "")
+
+    return errors
+
+
+def _validate_fill_in_the_blank_compatibility(prepared_source: PreparedSource) -> list[str]:
+    viable_spans = [
+        span
+        for span in phrase_span_inventory(prepared_source)
+        if _fill_blank_span_quality_error(span.text, span.heuristic_tags) is None
+    ]
+    if not viable_spans:
+        return ["Passage has no readable multi-word contextual span for fill_in_the_blank."]
+    return []
+
+
+def _validate_vocab_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+    if not isinstance(plan, VocabPlan):
+        return ["VocabPlan is missing for deterministic plan checks."]
+
+    return _validate_single_word_error_plan(
+        prepared_source=prepared_source,
+        target_inventory=vocab_target_inventory(prepared_source),
+        target_span_ids=plan.target_span_ids,
+        target_span_texts=plan.target_span_texts,
+        corrupted_span_id=plan.corrupted_span_id,
+        corrupted_word=plan.corrupted_word,
+        supporting_evidence=plan.supporting_evidence,
+        question_type_key="vocab",
+        require_verb_variant=False,
+    )
+
+
+def _validate_vocab_compatibility(prepared_source: PreparedSource) -> list[str]:
+    if len(vocab_target_inventory(prepared_source)) < 5:
+        return ["Passage does not contain five workable single-word vocab targets."]
+    return []
+
+
+def _validate_grammar_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+    if not isinstance(plan, GrammarPlan):
+        return ["GrammarPlan is missing for deterministic plan checks."]
+
+    return _validate_single_word_error_plan(
+        prepared_source=prepared_source,
+        target_inventory=grammar_target_inventory(prepared_source),
+        target_span_ids=plan.target_span_ids,
+        target_span_texts=plan.target_span_texts,
+        corrupted_span_id=plan.corrupted_span_id,
+        corrupted_word=plan.corrupted_word,
+        supporting_evidence=plan.supporting_evidence,
+        question_type_key="grammar",
+        require_verb_variant=True,
+    )
+
+
+def _validate_grammar_compatibility(prepared_source: PreparedSource) -> list[str]:
+    if len(grammar_target_inventory(prepared_source)) < 5:
+        return ["Passage does not contain five workable verb-form targets for grammar."]
     return []
 
 
@@ -798,6 +918,87 @@ def _validate_underlined_phrase_meaning_state(
     )
 
 
+def _validate_fill_in_the_blank_state(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+    generated = state["generated"]
+
+    if prepared_source is None:
+        return ["PreparedSource is missing for validation."]
+    if not isinstance(plan, FillInTheBlankPlan):
+        return ["FillInTheBlankPlan is missing for validation."]
+    if not isinstance(generated, GeneratedQuestion):
+        return ["GeneratedQuestion is missing for validation."]
+    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
+        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
+    if generated.BatchRowId != state["BatchRowId"]:
+        return ["GeneratedQuestion BatchRowId must match the state."]
+
+    return validate_fill_in_the_blank_output(
+        prepared_source=prepared_source,
+        plan=plan,
+        generated=generated,
+        type_spec=type_spec,
+    )
+
+
+def _validate_vocab_state(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+    generated = state["generated"]
+
+    if prepared_source is None:
+        return ["PreparedSource is missing for validation."]
+    if not isinstance(plan, VocabPlan):
+        return ["VocabPlan is missing for validation."]
+    if not isinstance(generated, GeneratedQuestion):
+        return ["GeneratedQuestion is missing for validation."]
+    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
+        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
+    if generated.BatchRowId != state["BatchRowId"]:
+        return ["GeneratedQuestion BatchRowId must match the state."]
+
+    return validate_vocab_output(
+        prepared_source=prepared_source,
+        plan=plan,
+        generated=generated,
+        type_spec=type_spec,
+    )
+
+
+def _validate_grammar_state(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+    generated = state["generated"]
+
+    if prepared_source is None:
+        return ["PreparedSource is missing for validation."]
+    if not isinstance(plan, GrammarPlan):
+        return ["GrammarPlan is missing for validation."]
+    if not isinstance(generated, GeneratedQuestion):
+        return ["GeneratedQuestion is missing for validation."]
+    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
+        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
+    if generated.BatchRowId != state["BatchRowId"]:
+        return ["GeneratedQuestion BatchRowId must match the state."]
+
+    return validate_grammar_output(
+        prepared_source=prepared_source,
+        plan=plan,
+        generated=generated,
+        type_spec=type_spec,
+    )
+
+
 def validate_paragraph_ordering_output(
     *,
     prepared_source: PreparedSource,
@@ -941,7 +1142,7 @@ def validate_underlined_phrase_meaning_output(
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
     errors: list[str] = []
-    span_map = {span.id: span for span in prepared_source.span_units}
+    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
     selected_span = span_map.get(plan.selected_span_id)
     normalized_choices = [_normalize_korean_choice(choice) for choice in plan.paraphrase_choices_ko]
 
@@ -1003,6 +1204,108 @@ def validate_underlined_phrase_meaning_output(
     return errors
 
 
+def validate_fill_in_the_blank_output(
+    *,
+    prepared_source: PreparedSource,
+    plan: FillInTheBlankPlan,
+    generated: GeneratedQuestion,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    errors: list[str] = []
+    span_map = {span.id: span for span in phrase_span_inventory(prepared_source)}
+    selected_span = span_map.get(plan.selected_span_id)
+    expected_choices = [normalize_english_choice(choice) for choice in plan.completion_choices]
+
+    if selected_span is None:
+        errors.append(f"Unknown selected span ID: {plan.selected_span_id}")
+        return errors
+
+    if generated.QuestionType != type_spec.label_ko:
+        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.question_stem != type_spec.question_stem:
+        errors.append("question_stem does not match the question type metadata.")
+    if generated.given_sentence is not None:
+        errors.append("given_sentence must be None for fill_in_the_blank.")
+
+    if generated.choices is None or len(generated.choices) != type_spec.choice_count:
+        errors.append(f"choices must contain exactly {type_spec.choice_count} items.")
+    else:
+        normalized_generated_choices = [normalize_english_choice(choice) for choice in generated.choices]
+        if len(set(normalized_generated_choices)) != len(normalized_generated_choices):
+            errors.append("choices must be unique.")
+        if normalized_generated_choices != expected_choices:
+            errors.append(f"choices must be exactly {expected_choices}.")
+        if generated.answer not in MARKER_CHOICES[: len(generated.choices)]:
+            errors.append("answer must be one of the rendered marker choices.")
+        else:
+            expected_answer = MARKER_CHOICES[expected_choices.index(normalize_english_choice(plan.correct_choice))]
+            if generated.answer != expected_answer:
+                errors.append(
+                    f"answer should map to the correct English completion as {expected_answer}, got {generated.answer}."
+                )
+
+    if generated.student_paragraph.count(BLANK_MARKER) != 1:
+        errors.append("student_paragraph must contain exactly one blank marker.")
+    expected_paragraph = (
+        prepared_source.source_text[: selected_span.char_start]
+        + BLANK_MARKER
+        + prepared_source.source_text[selected_span.char_end :]
+    )
+    if generated.student_paragraph != expected_paragraph:
+        errors.append("student_paragraph must preserve the original passage except for one exact blank replacement.")
+
+    if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
+        errors.append("supporting_evidence must appear in the source passage.")
+
+    errors.extend(
+        validate_teacher_facing_explanation(
+            generated.explanation,
+            question_type_key="fill_in_the_blank",
+        )
+    )
+    return errors
+
+
+def validate_vocab_output(
+    *,
+    prepared_source: PreparedSource,
+    plan: VocabPlan,
+    generated: GeneratedQuestion,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    return _validate_single_word_error_output(
+        prepared_source=prepared_source,
+        target_inventory=vocab_target_inventory(prepared_source),
+        target_span_ids=plan.target_span_ids,
+        target_span_texts=plan.target_span_texts,
+        corrupted_span_id=plan.corrupted_span_id,
+        corrupted_word=plan.corrupted_word,
+        generated=generated,
+        type_spec=type_spec,
+        question_type_key="vocab",
+    )
+
+
+def validate_grammar_output(
+    *,
+    prepared_source: PreparedSource,
+    plan: GrammarPlan,
+    generated: GeneratedQuestion,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    return _validate_single_word_error_output(
+        prepared_source=prepared_source,
+        target_inventory=grammar_target_inventory(prepared_source),
+        target_span_ids=plan.target_span_ids,
+        target_span_texts=plan.target_span_texts,
+        corrupted_span_id=plan.corrupted_span_id,
+        corrupted_word=plan.corrupted_word,
+        generated=generated,
+        type_spec=type_spec,
+        question_type_key="grammar",
+    )
+
+
 def _should_apply_live_quality_gates(sentence_units: list[object]) -> bool:
     long_sentences = 0
     for unit in sentence_units:
@@ -1053,6 +1356,8 @@ def _underlined_span_quality_error(text: str, tags: list[str], priority_score: i
     tag_set = set(tags)
     if looks_hanging_phrase(text):
         return "Selected span is fragmentary and leaves a dangling phrase boundary."
+    if "single_word" in tag_set:
+        return "Selected span is too short for underlined_phrase_meaning."
     if priority_score < 5:
         return "Selected span is too literal or weak for underlined_phrase_meaning."
     if "surface_comparison" in tag_set and "abstract_term" not in tag_set:
@@ -1075,6 +1380,9 @@ GENERATED_QUESTION_VALIDATORS = {
     "paragraph_ordering": _validate_paragraph_ordering_state,
     "mood_atmosphere": _validate_mood_atmosphere_state,
     "underlined_phrase_meaning": _validate_underlined_phrase_meaning_state,
+    "fill_in_the_blank": _validate_fill_in_the_blank_state,
+    "vocab": _validate_vocab_state,
+    "grammar": _validate_grammar_state,
 }
 
 
@@ -1085,3 +1393,134 @@ def _normalize_choice_pair(value: str) -> str:
 
 def _normalize_korean_choice(value: str) -> str:
     return normalize_text(value)
+
+
+def _fill_blank_span_quality_error(text: str, tags: list[str]) -> str | None:
+    if looks_hanging_phrase(text):
+        return "Selected span is fragmentary and cannot support a readable blank."
+    if "single_word" in set(tags):
+        return "Selected span is too short and becomes a lexical deletion rather than a blank-inference target."
+    return None
+
+
+def _validate_single_word_error_plan(
+    *,
+    prepared_source: PreparedSource,
+    target_inventory: list[object],
+    target_span_ids: list[str],
+    target_span_texts: list[str],
+    corrupted_span_id: str,
+    corrupted_word: str,
+    supporting_evidence: str,
+    question_type_key: str,
+    require_verb_variant: bool,
+) -> list[str]:
+    errors: list[str] = []
+    inventory = {span.id: span for span in target_inventory}
+
+    if len(target_span_ids) != 5:
+        errors.append(f"{question_type_key} requires exactly five target_span_ids.")
+        return errors
+    if len(set(target_span_ids)) != 5:
+        errors.append(f"{question_type_key} target_span_ids must be unique.")
+    if len(target_span_texts) != 5:
+        errors.append(f"{question_type_key} requires exactly five target_span_texts.")
+        return errors
+    if len({normalize_english_word(text) for text in target_span_texts}) != 5:
+        errors.append(f"{question_type_key} target_span_texts must be unique.")
+
+    ordered_spans: list[object] = []
+    for span_id, span_text in zip(target_span_ids, target_span_texts):
+        span = inventory.get(span_id)
+        if span is None:
+            errors.append(f"Unknown target span ID: {span_id}")
+            continue
+        if getattr(span, "text") != span_text:
+            errors.append(f"{question_type_key} target_span_texts must exactly match the source text for {span_id}.")
+        if not is_single_english_word(getattr(span, "text")):
+            errors.append(f"{question_type_key} targets must all be single English words.")
+        ordered_spans.append(span)
+
+    if corrupted_span_id not in target_span_ids:
+        errors.append(f"{question_type_key} corrupted_span_id must be included in target_span_ids.")
+    if not is_single_english_word(corrupted_word):
+        errors.append(f"{question_type_key} corrupted_word must be a single English word.")
+    if normalize_text(supporting_evidence) not in normalize_text(prepared_source.source_text):
+        errors.append(f"{question_type_key} supporting_evidence must be copied from the source passage.")
+
+    corrupted_span = inventory.get(corrupted_span_id)
+    if corrupted_span is not None:
+        if normalize_english_word(corrupted_span.text) == normalize_english_word(corrupted_word):
+            errors.append(f"{question_type_key} corrupted_word must differ from the original target word.")
+        if require_verb_variant:
+            allowed_variants = allowed_verb_form_variants(corrupted_span.text)
+            if normalize_english_word(corrupted_word) not in allowed_variants - {normalize_english_word(corrupted_span.text)}:
+                errors.append("grammar corrupted_word must stay within a controlled verb-form variant family.")
+            if "grammar_candidate" not in getattr(corrupted_span, "heuristic_tags"):
+                errors.append("grammar corrupted target must come from the grammar-target inventory.")
+        elif is_auxiliary_like(corrupted_word):
+            errors.append("vocab corrupted_word should not collapse into an auxiliary-only grammar target.")
+
+    return errors
+
+
+def _validate_single_word_error_output(
+    *,
+    prepared_source: PreparedSource,
+    target_inventory: list[object],
+    target_span_ids: list[str],
+    target_span_texts: list[str],
+    corrupted_span_id: str,
+    corrupted_word: str,
+    generated: GeneratedQuestion,
+    type_spec: QuestionTypeSpec,
+    question_type_key: str,
+) -> list[str]:
+    errors: list[str] = []
+    inventory = {span.id: span for span in target_inventory}
+
+    selected_spans: list[object] = []
+    for span_id, expected_text in zip(target_span_ids, target_span_texts):
+        span = inventory.get(span_id)
+        if span is None:
+            errors.append(f"Unknown target span ID: {span_id}")
+            continue
+        if span.text != expected_text:
+            errors.append(f"{question_type_key} target_span_texts must exactly match the source text for {span_id}.")
+        selected_spans.append(span)
+    if errors:
+        return errors
+
+    ordered_spans = sorted(selected_spans, key=lambda span: (span.char_start, span.char_end))
+    ordered_ids = [span.id for span in ordered_spans]
+
+    if generated.QuestionType != type_spec.label_ko:
+        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.question_stem != type_spec.question_stem:
+        errors.append("question_stem does not match the question type metadata.")
+    if generated.given_sentence is not None:
+        errors.append(f"given_sentence must be None for {question_type_key}.")
+    if generated.choices != MARKER_CHOICES[: type_spec.choice_count]:
+        errors.append(f"choices must be exactly {MARKER_CHOICES[: type_spec.choice_count]}.")
+    expected_answer = MARKER_CHOICES[ordered_ids.index(corrupted_span_id)]
+    if generated.answer != expected_answer:
+        errors.append(f"answer should map to the corrupted target as {expected_answer}, got {generated.answer}.")
+
+    expected_paragraph = render_numbered_span_edits(
+        source_text=prepared_source.source_text,
+        selected_spans=ordered_spans,
+        replacement_by_span_id={corrupted_span_id: corrupted_word.strip()},
+        markers=MARKER_CHOICES[: type_spec.choice_count],
+    )
+    if generated.student_paragraph != expected_paragraph:
+        errors.append(
+            f"student_paragraph must preserve the source except for the intended numbered underlines and one {question_type_key} corruption."
+        )
+
+    errors.extend(
+        validate_teacher_facing_explanation(
+            generated.explanation,
+            question_type_key=question_type_key,
+        )
+    )
+    return errors

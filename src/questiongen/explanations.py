@@ -4,6 +4,8 @@ from typing import Any
 
 from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, rendered_gap_positions
 from .schemas import (
+    FillInTheBlankPlan,
+    GrammarPlan,
     GeneratedQuestion,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
@@ -11,7 +13,9 @@ from .schemas import (
     QuestionState,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabPlan,
 )
+from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_target_inventory
 
 
 def build_explanation_context(state: QuestionState) -> dict[str, Any]:
@@ -74,6 +78,42 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
             "errors": [],
         }
 
+    if question_type_key == "fill_in_the_blank":
+        if not isinstance(plan, FillInTheBlankPlan):
+            return {
+                "status": "rendering_error",
+                "errors": ["FillInTheBlankPlan is required before explanation generation."],
+            }
+        return {
+            "explanation_context": _build_fill_in_the_blank_context(plan, generated),
+            "status": "rendered",
+            "errors": [],
+        }
+
+    if question_type_key == "vocab":
+        if not isinstance(plan, VocabPlan):
+            return {
+                "status": "rendering_error",
+                "errors": ["VocabPlan is required before explanation generation."],
+            }
+        return {
+            "explanation_context": _build_vocab_context(prepared_source, plan),
+            "status": "rendered",
+            "errors": [],
+        }
+
+    if question_type_key == "grammar":
+        if not isinstance(plan, GrammarPlan):
+            return {
+                "status": "rendering_error",
+                "errors": ["GrammarPlan is required before explanation generation."],
+            }
+        return {
+            "explanation_context": _build_grammar_context(prepared_source, plan),
+            "status": "rendered",
+            "errors": [],
+        }
+
     return {
         "status": "rendering_error",
         "errors": [f"No explanation-context builder is registered for {question_type_key}."],
@@ -99,6 +139,12 @@ def write_teacher_facing_explanation(state: QuestionState) -> dict[str, Any]:
         explanation = _write_mood_atmosphere_explanation(explanation_context)
     elif question_type_key == "underlined_phrase_meaning":
         explanation = _write_underlined_phrase_meaning_explanation(explanation_context)
+    elif question_type_key == "fill_in_the_blank":
+        explanation = _write_fill_in_the_blank_explanation(explanation_context)
+    elif question_type_key == "vocab":
+        explanation = _write_vocab_explanation(explanation_context)
+    elif question_type_key == "grammar":
+        explanation = _write_grammar_explanation(explanation_context)
     else:
         return {
             "status": "rendering_error",
@@ -207,6 +253,63 @@ def _build_underlined_phrase_meaning_context(
     }
 
 
+def _build_fill_in_the_blank_context(
+    plan: FillInTheBlankPlan,
+    generated: GeneratedQuestion,
+) -> dict[str, str]:
+    choice_index = MARKER_CHOICES.index(generated.answer)
+    correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
+    return {
+        "selected_span_text": plan.selected_span_text,
+        "contextual_meaning_ko": plan.contextual_meaning_ko,
+        "supporting_evidence": plan.supporting_evidence,
+        "correct_marker": generated.answer,
+        "correct_choice": correct_choice,
+    }
+
+
+def _build_vocab_context(
+    prepared_source: PreparedSource,
+    plan: VocabPlan,
+) -> dict[str, str]:
+    inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
+    ordered_spans = sorted(
+        [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
+        key=lambda span: (span.char_start, span.char_end),
+    )
+    ordered_ids = [span.id for span in ordered_spans]
+    correct_marker = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
+    original_word = inventory[plan.corrupted_span_id].text
+    return {
+        "original_word": original_word,
+        "corrupted_word": plan.corrupted_word,
+        "correction_basis_ko": plan.correction_basis_ko,
+        "supporting_evidence": plan.supporting_evidence,
+        "correct_marker": correct_marker,
+    }
+
+
+def _build_grammar_context(
+    prepared_source: PreparedSource,
+    plan: GrammarPlan,
+) -> dict[str, str]:
+    inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
+    ordered_spans = sorted(
+        [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
+        key=lambda span: (span.char_start, span.char_end),
+    )
+    ordered_ids = [span.id for span in ordered_spans]
+    correct_marker = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
+    original_word = inventory[plan.corrupted_span_id].text
+    return {
+        "original_word": original_word,
+        "corrupted_word": plan.corrupted_word,
+        "correction_basis_ko": plan.correction_basis_ko,
+        "supporting_evidence": plan.supporting_evidence,
+        "correct_marker": correct_marker,
+    }
+
+
 def _write_sentence_insertion_explanation(context: dict[str, str | None]) -> str:
     before_text = context["before_text"]
     after_text = context["after_text"]
@@ -290,6 +393,31 @@ def _write_underlined_phrase_meaning_explanation(context: dict[str, str]) -> str
         f"하지만 이 글에서는 {contextual_meaning}라는 뜻으로 이해해야 합니다. "
         f"특히 '{supporting_evidence}'라는 내용이 그 해석을 뒷받침하므로 "
         f"정답은 {correct_marker} {correct_choice}입니다."
+    )
+
+
+def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
+    return (
+        f"빈칸은 원문에서 '{context['selected_span_text']}'에 해당하는 부분으로, "
+        f"이 자리에는 {context['contextual_meaning_ko']}라는 의미가 들어가야 합니다. "
+        f"특히 '{context['supporting_evidence']}'라는 내용이 그 방향을 뒷받침하므로 "
+        f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+    )
+
+
+def _write_vocab_explanation(context: dict[str, str]) -> str:
+    return (
+        f"{context['correct_marker']}의 '{context['corrupted_word']}'는 문법상 읽히더라도 문맥과 어울리지 않습니다. "
+        f"이 부분은 원래 '{context['original_word']}'처럼 읽혀야 하며, {context['correction_basis_ko']}. "
+        f"특히 '{context['supporting_evidence']}'라는 내용이 그 판단을 뒷받침하므로 정답은 {context['correct_marker']}입니다."
+    )
+
+
+def _write_grammar_explanation(context: dict[str, str]) -> str:
+    return (
+        f"{context['correct_marker']}의 '{context['corrupted_word']}'는 형태상 그럴듯해 보여도 이 자리의 문법 구조에는 맞지 않습니다. "
+        f"원래는 '{context['original_word']}'가 와야 하며, {context['correction_basis_ko']}. "
+        f"특히 '{context['supporting_evidence']}'라는 단서가 그 구조를 보여 주므로 정답은 {context['correct_marker']}입니다."
     )
 
 

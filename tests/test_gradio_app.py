@@ -23,6 +23,9 @@ class GradioAppHelperTests(unittest.TestCase):
         self.assertIn("sentence_insertion", normalized)
         self.assertIn("paragraph_ordering", normalized)
         self.assertIn("underlined_phrase_meaning", normalized)
+        self.assertIn("fill_in_the_blank", normalized)
+        self.assertIn("vocab", normalized)
+        self.assertIn("grammar", normalized)
         self.assertNotIn("mood_atmosphere", normalized)
 
     def test_normalize_question_type_keys_rejects_unknown(self) -> None:

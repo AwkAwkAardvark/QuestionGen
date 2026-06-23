@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Literal
 
 from .prompts import (
+    build_fill_in_the_blank_prompt,
+    build_fill_in_the_blank_repair_prompt,
+    build_grammar_prompt,
+    build_grammar_repair_prompt,
     build_mood_atmosphere_prompt,
     build_mood_atmosphere_repair_prompt,
     build_paragraph_ordering_prompt,
@@ -11,6 +15,8 @@ from .prompts import (
     build_sentence_insertion_repair_prompt,
     build_underlined_phrase_meaning_prompt,
     build_underlined_phrase_meaning_repair_prompt,
+    build_vocab_prompt,
+    build_vocab_repair_prompt,
 )
 from .question_types import QuestionTypeSpec
 from .schemas import BaseModel, QuestionState, coerce_model
@@ -244,9 +250,102 @@ def plan_underlined_phrase_meaning(
     )
 
 
+def plan_fill_in_the_blank(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+    structured_llm_factory: StructuredLLMFactory | None,
+) -> dict[str, Any]:
+    if state["prepared_source"] is None:
+        return {
+            "status": "planning_error",
+            "errors": ["PreparedSource is required before planning."],
+        }
+    if structured_llm_factory is None:
+        return {
+            "status": "planning_error",
+            "errors": ["No structured LLM factory was provided for planning."],
+        }
+
+    prompt = build_fill_in_the_blank_prompt(
+        source_paragraph=state["source_paragraph"],
+        prepared_source=state["prepared_source"],
+        type_spec=type_spec,
+    )
+    return _run_planner_with_repair(
+        state=state,
+        type_spec=type_spec,
+        structured_llm_factory=structured_llm_factory,
+        base_prompt=prompt,
+        repair_prompt_builder=build_fill_in_the_blank_repair_prompt,
+    )
+
+
+def plan_vocab(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+    structured_llm_factory: StructuredLLMFactory | None,
+) -> dict[str, Any]:
+    if state["prepared_source"] is None:
+        return {
+            "status": "planning_error",
+            "errors": ["PreparedSource is required before planning."],
+        }
+    if structured_llm_factory is None:
+        return {
+            "status": "planning_error",
+            "errors": ["No structured LLM factory was provided for planning."],
+        }
+
+    prompt = build_vocab_prompt(
+        source_paragraph=state["source_paragraph"],
+        prepared_source=state["prepared_source"],
+        type_spec=type_spec,
+    )
+    return _run_planner_with_repair(
+        state=state,
+        type_spec=type_spec,
+        structured_llm_factory=structured_llm_factory,
+        base_prompt=prompt,
+        repair_prompt_builder=build_vocab_repair_prompt,
+    )
+
+
+def plan_grammar(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+    structured_llm_factory: StructuredLLMFactory | None,
+) -> dict[str, Any]:
+    if state["prepared_source"] is None:
+        return {
+            "status": "planning_error",
+            "errors": ["PreparedSource is required before planning."],
+        }
+    if structured_llm_factory is None:
+        return {
+            "status": "planning_error",
+            "errors": ["No structured LLM factory was provided for planning."],
+        }
+
+    prompt = build_grammar_prompt(
+        source_paragraph=state["source_paragraph"],
+        prepared_source=state["prepared_source"],
+        type_spec=type_spec,
+    )
+    return _run_planner_with_repair(
+        state=state,
+        type_spec=type_spec,
+        structured_llm_factory=structured_llm_factory,
+        base_prompt=prompt,
+        repair_prompt_builder=build_grammar_repair_prompt,
+    )
+
+
 PLANNERS: dict[str, Callable[[QuestionState, QuestionTypeSpec, StructuredLLMFactory | None], dict[str, Any]]] = {
     "sentence_insertion": plan_sentence_insertion,
     "paragraph_ordering": plan_paragraph_ordering,
     "mood_atmosphere": plan_mood_atmosphere,
     "underlined_phrase_meaning": plan_underlined_phrase_meaning,
+    "fill_in_the_blank": plan_fill_in_the_blank,
+    "vocab": plan_vocab,
+    "grammar": plan_grammar,
 }

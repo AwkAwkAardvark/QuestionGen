@@ -242,6 +242,31 @@ _IRREGULAR_VERB_CUES = {
     "wrote",
 }
 _MAX_SPAN_CANDIDATES = 24
+_MAX_SINGLE_WORD_SPAN_CANDIDATES = 48
+_GRAMMAR_LEFT_CONTEXT_CUES = {
+    "and",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "first",
+    "he",
+    "i",
+    "it",
+    "may",
+    "might",
+    "must",
+    "next",
+    "she",
+    "should",
+    "they",
+    "to",
+    "we",
+    "will",
+    "would",
+    "you",
+}
 
 
 def normalize_text(text: str) -> str:
@@ -390,6 +415,7 @@ def _prepare_span_units(
     sentence_spans: list[tuple[str, int, int]],
 ) -> list[SpanUnit]:
     raw_candidates: list[dict[str, object]] = []
+    single_word_candidates: list[dict[str, object]] = []
     for sentence_unit, (sentence_text, sentence_start, _) in zip(sentence_units, sentence_spans):
         raw_candidates.extend(
             _collect_sentence_span_candidates(
@@ -398,8 +424,16 @@ def _prepare_span_units(
                 sentence_unit=sentence_unit,
             )
         )
+        single_word_candidates.extend(
+            _collect_single_word_span_candidates(
+                sentence_text=sentence_text,
+                sentence_start=sentence_start,
+                sentence_unit=sentence_unit,
+            )
+        )
 
     selected_candidates = _select_span_candidates(raw_candidates)
+    selected_candidates.extend(_select_single_word_candidates(single_word_candidates))
     selected_candidates.sort(key=lambda candidate: (int(candidate["char_start"]), int(candidate["char_end"])))
 
     return [
@@ -462,6 +496,48 @@ def _collect_sentence_span_candidates(
     return candidates
 
 
+def _collect_single_word_span_candidates(
+    *,
+    sentence_text: str,
+    sentence_start: int,
+    sentence_unit: SourceUnit,
+) -> list[dict[str, object]]:
+    token_matches = list(_TOKEN_RE.finditer(sentence_text))
+    candidates: list[dict[str, object]] = []
+
+    for token_index, token_match in enumerate(token_matches):
+        token_text = token_match.group(0)
+        lowered = _normalize_token(token_text)
+        if lowered in _FUNCTION_WORDS or len(lowered) < 4:
+            continue
+
+        priority_score, heuristic_tags = _score_single_word_candidate(
+            token_matches=token_matches,
+            token_index=token_index,
+            token_text=token_text,
+        )
+        if priority_score < 3:
+            continue
+
+        context_before = sentence_text[max(0, token_match.start() - 28) : token_match.start()].strip() or None
+        context_after = sentence_text[token_match.end() : min(len(sentence_text), token_match.end() + 28)].strip() or None
+        candidates.append(
+            {
+                "text": token_text,
+                "char_start": sentence_start + token_match.start(),
+                "char_end": sentence_start + token_match.end(),
+                "sentence_unit_id": sentence_unit.id,
+                "sentence_index": sentence_unit.index,
+                "context_before": context_before,
+                "context_after": context_after,
+                "heuristic_tags": heuristic_tags,
+                "priority_score": priority_score,
+            }
+        )
+
+    return candidates
+
+
 def _score_span_candidate(
     *,
     token_matches: list[re.Match[str]],
@@ -514,6 +590,53 @@ def _score_span_candidate(
     return score, sorted(set(tags))
 
 
+def _score_single_word_candidate(
+    *,
+    token_matches: list[re.Match[str]],
+    token_index: int,
+    token_text: str,
+) -> tuple[int, list[str]]:
+    lowered = _normalize_token(token_text)
+    score = 3
+    tags = ["single_word"]
+
+    if lowered in _ABSTRACT_CUE_WORDS:
+        score += 2
+        tags.append("abstract_term")
+    if lowered in _CONTEXTUAL_CUE_WORDS:
+        score += 1
+        tags.append("contextual_cue")
+    if len(lowered) >= 7:
+        score += 1
+        tags.append("dense_lexis")
+
+    previous_token = _normalize_token(token_matches[token_index - 1].group(0)) if token_index > 0 else ""
+    next_token = _normalize_token(token_matches[token_index + 1].group(0)) if token_index + 1 < len(token_matches) else ""
+
+    if lowered not in _FINITE_VERB_CUES:
+        tags.append("vocab_candidate")
+        score += 1
+
+    if _looks_grammar_target(lowered, previous_token=previous_token, next_token=next_token):
+        score += 2
+        tags.append("grammar_candidate")
+        tags.append("verb_form_candidate")
+        if previous_token == "to":
+            score += 1
+            tags.append("to_infinitive_context")
+        if previous_token in {"can", "could", "may", "might", "must", "should", "will", "would"}:
+            score += 1
+            tags.append("modal_context")
+        if previous_token in {"am", "are", "be", "been", "being", "is", "was", "were"}:
+            tags.append("be_context")
+
+    if previous_token in _GRAMMAR_LEFT_CONTEXT_CUES:
+        score += 1
+        tags.append("local_context")
+
+    return score, sorted(set(tags))
+
+
 def _select_span_candidates(raw_candidates: list[dict[str, object]]) -> list[dict[str, object]]:
     if not raw_candidates:
         return []
@@ -537,6 +660,30 @@ def _select_span_candidates(raw_candidates: list[dict[str, object]]) -> list[dic
         selected.append(candidate)
         seen_normalized.add(normalized)
         if len(selected) >= _MAX_SPAN_CANDIDATES:
+            break
+    return selected
+
+
+def _select_single_word_candidates(raw_candidates: list[dict[str, object]]) -> list[dict[str, object]]:
+    if not raw_candidates:
+        return []
+
+    selected: list[dict[str, object]] = []
+    seen_bounds: set[tuple[int, int]] = set()
+    for candidate in sorted(
+        raw_candidates,
+        key=lambda item: (
+            -int(item["priority_score"]),
+            int(item["char_start"]),
+            int(item["char_end"]),
+        ),
+    ):
+        bounds = (int(candidate["char_start"]), int(candidate["char_end"]))
+        if bounds in seen_bounds:
+            continue
+        selected.append(candidate)
+        seen_bounds.add(bounds)
+        if len(selected) >= _MAX_SINGLE_WORD_SPAN_CANDIDATES:
             break
     return selected
 
@@ -650,3 +797,29 @@ def _normalize_token(token: str) -> str:
     if len(lowered) > 3 and lowered.endswith("s") and not lowered.endswith("ss"):
         return lowered[:-1]
     return lowered
+
+
+def _looks_grammar_target(current_token: str, *, previous_token: str, next_token: str) -> bool:
+    if current_token in _FINITE_VERB_CUES or current_token in _IRREGULAR_VERB_CUES:
+        return True
+    if current_token.endswith("ing") and len(current_token) > 4:
+        return True
+    if current_token.endswith("ed") and len(current_token) > 4:
+        return True
+    if previous_token == "to":
+        return True
+    if previous_token in {"can", "could", "may", "might", "must", "should", "will", "would"}:
+        return True
+    if previous_token in {"am", "are", "be", "been", "being", "is", "was", "were"}:
+        return True
+    if current_token.endswith("s") and previous_token in {
+        "he",
+        "it",
+        "she",
+        "this",
+        "that",
+    }:
+        return True
+    if next_token in {"to", "that"} and current_token in _IRREGULAR_VERB_CUES:
+        return True
+    return False
