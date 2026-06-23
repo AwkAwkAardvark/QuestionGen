@@ -19,6 +19,37 @@ DEFAULT_DRIVE_INPUT_CSV = DEFAULT_DATA_DIR / "input" / "questions.csv"
 DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "output" / "gradio"
 
 
+def default_data_dir() -> Path:
+    return Path(os.getenv("QUESTIONGEN_DATA_DIR", str(DEFAULT_DATA_DIR))).expanduser()
+
+
+def default_api_key_path() -> Path:
+    return Path(
+        os.getenv(
+            "QUESTIONGEN_API_KEY_PATH",
+            str(default_data_dir() / "secrets" / "api_key.txt"),
+        )
+    ).expanduser()
+
+
+def default_drive_input_csv() -> Path:
+    return Path(
+        os.getenv(
+            "QUESTIONGEN_DRIVE_INPUT_CSV",
+            str(default_data_dir() / "input" / "questions.csv"),
+        )
+    ).expanduser()
+
+
+def default_output_dir() -> Path:
+    return Path(
+        os.getenv(
+            "QUESTIONGEN_OUTPUT_DIR",
+            str(default_data_dir() / "output" / "gradio"),
+        )
+    ).expanduser()
+
+
 def create_app():
     try:
         import gradio as gr
@@ -29,6 +60,9 @@ def create_app():
         ) from exc
 
     question_type_choices = list(QUESTION_TYPES.keys())
+    api_key_path_default = default_api_key_path()
+    drive_csv_default = default_drive_input_csv()
+    output_dir_default = default_output_dir()
 
     def _toggle_input_mode(input_mode: str):
         upload_visible = input_mode == "Upload CSV"
@@ -42,7 +76,9 @@ def create_app():
             This app stays on the current batch pipeline. It lets you either upload a CSV directly
             or point the app at a CSV already available in mounted Google Drive.
 
-            Drive mode expects Drive to already be mounted in the Colab runtime.
+            Drive mode expects Drive to already be mounted in the Colab runtime. In the Colab
+            launcher notebooks, upload-vs-Drive-path selection happens here in the UI rather than
+            in notebook cells.
             """
         )
 
@@ -61,17 +97,17 @@ def create_app():
                 )
                 drive_csv_path = gr.Textbox(
                     label="Drive CSV Path",
-                    value=str(DEFAULT_DRIVE_INPUT_CSV),
+                    value=str(drive_csv_default),
                     visible=False,
                 )
                 api_key_path = gr.Textbox(
                     label="API Key File Path",
-                    value=str(DEFAULT_API_KEY_PATH),
+                    value=str(api_key_path_default),
                     info="Leave as-is for the standard Drive layout, or clear it to use existing env vars.",
                 )
                 output_dir = gr.Textbox(
                     label="Output Directory",
-                    value=str(DEFAULT_OUTPUT_DIR),
+                    value=str(output_dir_default),
                 )
                 model_name = gr.Textbox(
                     label="Model Name",

@@ -8,6 +8,9 @@ from pathlib import Path
 from questiongen.question_types import QUESTION_TYPES
 from questiongen.ui.gradio_app import (
     create_app,
+    default_api_key_path,
+    default_drive_input_csv,
+    default_output_dir,
     load_api_keys,
     normalize_question_type_keys,
     resolve_input_csv,
@@ -59,6 +62,44 @@ class GradioAppHelperTests(unittest.TestCase):
                 os.environ.pop("QUESTIONGEN_TEST_KEY", None)
             else:
                 os.environ["QUESTIONGEN_TEST_KEY"] = previous
+
+    def test_default_paths_follow_notebook_env_overrides(self) -> None:
+        previous = {
+            key: os.environ.get(key)
+            for key in [
+                "QUESTIONGEN_DATA_DIR",
+                "QUESTIONGEN_API_KEY_PATH",
+                "QUESTIONGEN_DRIVE_INPUT_CSV",
+                "QUESTIONGEN_OUTPUT_DIR",
+            ]
+        }
+        try:
+            os.environ["QUESTIONGEN_DATA_DIR"] = "/tmp/questiongen-data"
+            self.assertEqual(
+                str(default_api_key_path()),
+                "/tmp/questiongen-data/secrets/api_key.txt",
+            )
+            self.assertEqual(
+                str(default_drive_input_csv()),
+                "/tmp/questiongen-data/input/questions.csv",
+            )
+            self.assertEqual(
+                str(default_output_dir()),
+                "/tmp/questiongen-data/output/gradio",
+            )
+
+            os.environ["QUESTIONGEN_API_KEY_PATH"] = "/tmp/custom/api_key.txt"
+            os.environ["QUESTIONGEN_DRIVE_INPUT_CSV"] = "/tmp/custom/questions.csv"
+            os.environ["QUESTIONGEN_OUTPUT_DIR"] = "/tmp/custom/output"
+            self.assertEqual(str(default_api_key_path()), "/tmp/custom/api_key.txt")
+            self.assertEqual(str(default_drive_input_csv()), "/tmp/custom/questions.csv")
+            self.assertEqual(str(default_output_dir()), "/tmp/custom/output")
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def test_create_app_requires_gradio_when_missing(self) -> None:
         with self.assertRaises(ImportError):

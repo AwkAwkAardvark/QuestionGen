@@ -6,6 +6,16 @@ This document defines the stable runtime contract for running QuestionGen from G
 
 The launcher is responsible for runtime setup only. Reusable generation logic stays in the package.
 
+## Notebook Roles
+
+- `notebooks/runner_ui.ipynb` is the primary staff-facing launcher.
+- `notebooks/runner_ui.ipynb` mounts Drive, defines standard paths, loads secrets, exposes minimal settings plus Advanced Settings, clones the selected pushed branch, and launches `questiongen.ui.gradio_app.create_app()` immediately.
+- `notebooks/runner_ui.ipynb` does not run direct batch-generation cells before launching Gradio.
+- `notebooks/runner_debug.ipynb` is the batch/debug notebook.
+- `notebooks/runner_debug.ipynb` keeps direct `run_batch_files(...)`, output preview, and artifact inspection in notebook cells, with Gradio available only as an optional debugging add-on.
+- `notebooks/runner.ipynb` and `notebooks/runner_pending.ipynb` remain in the repo for archival reference only until a later cleanup pass removes them with explicit confirmation.
+- Upload-vs-Drive-path selection belongs inside the Gradio UI, not in notebook-specific UI logic.
+
 ## Drive Layout
 
 Use a runtime data folder that is separate from the cloned GitHub repository:
@@ -63,10 +73,12 @@ Launcher responsibilities:
 - mount Drive
 - define Drive paths
 - load `api_key.txt`
-- clone and install the repo
-- create the structured LLM-backed runner
+- expose notebook-level minimal settings and Advanced Settings, including `REPO_BRANCH`
+- clone and install the selected pushed repo branch
+- launch the Gradio UI from `runner_ui.ipynb`
+- create the structured LLM-backed runner for batch/debug flows
 - derive the active question types
-- run batch generation
+- run batch generation in the debug flow or inside the Gradio app
 - write artifacts back to Drive
 
 Hard constraints:
@@ -75,6 +87,7 @@ Hard constraints:
 - do not hardcode Drive paths inside `src/questiongen/`
 - do not move file-based secret loading into `src/questiongen/`
 - do not duplicate package business logic inside notebook cells
+- do not duplicate Gradio UI behavior in notebook cells
 
 ## Current Package Contract
 
@@ -157,15 +170,36 @@ Rules:
 
 ## Notebook Shape
 
-The canonical Colab notebook should be launcher-only and limited to these steps:
+The current Colab surface is intentionally split:
 
-1. Mount Drive and define paths.
+1. `runner_ui.ipynb`
+2. `runner_debug.ipynb`
+3. archival notebooks kept only for reference
+
+`runner_ui.ipynb` should be limited to these steps:
+
+1. Mount Drive and define standard paths.
 2. Load secrets from `api_key.txt`.
-3. Clone and install the GitHub repo.
-4. Build the runner and run batch generation.
-5. Preview and optionally download outputs.
+3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH = "main"` by default.
+4. Clone and install the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+5. Launch `questiongen.ui.gradio_app.create_app()` immediately.
 
-The notebook should not define:
+`runner_debug.ipynb` should be limited to these steps:
+
+1. Mount Drive and define standard paths.
+2. Load secrets from `api_key.txt`.
+3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH = "main"` by default.
+4. Clone and install the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+5. Build the runner and run direct batch generation.
+6. Preview artifacts and optionally launch Gradio only as a debugging add-on.
+
+Branch-selection notes:
+
+- Colab can pull any branch that has already been pushed to the remote repository.
+- Colab cannot automatically pull unpushed local-only workspace changes.
+- Broad family selection still starts from `QUESTION_TYPES`, while actual execution expands into subtype rows underneath each selected family.
+
+The notebooks should not define:
 
 - schemas
 - prompts
@@ -173,3 +207,4 @@ The notebook should not define:
 - validators
 - graph internals
 - copied package logic
+- duplicate Gradio UI controls
