@@ -179,3 +179,71 @@ Repair rules:
 - Rewrite the explanation as teacher-facing Korean prose that uses emotional evidence rather than schema fields or mechanics.
 - Return only structured data matching the schema.
 """.strip()
+
+
+def build_underlined_phrase_meaning_prompt(
+    *,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> str:
+    sentence_inventory = "\n".join(
+        f"- {unit.id}: {unit.text}"
+        for unit in prepared_source.sentence_units
+    )
+    span_inventory = "\n".join(
+        (
+            f"- {span.id}: text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; "
+            f"chars={span.char_start}:{span.char_end}; tags={','.join(span.heuristic_tags) or 'none'}; "
+            f"before={span.context_before or 'NONE'}; after={span.context_after or 'NONE'}"
+        )
+        for span in prepared_source.span_units
+    )
+    return f"""
+You are planning an English exam underlined phrase meaning question.
+
+Return only structured data matching the required schema.
+
+Question type:
+- Key: underlined_phrase_meaning
+- Label: {type_spec.label_ko}
+- Student-facing stem: {type_spec.question_stem}
+
+Planning rules:
+{type_spec.planner_prompt}
+
+Source paragraph:
+{source_paragraph}
+
+Sentence units:
+{sentence_inventory}
+
+Span candidates:
+{span_inventory}
+""".strip()
+
+
+def build_underlined_phrase_meaning_repair_prompt(
+    *,
+    base_prompt: str,
+    previous_error: str,
+) -> str:
+    return f"""
+{base_prompt}
+
+Your previous answer did not satisfy the required schema.
+
+Previous validation error:
+{previous_error}
+
+Repair rules:
+- Return a fully corrected answer.
+- Re-check that `selected_span_id` is one of the provided span IDs.
+- Re-check that `selected_span_text` exactly matches the source text for that selected span.
+- Re-check that `paraphrase_choices_ko` contains exactly five unique Korean choices.
+- Re-check that `correct_choice` is one of `paraphrase_choices_ko`.
+- Re-check that `supporting_evidence` is copied as an exact passage snippet.
+- Keep the explanation in Korean.
+- Rewrite the explanation as teacher-facing Korean prose that explains surface wording, contextual meaning, and passage evidence without schema fields or mechanics.
+- Return only structured data matching the schema.
+""".strip()

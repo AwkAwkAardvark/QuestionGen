@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from questiongen.question_types import QUESTION_TYPES
 from questiongen.ui.gradio_app import (
     create_app,
     load_api_keys,
@@ -14,11 +15,15 @@ from questiongen.ui.gradio_app import (
 
 
 class GradioAppHelperTests(unittest.TestCase):
+    def test_live_registry_excludes_deferred_mood_atmosphere(self) -> None:
+        self.assertNotIn("mood_atmosphere", QUESTION_TYPES)
+
     def test_normalize_question_type_keys_defaults_to_registry(self) -> None:
         normalized = normalize_question_type_keys([])
         self.assertIn("sentence_insertion", normalized)
         self.assertIn("paragraph_ordering", normalized)
-        self.assertIn("mood_atmosphere", normalized)
+        self.assertIn("underlined_phrase_meaning", normalized)
+        self.assertNotIn("mood_atmosphere", normalized)
 
     def test_normalize_question_type_keys_rejects_unknown(self) -> None:
         with self.assertRaises(ValueError):

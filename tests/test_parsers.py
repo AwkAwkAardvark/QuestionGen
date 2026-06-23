@@ -24,6 +24,27 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(normalize_text(" A \n B\t C "), "A B C")
         self.assertEqual(split_sentences("One.\n\nTwo."), ["One.", "Two."])
 
+    def test_span_preparation_is_deterministic_and_source_preserving(self) -> None:
+        source = (
+            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
+            "to those around them. But the resulting inequality brought only discontent."
+        )
+        prepared = prepare_source(source)
+        rerun = prepare_source(source)
+
+        self.assertEqual(prepared.source_text, source)
+        self.assertEqual(
+            [(span.id, span.text, span.char_start, span.char_end) for span in prepared.span_units],
+            [(span.id, span.text, span.char_start, span.char_end) for span in rerun.span_units],
+        )
+        self.assertEqual([unit.id for unit in prepared.sentence_units], ["S0", "S1"])
+        self.assertEqual([gap.id for gap in prepared.gap_units], ["G0", "G1", "G2"])
+
+        target_span = next(span for span in prepared.span_units if span.text == "brought only discontent")
+        self.assertEqual(source[target_span.char_start : target_span.char_end], target_span.text)
+        self.assertEqual(target_span.normalized_text, "brought only discontent")
+        self.assertEqual(target_span.sentence_unit_id, "S1")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,9 +3,15 @@ from __future__ import annotations
 import unittest
 
 from questiongen.parsers import prepare_source
-from questiongen.question_types import QUESTION_TYPES
+from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
 from questiongen.renderers import render_mood_atmosphere, render_paragraph_ordering, render_sentence_insertion
-from questiongen.schemas import MoodAtmospherePlan, ParagraphOrderingPlan, SentenceInsertionPlan
+from questiongen.renderers import render_underlined_phrase_meaning
+from questiongen.schemas import (
+    MoodAtmospherePlan,
+    ParagraphOrderingPlan,
+    SentenceInsertionPlan,
+    UnderlinedPhraseMeaningPlan,
+)
 
 
 class RendererTests(unittest.TestCase):
@@ -114,15 +120,61 @@ class RendererTests(unittest.TestCase):
                 "status": "planned",
                 "errors": [],
             },
-            QUESTION_TYPES["mood_atmosphere"],
+            MOOD_ATMOSPHERE_SPEC,
         )
         self.assertEqual(result["status"], "rendered")
         generated = result["generated"]
-        self.assertEqual(generated.QuestionType, QUESTION_TYPES["mood_atmosphere"].label_ko)
+        self.assertEqual(generated.QuestionType, MOOD_ATMOSPHERE_SPEC.label_ko)
         self.assertEqual(generated.given_sentence, None)
         self.assertEqual(generated.student_paragraph, source)
         self.assertEqual(generated.choices[0], "content -> angry")
         self.assertEqual(generated.answer, "①")
+
+    def test_underlined_phrase_meaning_renderer_wraps_selected_span_once(self) -> None:
+        source = (
+            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
+            "to those around them. But the resulting inequality brought only discontent."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(span for span in prepared.span_units if span.text == "brought only discontent")
+        plan = UnderlinedPhraseMeaningPlan(
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            paraphrase_choices_ko=[
+                "비교 속에서 상대적 박탈감만 커졌다는 뜻",
+                "경제적 격차가 불만을 낳았다는 뜻",
+                "보상이 충분해도 만족이 오래가지 않았다는 뜻",
+                "경쟁이 심해져 분노가 겉으로 드러났다는 뜻",
+                "차이가 커질수록 성취감도 함께 커졌다는 뜻",
+            ],
+            correct_choice="경제적 격차가 불만을 낳았다는 뜻",
+            surface_meaning="오직 불만만을 가져왔다는 말",
+            contextual_meaning="상대적 불평등 때문에 만족 대신 불만이 커졌다는 뜻",
+            supporting_evidence="the resulting inequality brought only discontent",
+            explanation="문맥상 상대적 불평등으로 인한 불만을 뜻합니다.",
+        )
+        result = render_underlined_phrase_meaning(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "10-03",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "underlined_phrase_meaning",
+                "prepared_source": prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_TYPES["underlined_phrase_meaning"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        generated = result["generated"]
+        self.assertEqual(generated.QuestionType, QUESTION_TYPES["underlined_phrase_meaning"].label_ko)
+        self.assertEqual(generated.given_sentence, None)
+        self.assertEqual(generated.student_paragraph.count("[밑줄]"), 1)
+        self.assertEqual(generated.student_paragraph.count("[/밑줄]"), 1)
+        self.assertIn("[밑줄]brought only discontent[/밑줄]", generated.student_paragraph)
+        self.assertEqual(generated.answer, "②")
 
 
 if __name__ == "__main__":

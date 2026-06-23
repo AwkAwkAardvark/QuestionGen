@@ -10,6 +10,7 @@ from .schemas import (
     PreparedSource,
     QuestionState,
     SentenceInsertionPlan,
+    UnderlinedPhraseMeaningPlan,
 )
 
 
@@ -61,6 +62,18 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
             "errors": [],
         }
 
+    if question_type_key == "underlined_phrase_meaning":
+        if not isinstance(plan, UnderlinedPhraseMeaningPlan):
+            return {
+                "status": "rendering_error",
+                "errors": ["UnderlinedPhraseMeaningPlan is required before explanation generation."],
+            }
+        return {
+            "explanation_context": _build_underlined_phrase_meaning_context(plan, generated),
+            "status": "rendered",
+            "errors": [],
+        }
+
     return {
         "status": "rendering_error",
         "errors": [f"No explanation-context builder is registered for {question_type_key}."],
@@ -84,6 +97,8 @@ def write_teacher_facing_explanation(state: QuestionState) -> dict[str, Any]:
         explanation = _write_paragraph_ordering_explanation(explanation_context)
     elif question_type_key == "mood_atmosphere":
         explanation = _write_mood_atmosphere_explanation(explanation_context)
+    elif question_type_key == "underlined_phrase_meaning":
+        explanation = _write_underlined_phrase_meaning_explanation(explanation_context)
     else:
         return {
             "status": "rendering_error",
@@ -165,6 +180,23 @@ def _build_mood_atmosphere_context(
     }
 
 
+def _build_underlined_phrase_meaning_context(
+    plan: UnderlinedPhraseMeaningPlan,
+    generated: GeneratedQuestion,
+) -> dict[str, str]:
+    correct_marker = generated.answer
+    choice_index = ["①", "②", "③", "④", "⑤"].index(correct_marker)
+    correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
+    return {
+        "selected_span_text": plan.selected_span_text,
+        "surface_meaning": plan.surface_meaning,
+        "contextual_meaning": plan.contextual_meaning,
+        "supporting_evidence": plan.supporting_evidence,
+        "correct_marker": correct_marker,
+        "correct_choice": correct_choice,
+    }
+
+
 def _write_sentence_insertion_explanation(context: dict[str, str | None]) -> str:
     target_text = _sentence_snippet(context["target_text"])
     before_text = context["before_text"]
@@ -236,6 +268,22 @@ def _write_mood_atmosphere_explanation(context: dict[str, str | None]) -> str:
         f"글에서 {target_holder}는 처음에 '{initial_evidence}'에서 드러나듯 {initial_emotion}한 상태입니다. "
         f"반면 마지막에는 '{final_evidence}'에서 보이듯 {final_emotion}한 상태로 바뀝니다. "
         f"따라서 심경 변화로 가장 적절한 것은 {correct_marker} {correct_choice}입니다."
+    )
+
+
+def _write_underlined_phrase_meaning_explanation(context: dict[str, str]) -> str:
+    selected_span_text = context["selected_span_text"]
+    surface_meaning = context["surface_meaning"]
+    contextual_meaning = context["contextual_meaning"]
+    supporting_evidence = context["supporting_evidence"]
+    correct_marker = context["correct_marker"]
+    correct_choice = context["correct_choice"]
+
+    return (
+        f"밑줄 친 '{selected_span_text}'는 표면적으로는 {surface_meaning}라는 표현입니다. "
+        f"하지만 이 글에서는 {contextual_meaning}라는 뜻으로 이해해야 합니다. "
+        f"특히 '{supporting_evidence}'라는 내용이 그 해석을 뒷받침하므로 "
+        f"정답은 {correct_marker} {correct_choice}입니다."
     )
 
 

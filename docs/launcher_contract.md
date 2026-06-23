@@ -115,7 +115,8 @@ Notes:
 - The current API still requires explicit `question_type_keys`, so the launcher must derive them from `QUESTION_TYPES`.
 - This preserves the current backend API while delivering the intended launcher behavior.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
-- The live registry now includes `mood_atmosphere`, whose first supported format is the `emotion_shift` subtype under the broad family key.
+- The live registry currently includes `sentence_insertion`, `paragraph_ordering`, and `underlined_phrase_meaning`; the current first supported span format is `underlined_phrase_meaning_5_ko`.
+- The `mood_atmosphere` implementation remains in the codebase as deferred future work, but it is intentionally excluded from `QUESTION_TYPES` and from launcher-derived default selections.
 
 ## Output Artifacts
 
@@ -132,7 +133,8 @@ Rules:
 - Expected incompatibility between a valid passage and a specific question type should surface as `qtype_incompatibility_error`, not be collapsed into generic source or planner failure.
 - `source_error` should be reserved for malformed inputs, failed source preparation, or broken deterministic prepared-source invariants.
 - Deterministic plan violations discovered after LLM planning but before rendering should surface as `planning_error`, not `rendering_error`.
-- `mood_atmosphere` is expected to produce a relatively high incompatibility rate on mixed-source batches because neutral or weakly affective passages should fail explicitly rather than be forced into emotion items.
+- `underlined_phrase_meaning` should preserve the original passage exactly except for wrapping the chosen source span as `[밑줄]...[/밑줄]` in exported `student_paragraph`.
+- The deferred `mood_atmosphere` implementation must not appear in default launcher or batch outputs unless it is explicitly reactivated in the live registry later.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
 - Teacher-facing explanation writing is now treated as a post-render concern rather than as part of structural planning for the live types.
 - Planner rationale may remain internal, but exported explanations for the live types are now rewritten from rendered item context and textual evidence rather than copied directly from planner-internal IDs or schema fields.

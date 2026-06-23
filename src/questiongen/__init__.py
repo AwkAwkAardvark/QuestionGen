@@ -11,6 +11,8 @@ from .schemas import (
     PreparedSource,
     QuestionState,
     SentenceInsertionPlan,
+    SpanUnit,
+    UnderlinedPhraseMeaningPlan,
     make_initial_state,
 )
 
@@ -23,6 +25,8 @@ __all__ = [
     "PreparedSource",
     "QuestionState",
     "SentenceInsertionPlan",
+    "SpanUnit",
+    "UnderlinedPhraseMeaningPlan",
     "DEMO_PARAGRAPH",
     "compile_question_graph",
     "create_llm",

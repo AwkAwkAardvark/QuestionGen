@@ -6,7 +6,7 @@ Current live registry:
 
 - `sentence_insertion`
 - `paragraph_ordering`
-- `mood_atmosphere` (`emotion_shift` subtype only in v1)
+- `underlined_phrase_meaning` (`underlined_phrase_meaning_5_ko` with `[밑줄]...[/밑줄]` export markers)
 
 Current product direction:
 
@@ -19,32 +19,32 @@ Because the launcher runs every registered type, new types should not be added t
 
 ## Recommended Order
 
-1. `underlined_phrase_meaning`
-2. `fill_in_the_blank`
-3. `vocab`
-4. `grammar`
+1. `fill_in_the_blank`
+2. `vocab`
+3. `grammar`
+4. `mood_atmosphere` (only after all other planned families are implemented and optimized, and only after explicit user confirmation)
 
 This order is the current engineering-first recommendation, not a claim about long-term pedagogical priority.
 
-Why `mood_atmosphere` came next:
+Why `mood_atmosphere` is deferred to the end:
 
-- It does not require the future span-preparation layer.
-- It will directly exercise the new `qtype_incompatibility_error` path, which is already an explicit product requirement.
-- It lets the project improve planner quality, explanation quality, and suitability gating before taking on more expensive span infrastructure.
-- It is also the type most likely to fail often for legitimate pedagogical reasons, so it is a good stress test for exported failure semantics.
+- The current affective approach is incomplete and not part of the live rollout.
+- The remaining single-span and multi-span families are higher-priority roadmap work because they share the now-live span infrastructure.
+- Reintroducing affective generation before those families are finished would reopen a broad suitability and explanation-quality problem that is intentionally postponed.
+- Even after the rest of the roadmap is done, `mood_atmosphere` should return only if the user explicitly confirms that it is worth reviving.
 
-Why the remaining order is span-first rather than registry-first:
+Why the remaining order is still span-first rather than registry-first:
 
-- `underlined_phrase_meaning` and `fill_in_the_blank` need a single target span, so they are the most natural first consumers of a new span layer.
+- The shared span layer now exists and `underlined_phrase_meaning` is the first live single-span consumer.
+- `fill_in_the_blank` still depends on that same span layer, so it remains the next natural consumer before the multi-span corruption families.
 - `vocab` and `grammar` both need multiple numbered underlined targets and one intentionally corrupted target, which makes them more demanding than the single-span families.
 - `grammar` is the riskiest because grammatical corruption must stay subtle, local, and teacher-explainable.
 
-Why `underlined_phrase_meaning` now comes before `fill_in_the_blank`:
+Why `fill_in_the_blank` is next:
 
-- It is the safer first consumer of a span layer.
-- It requires one selected span and contextual interpretation, but does not also require blank-shape policy or proposition-deletion rendering.
-- It should expose span-selection and explanation-bridging problems earlier, with less rendering complexity than 빈칸.
-- `fill_in_the_blank` remains product-important, but it is a riskier first span rollout because target selection, recoverability, and distractor policy are all harder at once.
+- The safer first consumer has already shipped as `underlined_phrase_meaning`.
+- `fill_in_the_blank` remains product-important and is still the next best use of the new span layer, but it is riskier because target selection, recoverability, and distractor policy all become harder at once.
+- The remaining multi-span families should still wait until the single-span blank family is stable.
 
 When to intentionally override this order:
 
@@ -74,7 +74,7 @@ The following keys are broad registry candidates. The `format_key` values name t
   - multiple defensible completions
   - blank target too trivial, too copied, or too long
 - Major risks:
-  - current package has no span-preparation layer yet
+  - the shared span-preparation layer now exists, but blank-specific planning and rendering policy are still missing
   - distractor quality will likely dominate item quality
   - blank placement may drift away from real 수능/내신 expectations if under-specified
   - the planner may produce vocabulary-style deletion instead of true inference
@@ -101,39 +101,22 @@ Current recommendation on registry shape:
 - Put the first supported subtype in `format_key`, starting with `blank_inference_proposition_5_choices`.
 - Revisit narrower registry keys only if later product needs distinct launch behavior or clearly different infrastructure.
 
-### `underlined_phrase_meaning`
+### `underlined_phrase_meaning` (live reference)
 
-- First format key: `underlined_phrase_meaning_5_ko`
-- Korean stem direction:
-  - likely `다음 글의 밑줄 친 부분의 의미로 가장 적절한 것은?`
-  - treat the task as contextual meaning / 함축 의미 추론 rather than literal translation
-- Output shape:
-  - original passage with one underlined English phrase
+- Live format key: `underlined_phrase_meaning_5_ko`
+- Locked v1 shape:
+  - one self-selected source span
+  - source-preserving passage rendering with `[밑줄]...[/밑줄]`
   - 5 Korean contextual paraphrase choices
   - marker answer `①`-`⑤`
-  - Korean explanation
-- Infrastructure:
-  - span-based
-- Expected incompatibility patterns:
-  - no good contextual phrase target
-  - phrase too literal and answerable by dictionary knowledge alone
-  - many equally acceptable Korean paraphrases
-  - phrase too context-free or too weakly tied to the main claim
-- Major risks:
-  - dictionary-style translation instead of contextual meaning
-  - duplicate or near-duplicate Korean distractors
-  - pure idiom-memory behavior if the phrase is not grounded in passage evidence
-  - possible future demand for CSV-specified target spans, which should stay out of v1 unless explicitly chosen
-- User confirmation still needed:
-  - whether this pending family should be renamed from `phrase_translation` to `underlined_phrase_meaning` before implementation starts
-  - whether the first release should prioritize metaphorical / abstract phrases
-  - whether the first release should always self-select the underlined phrase
-
-Current recommendation on family naming:
-
-- The older draft name `phrase_translation` is probably too literal for the intended exam task.
-- `underlined_phrase_meaning` fits the current product direction better because the task is to recover contextual meaning, not translate a phrase word-for-word.
-- Keep the Korean label aligned with `밑줄 친 부분 의미` unless later exam-format research suggests a sharper distinction.
+  - Korean teacher-facing explanation
+- Locked v1 selection policy:
+  - prefer abstract, figurative, evaluative, or claim-bearing phrases
+  - reject overly literal or context-free phrases as incompatibility
+- Main remaining hardening risks:
+  - near-duplicate Korean distractors
+  - weak phrase-centrality heuristics on mixed batches
+  - future CSV-specified target-span control, which is still intentionally deferred
 
 ### `vocab`
 
@@ -221,8 +204,9 @@ Current recommendation on registry shape:
 ## Boundary Notes
 
 - `sentence_insertion` and `paragraph_ordering` are already live and should not be duplicated as pending entries.
-- `mood_atmosphere` is also now live, but only as the narrow `emotion_shift` rollout documented below.
-- Span-based types should wait for a real span-preparation layer in `PreparedSource` or an equivalent planning structure.
+- `underlined_phrase_meaning` is now live as the first span-based family.
+- `mood_atmosphere` is intentionally inactive in the live registry; the current affective draft remains planning-only future work.
+- The shared span-preparation layer now exists inside `PreparedSource`; remaining pending span families should build on that layer rather than redefining it.
 - Pending specs should stay outside `src/questiongen/` until the implementation path is ready.
 - Once these pending specs have been worked into the durable implementation docs and the corresponding types are live, ask for explicit confirmation before deleting the local `QuestionTypeDump`.
 
@@ -231,12 +215,11 @@ Current recommendation on registry shape:
 The remaining workflow should be treated as:
 
 1. harden current live families
-2. build the shared span layer
-3. ship the first safe single-span consumer
-4. ship the harder single-span blank family
-5. move to multi-span corruption families
+2. use the live span layer to ship the blank family
+3. move to multi-span corruption families
+4. reconsider `mood_atmosphere` only at the very end, and only after explicit user confirmation
 
-This is safer than thinking in terms of question-type names alone because the next real architectural boundary is span preparation, not the individual labels of the pending families.
+This is safer than thinking in terms of question-type names alone because the next real architectural boundary is no longer basic span preparation itself, but how far the live span contract can be pushed without breaking mixed-batch quality.
 
 ## Live Type Refinement Notes
 
@@ -310,14 +293,14 @@ Why this direction is safer:
 - it fits current live types and pending passage/span families without forcing one planner schema style across all of them
 - it prevents planner-internal notation such as `S#` / `G#` from leaking directly into exported explanations
 - it scales better to future span-based types, where explanation should talk about selected text and context rather than preparation IDs
-- it avoids a large immediate schema rewrite that may need to be revised again once `mood_atmosphere` and span-based types are live
+- it avoids a large immediate schema rewrite that may need to be revised again once the deferred affective family is reconsidered
 
 Recommended near-term shape:
 
 - `sentence_insertion`: explanation context should expose left textual anchor, target sentence text, right textual anchor, and the final correct marker
 - `paragraph_ordering`: explanation context should expose intro text, displayed blocks, correct ordering, and the specific edge-by-edge reasons that force that ordering
 - future span types: explanation context should expose chosen span text, surrounding context, and the specific reason the correct option is supported
-- `mood_atmosphere`: explanation context should expose cue phrases, tonal progression, and the dominant emotional or atmospheric signal
+- deferred `mood_atmosphere`: explanation context should expose cue phrases, tonal progression, and the dominant emotional or atmospheric signal if the family is revisited later
 
 ## Pending Family Refinement Notes
 
@@ -346,12 +329,11 @@ Useful later, but not yet stable enough to adopt as schema truth:
 Current recommendation:
 
 - Keep the broad key `mood_atmosphere` for now.
-- Use subtype-aware prompt tightening and validation heuristics before considering a registry split.
-- The live v1 shape is now locked to `emotion_shift` only.
-- Use an emotion-shift-specific stem under the broad family key rather than a generic family stem.
-- Use English adjective-pair choices in the first live release.
-- Allow writer/narrator or one clearly identifiable character as the feeling-holder, but reject ambiguous-holder passages as incompatibility.
-- Keep `atmosphere` and `emotion_state` deferred until v1 suitability gating and explanation quality are stable.
+- Treat the current implementation as incomplete and inactive rather than as a live v1 rollout.
+- If this family is ever revived, start with an emotion-shift-specific stem under the broad family key rather than a generic family stem.
+- If this family is ever revived, keep English adjective-pair choices as the first draft choice format.
+- If this family is ever revived, allow writer/narrator or one clearly identifiable character as the feeling-holder, but reject ambiguous-holder passages as incompatibility.
+- Do not revisit `atmosphere` or `emotion_state` until after the rest of the roadmap is complete, the live families are optimized, and the user explicitly confirms a return to affective generation.
 
 ### `fill_in_the_blank`
 
@@ -396,15 +378,14 @@ Useful parts of the external feedback for this project:
 Useful later, but not yet stable enough to adopt as schema truth:
 
 - a fully structured interpretation-evidence schema
-- explicit surface-meaning / contextual-meaning fields in the live plan schema
 - mandatory wrong-choice notes for every distractor
 - difficulty scoring and phrase-type taxonomies in the live runtime contract
 
 Current recommendation:
 
-- Rename the pending family from `phrase_translation` to `underlined_phrase_meaning` before implementation starts.
 - Keep it as a single broad family key for now.
-- Use prompt tightening to force contextual interpretation and evidence-bridging before deciding whether any deeper schema rewrite is necessary.
+- Keep the current v1 policy: self-select one claim-bearing span and render it with `[밑줄]...[/밑줄]`.
+- Use hardening work to improve phrase selection and Korean distractor quality before considering any deeper schema rewrite.
 
 ### `vocab`
 

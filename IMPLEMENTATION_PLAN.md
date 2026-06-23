@@ -100,11 +100,6 @@
   - status: live
   - first supported format: `abc_ordering_after_intro`
   - remaining hardening focus: better semantic suitability gating and more edge-by-edge ordering explanations
-- [x] `mood_atmosphere`
-  - status: live, narrow v1
-  - first supported format: `emotion_shift_pair_choice_5`
-  - chosen scope: `emotion_shift` only, with `emotion_state` and `atmosphere` deferred
-  - remaining hardening focus: incompatibility tuning, answer-pair distinctiveness, and stronger evidence-based explanations
 
 ### Remaining registry work
 
@@ -114,31 +109,31 @@
 
 ### Shared span-preparation layer
 
-- [ ] Introduce a real span-oriented preparation layer that can support both single-span selection and later multi-span rendering.
-- [ ] Keep the span layer notebook-agnostic and question-type agnostic in the same way the current sentence/gap preparation is package-local and reusable.
-- [ ] Define deterministic span identity, source-preserving rendering rules, and validation surfaces before live registration of additional span-based types.
-- [ ] Preserve the current status boundary:
+- [x] Introduce a real span-oriented preparation layer that can support both single-span selection and later multi-span rendering.
+- [x] Keep the span layer notebook-agnostic and question-type agnostic in the same way the current sentence/gap preparation is package-local and reusable.
+- [x] Define deterministic span identity, source-preserving rendering rules, and validation surfaces before live registration of additional span-based types.
+- [x] Preserve the current status boundary:
   - malformed preparation remains `source_error`
   - valid-but-poor-fit passages remain `qtype_incompatibility_error`
   - deterministic post-plan violations remain `planning_error`
 
 ### Span-layer acceptance
 
-- [ ] Single-span types can render a chosen span without damaging surrounding text.
-- [ ] Multi-span types can later mark multiple targets deterministically without redefining the base preparation contract.
-- [ ] Exported explanations can refer to chosen span text and surrounding evidence rather than preparation internals.
+- [x] Single-span types can render a chosen span without damaging surrounding text.
+- [x] Multi-span types can later mark multiple targets deterministically without redefining the base preparation contract.
+- [x] Exported explanations can refer to chosen span text and surrounding evidence rather than preparation internals.
 
 ## Wave 6: Single-Span Types
 
 ### Recommended implementation order
 
-- [ ] `underlined_phrase_meaning`
+- [x] `underlined_phrase_meaning`
   - reason for order: safest first consumer of the span layer because it needs one selected span and contextual interpretation, but not deletion-based rendering or multi-target corruption
   - first supported format: `underlined_phrase_meaning_5_ko`
   - first-release target: contextual paraphrase / 함축 의미 추론, not literal translation
-  - main hard problems: target-span quality, Korean distractor distinctiveness, and explanation bridging from surface wording to contextual meaning
+  - shipped v1 policy: self-select one phrase, prefer abstract or claim-bearing spans, use Korean contextual paraphrase choices, and render `[밑줄]...[/밑줄]` in exports
 - [ ] `fill_in_the_blank`
-  - reason for order: still a high-priority single-span family, but riskier than `underlined_phrase_meaning` because it also needs blank-shape policy and proposition-level distractor logic
+  - reason for order: next planned single-span consumer now that the span layer and `underlined_phrase_meaning` are live; still riskier because it also needs blank-shape policy and proposition-level distractor logic
   - first supported format: `blank_inference_proposition_5_choices`
   - first-release target: 빈칸추론, not generic phrase deletion
   - main hard problems: proposition-level target selection, non-trivial recoverability, and diagnostic distractors
@@ -169,6 +164,14 @@
 - [ ] The span layer can support numbered multi-target rendering without destabilizing earlier single-span types.
 - [ ] The validator can prove there is exactly one answerable corruption.
 - [ ] Real-batch outputs remain diagnostically readable in CSV/JSON when passages do not fit these families.
+
+## Wave 8: Deferred Affective Family
+
+- [ ] `mood_atmosphere`
+  - status: inactive and incomplete; implementation code is retained but removed from the live registry
+  - current dormant format draft: `emotion_shift_pair_choice_5`
+  - deferral policy: do not reactivate until all remaining single-span and multi-span families are implemented and optimized
+  - reactivation gate: only revisit after explicit user confirmation
 
 ## Acceptance Checklist
 

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import re
 from typing import Any
 
 from .parsers import normalize_text
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
-from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, ORDERING_CHOICES, rendered_gap_positions
+from .renderers import (
+    DISPLAY_PERMUTATIONS,
+    MARKER_CHOICES,
+    ORDERING_CHOICES,
+    UNDERLINE_CLOSE,
+    UNDERLINE_OPEN,
+    rendered_gap_positions,
+)
 from .schemas import (
     GeneratedQuestion,
     MoodAtmospherePlan,
@@ -13,9 +21,11 @@ from .schemas import (
     PreparedSource,
     QuestionState,
     SentenceInsertionPlan,
+    UnderlinedPhraseMeaningPlan,
 )
 
-_INTERNAL_EXPLANATION_ID_RE = re.compile(r"[SG]\d+")
+_INTERNAL_EXPLANATION_ID_RE = re.compile(r"[SGP]\d+")
+_HANGUL_RE = re.compile(r"[가-힣]")
 _MOOD_CHOICE_PAIR_RE = re.compile(r"^[A-Za-z][A-Za-z '\-/]*(?:\s*->\s*)[A-Za-z][A-Za-z '\-/]*$")
 _AFFECTIVE_CUE_RE = re.compile(
     r"\b("
@@ -47,6 +57,12 @@ _INTERNAL_EXPLANATION_TERM_PATTERNS = (
     "initial_emotion",
     "final_emotion",
     "target_holder",
+    "selected_span_id",
+    "selected_span_text",
+    "paraphrase_choices_ko",
+    "surface_meaning",
+    "contextual_meaning",
+    "supporting_evidence",
     "렌더",
     "renderer",
     "schema",
@@ -56,9 +72,13 @@ _INTERNAL_EXPLANATION_TERM_PATTERNS = (
 )
 
 
-def input_check(state: QuestionState) -> dict[str, Any]:
+def input_check(
+    state: QuestionState,
+    question_types: Mapping[str, QuestionTypeSpec] | None = None,
+) -> dict[str, Any]:
     errors: list[str] = []
-    if state["QuestionTypeKey"] not in QUESTION_TYPES:
+    registry = question_types or QUESTION_TYPES
+    if state["QuestionTypeKey"] not in registry:
         errors.append(f"Unknown QuestionTypeKey: {state['QuestionTypeKey']}")
     if not isinstance(state["OriginalQuestionNumber"], str) or not state["OriginalQuestionNumber"].strip():
         errors.append("OriginalQuestionNumber must be a non-empty string.")
@@ -142,8 +162,13 @@ def validate_prepared_source(
     min_source_units: int | None = None,
 ) -> list[str]:
     errors: list[str] = []
+    source_text = prepared_source.source_text
     sentence_units = prepared_source.sentence_units
     gap_units = prepared_source.gap_units
+    span_units = prepared_source.span_units
+
+    if not source_text or not source_text.strip():
+        errors.append("PreparedSource.source_text is required.")
 
     if min_source_units is not None and len(sentence_units) < min_source_units:
         errors.append(
@@ -184,6 +209,27 @@ def validate_prepared_source(
                 f"Gap unit {gap.id} should have after_unit_id {expected_after}, got {gap.after_unit_id}."
             )
 
+    sentence_id_set = {unit.id for unit in sentence_units}
+    for index, span in enumerate(span_units):
+        expected_id = f"P{index}"
+        if span.id != expected_id:
+            errors.append(f"Span unit at index {index} should have id {expected_id}, got {span.id}.")
+        if span.kind != "span":
+            errors.append(f"Span unit {span.id} must have kind 'span'.")
+        if span.char_start < 0 or span.char_end > len(source_text) or span.char_end <= span.char_start:
+            errors.append(f"Span unit {span.id} has invalid character bounds {span.char_start}:{span.char_end}.")
+            continue
+        if source_text[span.char_start : span.char_end] != span.text:
+            errors.append(f"Span unit {span.id} text does not match PreparedSource.source_text at its character range.")
+        if span.normalized_text != normalize_text(span.text):
+            errors.append(f"Span unit {span.id} normalized_text does not match normalized span text.")
+        if span.sentence_unit_id is not None and span.sentence_unit_id not in sentence_id_set:
+            errors.append(f"Span unit {span.id} references unknown sentence_unit_id {span.sentence_unit_id}.")
+        if span.sentence_index is not None and (
+            span.sentence_index < 0 or span.sentence_index >= len(sentence_units)
+        ):
+            errors.append(f"Span unit {span.id} has out-of-range sentence_index {span.sentence_index}.")
+
     return errors
 
 
@@ -202,7 +248,7 @@ def validate_teacher_facing_explanation(
 
     if _INTERNAL_EXPLANATION_ID_RE.search(explanation):
         errors.append(
-            f"{question_type_key} explanation must not mention internal sentence or gap IDs like S0 or G3."
+            f"{question_type_key} explanation must not mention internal sentence or gap IDs or internal span IDs like S0, G3, or P2."
         )
 
     lowered = explanation.lower()
@@ -225,6 +271,8 @@ def validate_plan_against_prepared_source(
         return _validate_paragraph_ordering_plan(prepared_source, plan)
     if type_spec.validator_key == "mood_atmosphere":
         return _validate_mood_atmosphere_plan(prepared_source, plan)
+    if type_spec.validator_key == "underlined_phrase_meaning":
+        return _validate_underlined_phrase_meaning_plan(prepared_source, plan)
     return [f"No deterministic plan validator is registered for {type_spec.validator_key}."]
 
 
@@ -235,6 +283,8 @@ def validate_question_type_compatibility(
 ) -> list[str]:
     if type_spec.validator_key == "mood_atmosphere":
         return _validate_mood_atmosphere_compatibility(source_paragraph, prepared_source)
+    if type_spec.validator_key == "underlined_phrase_meaning":
+        return _validate_underlined_phrase_meaning_compatibility(prepared_source)
     return []
 
 
@@ -307,6 +357,62 @@ def _validate_mood_atmosphere_compatibility(
 
     if len(prepared_source.sentence_units) < 2:
         return ["Passage does not contain enough sentence-level development for an emotion-shift item."]
+
+    return []
+
+
+def _validate_underlined_phrase_meaning_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+    if not isinstance(plan, UnderlinedPhraseMeaningPlan):
+        return ["UnderlinedPhraseMeaningPlan is missing for deterministic plan checks."]
+
+    errors: list[str] = []
+    span_map = {span.id: span for span in prepared_source.span_units}
+    selected_span = span_map.get(plan.selected_span_id)
+    if selected_span is None:
+        return [f"Unknown selected span ID: {plan.selected_span_id}"]
+
+    if plan.selected_span_text != selected_span.text:
+        errors.append("UnderlinedPhraseMeaningPlan selected_span_text must exactly match the selected span text.")
+
+    normalized_choices = [_normalize_korean_choice(choice) for choice in plan.paraphrase_choices_ko]
+    if len(normalized_choices) != 5:
+        errors.append("UnderlinedPhraseMeaningPlan must contain exactly five Korean choices.")
+    if len(set(normalized_choices)) != len(normalized_choices):
+        errors.append("UnderlinedPhraseMeaningPlan Korean choices must be unique.")
+    if any(_HANGUL_RE.search(choice) is None for choice in normalized_choices):
+        errors.append("UnderlinedPhraseMeaningPlan Korean choices must contain Hangul text.")
+    if _normalize_korean_choice(plan.correct_choice) not in normalized_choices:
+        errors.append("UnderlinedPhraseMeaningPlan correct_choice must be included in paraphrase_choices_ko.")
+
+    if prepared_source.source_text[selected_span.char_start : selected_span.char_end] != plan.selected_span_text:
+        errors.append("UnderlinedPhraseMeaningPlan selected span text does not match PreparedSource.source_text.")
+
+    if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
+        errors.append("UnderlinedPhraseMeaningPlan supporting_evidence must be copied from the source passage.")
+
+    return errors
+
+
+def _validate_underlined_phrase_meaning_compatibility(prepared_source: PreparedSource) -> list[str]:
+    span_units = prepared_source.span_units
+    if not span_units:
+        return ["Passage has no suitable contextual phrase candidate for underlined_phrase_meaning."]
+
+    top_score = max(span.priority_score for span in span_units)
+    if top_score < 5:
+        return ["Available phrase candidates are too literal for an underlined_phrase_meaning item."]
+
+    claim_bearing_spans = [
+        span
+        for span in span_units
+        if {"abstract_term", "claim_bearing", "contextual_cue", "phrase_frame"} & set(span.heuristic_tags)
+    ]
+    if not claim_bearing_spans:
+        return ["Available phrase candidates are not central enough to the passage claim for underlined_phrase_meaning."]
+
+    equally_ranked = [span for span in claim_bearing_spans if span.priority_score == top_score]
+    if top_score <= 6 and len(equally_ranked) >= 6:
+        return ["Passage contains too many equally defensible contextual phrase targets for a stable Korean paraphrase item."]
 
     return []
 
@@ -498,6 +604,33 @@ def _validate_mood_atmosphere_state(
     )
 
 
+def _validate_underlined_phrase_meaning_state(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+    generated = state["generated"]
+
+    if prepared_source is None:
+        return ["PreparedSource is missing for validation."]
+    if not isinstance(plan, UnderlinedPhraseMeaningPlan):
+        return ["UnderlinedPhraseMeaningPlan is missing for validation."]
+    if not isinstance(generated, GeneratedQuestion):
+        return ["GeneratedQuestion is missing for validation."]
+    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
+        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
+    if generated.BatchRowId != state["BatchRowId"]:
+        return ["GeneratedQuestion BatchRowId must match the state."]
+
+    return validate_underlined_phrase_meaning_output(
+        prepared_source=prepared_source,
+        plan=plan,
+        generated=generated,
+        type_spec=type_spec,
+    )
+
+
 def validate_paragraph_ordering_output(
     *,
     prepared_source: PreparedSource,
@@ -633,13 +766,88 @@ def validate_mood_atmosphere_output(
     return errors
 
 
+def validate_underlined_phrase_meaning_output(
+    *,
+    prepared_source: PreparedSource,
+    plan: UnderlinedPhraseMeaningPlan,
+    generated: GeneratedQuestion,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    errors: list[str] = []
+    span_map = {span.id: span for span in prepared_source.span_units}
+    selected_span = span_map.get(plan.selected_span_id)
+    normalized_choices = [_normalize_korean_choice(choice) for choice in plan.paraphrase_choices_ko]
+
+    if selected_span is None:
+        errors.append(f"Unknown selected span ID: {plan.selected_span_id}")
+        return errors
+
+    if generated.QuestionType != type_spec.label_ko:
+        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.question_stem != type_spec.question_stem:
+        errors.append("question_stem does not match the question type metadata.")
+    if generated.given_sentence is not None:
+        errors.append("given_sentence must be None for underlined_phrase_meaning.")
+
+    if generated.choices is None or len(generated.choices) != type_spec.choice_count:
+        errors.append(f"choices must contain exactly {type_spec.choice_count} items.")
+    else:
+        normalized_generated_choices = [_normalize_korean_choice(choice) for choice in generated.choices]
+        if len(set(normalized_generated_choices)) != len(normalized_generated_choices):
+            errors.append("choices must be unique.")
+        if any(_HANGUL_RE.search(choice) is None for choice in normalized_generated_choices):
+            errors.append("choices must contain Korean text.")
+        if normalized_generated_choices != normalized_choices:
+            errors.append(f"choices must be exactly {normalized_choices}.")
+        if generated.answer not in MARKER_CHOICES[: len(generated.choices)]:
+            errors.append("answer must be one of the rendered marker choices.")
+        else:
+            expected_answer = MARKER_CHOICES[normalized_choices.index(_normalize_korean_choice(plan.correct_choice))]
+            if generated.answer != expected_answer:
+                errors.append(
+                    f"answer should map to the correct Korean paraphrase as {expected_answer}, got {generated.answer}."
+                )
+
+    if plan.selected_span_text != selected_span.text:
+        errors.append("selected_span_text must exactly match the selected span text.")
+
+    wrapped_text = f"{UNDERLINE_OPEN}{selected_span.text}{UNDERLINE_CLOSE}"
+    if generated.student_paragraph.count(UNDERLINE_OPEN) != 1 or generated.student_paragraph.count(UNDERLINE_CLOSE) != 1:
+        errors.append("student_paragraph must contain exactly one underlined span wrapper pair.")
+    if generated.student_paragraph.count(wrapped_text) != 1:
+        errors.append("student_paragraph must wrap the selected span text exactly once with the agreed marker.")
+
+    unwrapped = generated.student_paragraph.replace(UNDERLINE_OPEN, "", 1).replace(UNDERLINE_CLOSE, "", 1)
+    if unwrapped != prepared_source.source_text:
+        errors.append(
+            "student_paragraph must preserve the original passage exactly except for the [밑줄]...[/밑줄] wrapper."
+        )
+
+    if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
+        errors.append("supporting_evidence must appear in the source passage.")
+
+    errors.extend(
+        validate_teacher_facing_explanation(
+            generated.explanation,
+            question_type_key="underlined_phrase_meaning",
+        )
+    )
+
+    return errors
+
+
 GENERATED_QUESTION_VALIDATORS = {
     "sentence_insertion": _validate_sentence_insertion_state,
     "paragraph_ordering": _validate_paragraph_ordering_state,
     "mood_atmosphere": _validate_mood_atmosphere_state,
+    "underlined_phrase_meaning": _validate_underlined_phrase_meaning_state,
 }
 
 
 def _normalize_choice_pair(value: str) -> str:
     left, right = [part.strip().lower() for part in value.split("->", 1)]
     return f"{left} -> {right}"
+
+
+def _normalize_korean_choice(value: str) -> str:
+    return normalize_text(value)

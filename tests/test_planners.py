@@ -4,9 +4,19 @@ import unittest
 
 from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
-from questiongen.planners import plan_mood_atmosphere, plan_paragraph_ordering, plan_sentence_insertion
-from questiongen.question_types import QUESTION_TYPES
-from questiongen.schemas import MoodAtmospherePlan, ParagraphOrderingPlan, SentenceInsertionPlan
+from questiongen.planners import (
+    plan_mood_atmosphere,
+    plan_paragraph_ordering,
+    plan_sentence_insertion,
+    plan_underlined_phrase_meaning,
+)
+from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
+from questiongen.schemas import (
+    MoodAtmospherePlan,
+    ParagraphOrderingPlan,
+    SentenceInsertionPlan,
+    UnderlinedPhraseMeaningPlan,
+)
 
 
 class _ValidPlanner:
@@ -100,6 +110,77 @@ class _MoodAtmospherePlanner:
         )
 
 
+class _UnderlinedPhraseMeaningPlanner:
+    def __init__(self, span_id: str, span_text: str, evidence: str) -> None:
+        self.span_id = span_id
+        self.span_text = span_text
+        self.evidence = evidence
+
+    def invoke(self, prompt: str) -> UnderlinedPhraseMeaningPlan:
+        return UnderlinedPhraseMeaningPlan(
+            selected_span_id=self.span_id,
+            selected_span_text=self.span_text,
+            paraphrase_choices_ko=[
+                "비교 속에서 상대적 박탈감만 커졌다는 뜻",
+                "경제적 격차가 불만을 낳았다는 뜻",
+                "보상이 충분해도 만족이 오래가지 않았다는 뜻",
+                "경쟁이 심해져 분노가 겉으로 드러났다는 뜻",
+                "차이가 커질수록 성취감도 함께 커졌다는 뜻",
+            ],
+            correct_choice="경제적 격차가 불만을 낳았다는 뜻",
+            surface_meaning="오직 불만만을 가져왔다는 말",
+            contextual_meaning="상대적 불평등 때문에 만족 대신 불만이 커졌다는 뜻",
+            supporting_evidence=self.evidence,
+            explanation="밑줄 친 표현은 불평등 때문에 불만이 커졌다는 뜻입니다.",
+        )
+
+
+class _UnderlinedRetryPlanner:
+    def __init__(self, span_id: str, span_text: str, evidence: str) -> None:
+        self.span_id = span_id
+        self.span_text = span_text
+        self.evidence = evidence
+        self.invocations = 0
+        self.last_prompt = ""
+
+    def invoke(self, prompt: str) -> dict[str, object]:
+        self.invocations += 1
+        if self.invocations == 1:
+            return {
+                "selected_span_id": "P999",
+                "selected_span_text": self.span_text,
+                "paraphrase_choices_ko": [
+                    "문맥상 맞는 뜻",
+                    "문맥상 맞는 뜻",
+                    "다른 뜻",
+                    "또 다른 뜻",
+                    "잘못된 뜻",
+                ],
+                "correct_choice": "문맥상 맞는 뜻",
+                "surface_meaning": "표면적 의미",
+                "contextual_meaning": "문맥적 의미",
+                "supporting_evidence": self.evidence,
+                "explanation": "초안입니다.",
+            }
+        self.last_prompt = prompt
+        return {
+            "selected_span_id": self.span_id,
+            "selected_span_text": self.span_text,
+            "paraphrase_choices_ko": [
+                "비교 속에서 상대적 박탈감만 커졌다는 뜻",
+                "경제적 격차가 불만을 낳았다는 뜻",
+                "보상이 충분해도 만족이 오래가지 않았다는 뜻",
+                "경쟁이 심해져 분노가 겉으로 드러났다는 뜻",
+                "차이가 커질수록 성취감도 함께 커졌다는 뜻",
+            ],
+            "correct_choice": "경제적 격차가 불만을 낳았다는 뜻",
+            "surface_meaning": "오직 불만만을 가져왔다는 말",
+            "contextual_meaning": "상대적 불평등 때문에 만족 대신 불만이 커졌다는 뜻",
+            "supporting_evidence": self.evidence,
+            "explanation": "문맥을 다시 반영한 수정안입니다.",
+        }
+
+
 class PlannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.state = {
@@ -114,6 +195,17 @@ class PlannerTests(unittest.TestCase):
             "errors": [],
         }
         self.type_spec = QUESTION_TYPES["sentence_insertion"]
+        self.mood_type_spec = MOOD_ATMOSPHERE_SPEC
+        self.underlined_source = (
+            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
+            "to those around them. But the resulting inequality brought only discontent."
+        )
+        self.underlined_prepared = prepare_source(self.underlined_source)
+        self.underlined_span = next(
+            span
+            for span in self.underlined_prepared.span_units
+            if span.text == "brought only discontent"
+        )
 
     def test_planner_output_validates(self) -> None:
         result = plan_sentence_insertion(
@@ -207,7 +299,7 @@ class PlannerTests(unittest.TestCase):
         }
         result = plan_mood_atmosphere(
             mood_state,
-            QUESTION_TYPES["mood_atmosphere"],
+            self.mood_type_spec,
             structured_llm_factory=lambda schema: _MoodAtmospherePlanner(),
         )
         self.assertEqual(result["status"], "planned")
@@ -222,7 +314,10 @@ class PlannerTests(unittest.TestCase):
             "at its handler. The monkey's economy had grown, since grapes are better than cucumbers. "
             "But the resulting inequality brought only discontent."
         )
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _MoodAtmospherePlanner())
+        runner = compile_question_graph(
+            structured_llm_factory=lambda schema: _MoodAtmospherePlanner(),
+            question_types={**QUESTION_TYPES, "mood_atmosphere": self.mood_type_spec},
+        )
         mood_state = {
             **self.state,
             "source_paragraph": mood_source,
@@ -233,6 +328,65 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "validation_passed")
         self.assertIn("the monkey", result["generated"].explanation or "")
         self.assertNotIn("choice_pairs", result["generated"].explanation or "")
+
+    def test_underlined_phrase_meaning_planner_output_validates(self) -> None:
+        underlined_state = {
+            **self.state,
+            "source_paragraph": self.underlined_source,
+            "QuestionTypeKey": "underlined_phrase_meaning",
+            "prepared_source": self.underlined_prepared,
+        }
+        result = plan_underlined_phrase_meaning(
+            underlined_state,
+            QUESTION_TYPES["underlined_phrase_meaning"],
+            structured_llm_factory=lambda schema: _UnderlinedPhraseMeaningPlanner(
+                self.underlined_span.id,
+                self.underlined_span.text,
+                "the resulting inequality brought only discontent",
+            ),
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertIsInstance(result["plan"], UnderlinedPhraseMeaningPlan)
+
+    def test_underlined_phrase_meaning_planner_retries_after_schema_failure(self) -> None:
+        planner = _UnderlinedRetryPlanner(
+            self.underlined_span.id,
+            self.underlined_span.text,
+            "the resulting inequality brought only discontent",
+        )
+        underlined_state = {
+            **self.state,
+            "source_paragraph": self.underlined_source,
+            "QuestionTypeKey": "underlined_phrase_meaning",
+            "prepared_source": self.underlined_prepared,
+        }
+        result = plan_underlined_phrase_meaning(
+            underlined_state,
+            QUESTION_TYPES["underlined_phrase_meaning"],
+            structured_llm_factory=lambda schema: planner,
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(planner.invocations, 2)
+        self.assertIn("selected_span_id", planner.last_prompt)
+
+    def test_graph_rewrites_underlined_phrase_meaning_explanation(self) -> None:
+        runner = compile_question_graph(
+            structured_llm_factory=lambda schema: _UnderlinedPhraseMeaningPlanner(
+                self.underlined_span.id,
+                self.underlined_span.text,
+                "the resulting inequality brought only discontent",
+            )
+        )
+        underlined_state = {
+            **self.state,
+            "source_paragraph": self.underlined_source,
+            "QuestionTypeKey": "underlined_phrase_meaning",
+            "prepared_source": self.underlined_prepared,
+        }
+        result = runner.invoke(underlined_state)
+        self.assertEqual(result["status"], "validation_passed")
+        self.assertIn("brought only discontent", result["generated"].explanation or "")
+        self.assertNotIn("surface_meaning", result["generated"].explanation or "")
 
 
 if __name__ == "__main__":

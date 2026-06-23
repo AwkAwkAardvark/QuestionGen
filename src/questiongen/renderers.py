@@ -12,9 +12,12 @@ from .schemas import (
     PreparedSource,
     QuestionState,
     SentenceInsertionPlan,
+    UnderlinedPhraseMeaningPlan,
 )
 
 MARKER_CHOICES = ["①", "②", "③", "④", "⑤"]
+UNDERLINE_OPEN = "[밑줄]"
+UNDERLINE_CLOSE = "[/밑줄]"
 ORDERING_CHOICES = [
     ("A", "B", "C"),
     ("A", "C", "B"),
@@ -118,6 +121,41 @@ def render_mood_atmosphere(
             original_question_number=state["OriginalQuestionNumber"],
             batch_row_id=state["BatchRowId"],
             source_paragraph=state["source_paragraph"],
+            plan=plan,
+            type_spec=type_spec,
+        )
+    except Exception as exc:
+        return {
+            "status": "rendering_error",
+            "errors": [f"Renderer failed: {exc}"],
+        }
+
+    return {
+        "generated": generated,
+        "status": "rendered",
+        "errors": [],
+    }
+
+
+def render_underlined_phrase_meaning(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> dict[str, Any]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+
+    if prepared_source is None or not isinstance(plan, UnderlinedPhraseMeaningPlan):
+        return {
+            "status": "rendering_error",
+            "errors": ["PreparedSource and UnderlinedPhraseMeaningPlan are required for rendering."],
+        }
+
+    try:
+        generated = _build_underlined_phrase_meaning_question(
+            original_question_number=state["OriginalQuestionNumber"],
+            batch_row_id=state["BatchRowId"],
+            source_paragraph=state["source_paragraph"],
+            prepared_source=prepared_source,
             plan=plan,
             type_spec=type_spec,
         )
@@ -277,6 +315,50 @@ def _build_mood_atmosphere_question(
     )
 
 
+def _build_underlined_phrase_meaning_question(
+    *,
+    original_question_number: str,
+    batch_row_id: int,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    plan: UnderlinedPhraseMeaningPlan,
+    type_spec: QuestionTypeSpec,
+) -> GeneratedQuestion:
+    if type_spec.choice_count != len(MARKER_CHOICES):
+        raise ValueError("Underlined phrase meaning renderer expects exactly five choices.")
+
+    span_map = {span.id: span for span in prepared_source.span_units}
+    selected_span = span_map.get(plan.selected_span_id)
+    if selected_span is None:
+        raise ValueError(f"Unknown selected span ID: {plan.selected_span_id}")
+    if plan.selected_span_text != selected_span.text:
+        raise ValueError("selected_span_text must exactly match the selected span text.")
+
+    wrapped_paragraph = (
+        source_paragraph[: selected_span.char_start]
+        + f"{UNDERLINE_OPEN}{selected_span.text}{UNDERLINE_CLOSE}"
+        + source_paragraph[selected_span.char_end :]
+    )
+
+    choices = [_normalize_korean_choice(choice) for choice in plan.paraphrase_choices_ko]
+    correct_choice = _normalize_korean_choice(plan.correct_choice)
+    if correct_choice not in choices:
+        raise ValueError("correct_choice must be included in paraphrase_choices_ko.")
+    answer = MARKER_CHOICES[choices.index(correct_choice)]
+
+    return GeneratedQuestion(
+        OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
+        QuestionType=type_spec.label_ko,
+        student_paragraph=wrapped_paragraph,
+        question_stem=type_spec.question_stem,
+        given_sentence=None,
+        choices=choices,
+        answer=answer,
+        explanation=plan.explanation,
+    )
+
+
 def rendered_gap_positions(prepared_source: PreparedSource, target_id: str) -> dict[str, tuple[str | None, str | None]]:
     positions: dict[str, tuple[str | None, str | None]] = {}
     sentence_ids = [unit.id for unit in prepared_source.sentence_units]
@@ -302,8 +384,13 @@ RENDERERS = {
     "sentence_insertion": render_sentence_insertion,
     "paragraph_ordering": render_paragraph_ordering,
     "mood_atmosphere": render_mood_atmosphere,
+    "underlined_phrase_meaning": render_underlined_phrase_meaning,
 }
 
 
 def _normalize_choice_pair(value: str) -> str:
     return _CHOICE_PAIR_SPACING_RE.sub(" -> ", value.strip())
+
+
+def _normalize_korean_choice(value: str) -> str:
+    return normalize_text(value)

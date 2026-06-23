@@ -25,7 +25,7 @@ class LocalQuestionGraphRunner:
             "errors": list(state["errors"]),
         }
 
-        self._apply_result(working_state, input_check(working_state))
+        self._apply_result(working_state, input_check(working_state, self.question_types))
         if working_state["status"] != "input_passed":
             return working_state
 

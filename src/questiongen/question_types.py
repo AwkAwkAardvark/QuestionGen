@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .schemas import MoodAtmospherePlan, ParagraphOrderingPlan, SentenceInsertionPlan
+from .schemas import (
+    MoodAtmospherePlan,
+    ParagraphOrderingPlan,
+    SentenceInsertionPlan,
+    UnderlinedPhraseMeaningPlan,
+)
 
 SENTENCE_INSERTION_STEM = "글의 흐름으로 보아, 주어진 문장이 들어가기에 가장 적절한 곳은?"
 PARAGRAPH_ORDERING_STEM = "주어진 글 다음에 이어질 글의 순서로 가장 적절한 것은?"
 MOOD_ATMOSPHERE_STEM = "다음 글에 나타난 심경 변화로 가장 적절한 것은?"
+UNDERLINED_PHRASE_MEANING_STEM = "다음 글의 밑줄 친 부분의 의미로 가장 적절한 것은?"
 
 SENTENCE_INSERTION_PLANNER_PROMPT = """
 - Select exactly one target sentence ID from the sentence inventory.
@@ -51,6 +57,23 @@ MOOD_ATMOSPHERE_PLANNER_PROMPT = """
 - Do not generate final student-facing paragraph text.
 """.strip()
 
+UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT = """
+- Treat this first rollout as a single-span contextual paraphrase item under the broad key underlined_phrase_meaning.
+- Self-select exactly one span candidate from the provided span inventory.
+- Prefer abstract, figurative, evaluative, or claim-bearing phrases whose meaning must be inferred from the passage.
+- Reject literal dictionary-gloss phrases, phrase targets that are too context-free, and weak targets that are not central to the passage claim.
+- Copy the selected span ID into `selected_span_id` and the exact source text into `selected_span_text`.
+- Do not alter the source passage text or generate final student-facing paragraph text.
+- Create exactly five unique Korean contextual paraphrase choices in `paraphrase_choices_ko`.
+- Set `correct_choice` to the one clear best Korean paraphrase from that five-item list.
+- Use distractors that stay close to the topic but are wrong in implication, scope, tone, or inference.
+- Set `surface_meaning` to a short Korean explanation of the phrase's literal or surface wording.
+- Set `contextual_meaning` to a short Korean explanation of what the phrase means in this passage.
+- Copy `supporting_evidence` as a short exact snippet from the passage that best supports the contextual interpretation.
+- Write the explanation entirely in Korean.
+- The explanation must be teacher-facing: explain the phrase through passage evidence, not schema fields, internal IDs, or mechanics.
+""".strip()
+
 
 @dataclass(frozen=True)
 class QuestionTypeSpec:
@@ -91,16 +114,29 @@ QUESTION_TYPES: dict[str, QuestionTypeSpec] = {
         min_source_units=6,
         choice_count=5,
     ),
-    "mood_atmosphere": QuestionTypeSpec(
-        format_key="emotion_shift_pair_choice_5",
-        label_ko="심경·분위기",
-        planner_prompt=MOOD_ATMOSPHERE_PLANNER_PROMPT,
-        question_stem=MOOD_ATMOSPHERE_STEM,
-        unit_level="passage",
-        renderer_key="mood_atmosphere",
-        validator_key="mood_atmosphere",
-        plan_schema=MoodAtmospherePlan,
-        min_source_units=5,
+    "underlined_phrase_meaning": QuestionTypeSpec(
+        format_key="underlined_phrase_meaning_5_ko",
+        label_ko="밑줄 친 부분 의미",
+        planner_prompt=UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT,
+        question_stem=UNDERLINED_PHRASE_MEANING_STEM,
+        unit_level="span",
+        renderer_key="underlined_phrase_meaning",
+        validator_key="underlined_phrase_meaning",
+        plan_schema=UnderlinedPhraseMeaningPlan,
+        min_source_units=2,
         choice_count=5,
     ),
 }
+
+MOOD_ATMOSPHERE_SPEC = QuestionTypeSpec(
+    format_key="emotion_shift_pair_choice_5",
+    label_ko="심경·분위기",
+    planner_prompt=MOOD_ATMOSPHERE_PLANNER_PROMPT,
+    question_stem=MOOD_ATMOSPHERE_STEM,
+    unit_level="passage",
+    renderer_key="mood_atmosphere",
+    validator_key="mood_atmosphere",
+    plan_schema=MoodAtmospherePlan,
+    min_source_units=5,
+    choice_count=5,
+)

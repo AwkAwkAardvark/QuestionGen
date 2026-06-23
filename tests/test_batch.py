@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 import csv
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
 from questiongen.batch import run_batch_dataframe, run_batch_files, run_batch_rows
 from questiongen.graph import compile_question_graph
-from questiongen.schemas import BatchInputRow, MoodAtmospherePlan, SentenceInsertionPlan
+from questiongen.schemas import (
+    BatchInputRow,
+    ParagraphOrderingPlan,
+    SentenceInsertionPlan,
+    UnderlinedPhraseMeaningPlan,
+)
 
 
 class _StubPlanner:
-    def __init__(self, output_schema: type[SentenceInsertionPlan | MoodAtmospherePlan]) -> None:
+    def __init__(
+        self,
+        output_schema: type[SentenceInsertionPlan | ParagraphOrderingPlan | UnderlinedPhraseMeaningPlan],
+    ) -> None:
         self.output_schema = output_schema
 
-    def invoke(self, prompt: str) -> SentenceInsertionPlan | MoodAtmospherePlan:
+    def invoke(self, prompt: str) -> SentenceInsertionPlan | ParagraphOrderingPlan | UnderlinedPhraseMeaningPlan:
         if self.output_schema is SentenceInsertionPlan:
             return self.output_schema(
                 target_unit_ids=["S2"],
@@ -22,22 +31,29 @@ class _StubPlanner:
                 correct_gap_id="G2",
                 explanation="문장 S2는 G2 위치에 들어가야 자연스럽습니다.",
             )
+        if self.output_schema is ParagraphOrderingPlan:
+            return self.output_schema(
+                intro_unit_ids=["S0", "S1"],
+                continuation_blocks=[["S2", "S3"], ["S4", "S5"], ["S6", "S7", "S8"]],
+                explanation="도입부 다음에 원인과 결과가 이어지는 흐름입니다.",
+            )
+        match = re.search(r"- (P\d+): text='one end of the spectrum'", prompt)
+        selected_span_id = match.group(1) if match else "P0"
         return self.output_schema(
-            target_holder="the child",
-            initial_emotion="nervous",
-            final_emotion="proud",
-            choice_pairs=[
-                "nervous -> proud",
-                "calm -> worried",
-                "excited -> ashamed",
-                "content -> relieved",
-                "curious -> disappointed",
+            selected_span_id=selected_span_id,
+            selected_span_text="one end of the spectrum",
+            paraphrase_choices_ko=[
+                "여러 변화 양상 가운데 한 극단을 가리킨다는 뜻",
+                "중간 지점을 대표하는 예시라는 뜻",
+                "전체 변화가 거의 일어나지 않았다는 뜻",
+                "한 가지 재배법만 허용되었다는 뜻",
+                "자연 성장과 무관한 예외 사례라는 뜻",
             ],
-            correct_choice="nervous -> proud",
-            initial_evidence="was nervous before the recital",
-            final_evidence="bowed proudly to the audience",
-            shift_trigger="after the first few notes",
-            explanation="초반에는 긴장하지만 마지막에는 자랑스러워집니다.",
+            correct_choice="여러 변화 양상 가운데 한 극단을 가리킨다는 뜻",
+            surface_meaning="연속선의 한쪽 끝이라는 말",
+            contextual_meaning="농업 변화 방식들 중 한 극단적 사례를 가리킨다는 뜻",
+            supporting_evidence="At one end of the spectrum of transformations was the forest gardening",
+            explanation="문맥상 여러 농업 변화 방식 가운데 한쪽 극단을 뜻합니다.",
         )
 
 
@@ -56,6 +72,19 @@ class _IncompatibleRunner:
 
 
 class BatchTests(unittest.TestCase):
+    @staticmethod
+    def _load_fixture_row(question_number: str) -> BatchInputRow:
+        fixture_path = Path(__file__).resolve().parents[1] / "sample_data" / "sample_question.csv"
+        with fixture_path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if row["OriginalQuestionNumber"] == question_number:
+                    return BatchInputRow(
+                        OriginalQuestionNumber=row["OriginalQuestionNumber"],
+                        BatchRowId=0,
+                        source_paragraph=row["source_paragraph"],
+                    )
+        raise AssertionError(f"Fixture row {question_number} was not found in {fixture_path}.")
+
     def setUp(self) -> None:
         self.runner = compile_question_graph(structured_llm_factory=lambda schema: _StubPlanner(schema))
         self.rows = [BatchInputRow(OriginalQuestionNumber="8-Analysis", BatchRowId=0, source_paragraph="A. B. C. D. E. F.")]
@@ -68,22 +97,17 @@ class BatchTests(unittest.TestCase):
         self.assertNotIn("G2", results[0].explanation or "")
 
     def test_one_row_multiple_types(self) -> None:
-        mood_rows = [
-            BatchInputRow(
-                OriginalQuestionNumber="13-03",
-                BatchRowId=0,
-                source_paragraph=(
-                    "The child was nervous before the recital. She avoided eye contact and kept checking her hands. "
-                    "But after the first few notes, she smiled with growing confidence. By the end, she bowed proudly "
-                    "to the audience. Her parents cheered from the back of the hall."
-                ),
-            )
-        ]
-        results = run_batch_rows(mood_rows, ["sentence_insertion", "mood_atmosphere", "unknown_type"], self.runner)
-        self.assertEqual(len(results), 3)
+        mixed_rows = [self._load_fixture_row("10-03")]
+        results = run_batch_rows(
+            mixed_rows,
+            ["sentence_insertion", "paragraph_ordering", "underlined_phrase_meaning", "unknown_type"],
+            self.runner,
+        )
+        self.assertEqual(len(results), 4)
         self.assertEqual(results[0].status, "validation_passed")
         self.assertEqual(results[1].status, "validation_passed")
-        self.assertEqual(results[2].status, "input_error")
+        self.assertEqual(results[2].status, "validation_passed")
+        self.assertEqual(results[3].status, "input_error")
 
     def test_per_row_failure_is_captured(self) -> None:
         results = run_batch_rows(self.rows, ["sentence_insertion"], _FailingRunner())
