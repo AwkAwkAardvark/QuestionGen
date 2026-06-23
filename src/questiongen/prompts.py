@@ -60,7 +60,9 @@ Repair rules:
 - `correct_gap_id` must be exactly one of the IDs listed in `selected_gap_ids`.
 - Re-check that `selected_gap_ids` contains exactly five unique gap IDs.
 - Re-check that you did not choose both gaps immediately before and after the target sentence.
+- Re-check that the five selected gap IDs still map to five distinct rendered positions after removing the target sentence.
 - Keep the explanation in Korean.
+- Rewrite the explanation as teacher-facing Korean prose that uses sentence meaning rather than internal IDs, gap labels, schema field names, or renderer mechanics.
 - Return only structured data matching the schema.
 """.strip()
 
@@ -112,8 +114,10 @@ Previous validation error:
 Repair rules:
 - Return a fully corrected answer.
 - The intro block and continuation blocks must together cover every sentence exactly once.
+- Re-check that flattening the intro block followed by the three continuation blocks reproduces the full sentence inventory in exactly the original order.
 - Keep exactly three continuation blocks.
 - Keep each block non-empty.
 - Keep the explanation in Korean.
+- Rewrite the explanation as teacher-facing Korean prose that uses thematic or logical progression rather than internal sentence IDs, block inventories, or schema mechanics.
 - Return only structured data matching the schema.
 """.strip()

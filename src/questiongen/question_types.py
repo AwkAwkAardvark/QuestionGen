@@ -11,11 +11,13 @@ SENTENCE_INSERTION_PLANNER_PROMPT = """
 - Select exactly one target sentence ID from the sentence inventory.
 - Select exactly five unique gap IDs from the gap inventory.
 - Do not select both gaps that sit immediately before and after the target sentence, because they collapse into one rendered position once the target sentence is removed.
+- Before returning, verify that the five selected gap IDs still map to five distinct rendered positions after removing the target sentence from the paragraph.
 - First finalize `selected_gap_ids`, then choose `correct_gap_id` from that exact five-item list only.
 - Set correct_gap_id to the gap where the target sentence best fits back into the paragraph.
 - The target sentence text must remain unchanged.
 - Use only IDs that appear in the inventories.
 - Write the explanation entirely in Korean.
+- The explanation must be teacher-facing: explain the textual flow using sentence meaning, not internal IDs, schema fields, gap labels, or renderer mechanics.
 - Do not generate final student-facing paragraph text.
 """.strip()
 
@@ -24,8 +26,10 @@ PARAGRAPH_ORDERING_PLANNER_PROMPT = """
 - The first block is the intro section shown before (A), (B), (C).
 - The remaining three blocks are the continuation blocks that must follow the intro in their original logical order.
 - Use every sentence exactly once across the intro block and the three continuation blocks.
+- Before returning, verify that flattening the intro block followed by the three continuation blocks reproduces the full sentence inventory in exactly the original order.
 - Do not generate final student-facing paragraph text.
 - Write the explanation entirely in Korean.
+- The explanation must be teacher-facing: explain the thematic or logical progression, not internal sentence IDs, block inventories, or schema mechanics.
 """.strip()
 
 

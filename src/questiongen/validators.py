@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .parsers import normalize_text
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
 from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, ORDERING_CHOICES, rendered_gap_positions
 from .schemas import GeneratedQuestion, ParagraphOrderingPlan, PreparedSource, QuestionState, SentenceInsertionPlan
+
+_INTERNAL_EXPLANATION_ID_RE = re.compile(r"[SG]\d+")
+_INTERNAL_EXPLANATION_TERM_PATTERNS = (
+    "selected_gap_ids",
+    "correct_gap_id",
+    "target_unit_ids",
+    "continuation_blocks",
+    "intro_unit_ids",
+    "렌더",
+    "renderer",
+    "schema",
+    "스키마",
+    "gap id",
+    "sentence id",
+)
 
 
 def input_check(state: QuestionState) -> dict[str, Any]:
@@ -128,6 +144,33 @@ def validate_prepared_source(
             errors.append(
                 f"Gap unit {gap.id} should have after_unit_id {expected_after}, got {gap.after_unit_id}."
             )
+
+    return errors
+
+
+def validate_teacher_facing_explanation(
+    explanation: str | None,
+    *,
+    question_type_key: str,
+) -> list[str]:
+    errors: list[str] = []
+    if explanation is None or not explanation.strip():
+        errors.append("explanation is required.")
+        return errors
+
+    if not any("\uac00" <= char <= "\ud7a3" for char in explanation):
+        errors.append("explanation must contain Korean text.")
+
+    if _INTERNAL_EXPLANATION_ID_RE.search(explanation):
+        errors.append(
+            f"{question_type_key} explanation must not mention internal sentence or gap IDs like S0 or G3."
+        )
+
+    lowered = explanation.lower()
+    if any(pattern in lowered for pattern in _INTERNAL_EXPLANATION_TERM_PATTERNS):
+        errors.append(
+            f"{question_type_key} explanation must not mention schema fields or renderer mechanics."
+        )
 
     return errors
 
@@ -307,8 +350,12 @@ def validate_sentence_insertion_output(
             break
         last_pos = position
 
-    if generated.explanation is None or not generated.explanation.strip():
-        errors.append("explanation is required.")
+    errors.extend(
+        validate_teacher_facing_explanation(
+            generated.explanation,
+            question_type_key="sentence_insertion",
+        )
+    )
 
     return errors
 
@@ -406,10 +453,12 @@ def validate_paragraph_ordering_output(
         if normalized_student.count(normalize_text(sentence)) != 1:
             errors.append(f"Preserved sentence must appear exactly once: {sentence}")
 
-    if generated.explanation is None or not generated.explanation.strip():
-        errors.append("explanation is required.")
-    elif not any("\uac00" <= char <= "\ud7a3" for char in generated.explanation):
-        errors.append("explanation must contain Korean text.")
+    errors.extend(
+        validate_teacher_facing_explanation(
+            generated.explanation,
+            question_type_key="paragraph_ordering",
+        )
+    )
 
     return errors
 

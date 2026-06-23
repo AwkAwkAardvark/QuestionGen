@@ -86,6 +86,7 @@
 - [x] Ensure "all registered types" automatically expands as the registry grows.
 - [x] Keep type-specific failure modes readable in shared exports.
 - [x] Split source provenance from internal deterministic row identity so `OriginalQuestionNumber` can remain an opaque label and `BatchRowId` can drive internal ordering behavior.
+- [x] Keep exported explanations teacher-facing by rejecting internal `S#` / `G#` notation and schema-mechanics language.
 - [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
 
 ## Acceptance Checklist

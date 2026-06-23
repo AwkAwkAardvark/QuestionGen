@@ -11,6 +11,7 @@ from questiongen.validators import (
     validate_plan_against_prepared_source,
     validate_paragraph_ordering_output,
     validate_sentence_insertion_output,
+    validate_teacher_facing_explanation,
 )
 
 
@@ -189,6 +190,70 @@ class ValidatorTests(unittest.TestCase):
             type_spec=self.type_spec,
         )
         self.assertTrue(any("collapse into duplicate rendered positions" in error for error in errors))
+
+    def test_explanation_validator_rejects_internal_sentence_or_gap_ids(self) -> None:
+        errors = validate_teacher_facing_explanation(
+            "문장 S3은 앞의 내용과 연결되므로 G4에 들어가야 합니다.",
+            question_type_key="sentence_insertion",
+        )
+        self.assertTrue(any("must not mention internal sentence or gap IDs" in error for error in errors))
+
+    def test_explanation_validator_rejects_schema_mechanics_terms(self) -> None:
+        errors = validate_teacher_facing_explanation(
+            "selected_gap_ids와 correct_gap_id를 다시 확인하면 이 설명이 맞습니다.",
+            question_type_key="sentence_insertion",
+        )
+        self.assertTrue(any("must not mention schema fields or renderer mechanics" in error for error in errors))
+
+    def test_final_validator_rejects_internal_notation_in_explanation(self) -> None:
+        plan = SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="8-Analysis",
+            BatchRowId=0,
+            QuestionType=self.type_spec.label_ko,
+            student_paragraph="① A. ② B. ③ D. ④ E. ⑤ F.",
+            question_stem=self.type_spec.question_stem,
+            given_sentence="C.",
+            choices=["①", "②", "③", "④", "⑤"],
+            answer="③",
+            explanation="문장 S2는 G3 위치에 들어가야 자연스럽습니다.",
+        )
+        errors = validate_sentence_insertion_output(
+            prepared_source=self.prepared,
+            plan=plan,
+            generated=generated,
+            type_spec=self.type_spec,
+        )
+        self.assertTrue(any("must not mention internal sentence or gap IDs" in error for error in errors))
+
+    def test_paragraph_ordering_validator_rejects_internal_notation_in_explanation(self) -> None:
+        plan = ParagraphOrderingPlan(
+            intro_unit_ids=["S0"],
+            continuation_blocks=[["S1"], ["S2", "S3"], ["S4", "S5"]],
+            explanation="도입부 이후의 흐름을 세 덩어리로 나누는 것이 자연스럽습니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="8-Analysis",
+            BatchRowId=1,
+            QuestionType=QUESTION_TYPES["paragraph_ordering"].label_ko,
+            student_paragraph="[주어진 글] A.\n\n(A) C. D.\n\n(B) E. F.\n\n(C) B.",
+            question_stem=QUESTION_TYPES["paragraph_ordering"].question_stem,
+            choices=["(A)-(C)-(B)", "(B)-(A)-(C)", "(B)-(C)-(A)", "(C)-(A)-(B)", "(C)-(B)-(A)"],
+            answer="②",
+            explanation="S0 다음에 S1과 S2가 이어져야 하므로 이 순서가 맞습니다.",
+        )
+        errors = validate_paragraph_ordering_output(
+            prepared_source=self.prepared,
+            plan=plan,
+            generated=generated,
+            type_spec=QUESTION_TYPES["paragraph_ordering"],
+        )
+        self.assertTrue(any("must not mention internal sentence or gap IDs" in error for error in errors))
 
     def test_plan_validator_matches_sentence_insertion_constraints(self) -> None:
         plan = SentenceInsertionPlan(
