@@ -8,7 +8,7 @@ Current live registry:
 - `paragraph_ordering`
 - `underlined_phrase_meaning` (`underlined_phrase_meaning_5_ko` with `[밑줄]...[/밑줄]` export markers)
 - `fill_in_the_blank` (`blank_inference_proposition_5_choices` with the `_____` blank marker)
-- `vocab` (`contextual_vocab_error_5` with five numbered single-word underlines and one contextual corruption)
+- `vocab` (`contextual_vocab_error_5` with five numbered single-word underlines, opposition-biased target selection, and one contextual corruption)
 - `grammar` (`grammar_error_5` with five numbered single-word verb-form targets and one controlled corruption)
 
 Current product direction:
@@ -162,6 +162,10 @@ Current recommendation on registry shape:
   - needs stronger span prep than the single-target types
   - wrong replacement must remain plausible
   - validation likely needs lexical-quality and grammar-preservation checks beyond current deterministic rules
+- Current live hardening direction:
+  - prefer targets whose corruption can reverse or clearly distort passage meaning
+  - expose only a conservative planner-facing opposition signal rather than broad prefix-based guessing
+  - reject obvious near-synonym substitutions deterministically before any broader subtype expansion
 - User confirmation still needed:
   - whether short phrases are allowed as first-release targets or only single words
 
@@ -202,10 +206,14 @@ Current recommendation on registry shape:
   - explanation quality will be unforgiving
   - highest chance of producing fake-but-bad exam items
   - validation needs stronger readability and uniqueness checks than current types
+- Current live hardening direction:
+  - keep the live family restricted to controlled verb-form corruption only
+  - reject malformed pseudo-word variants deterministically
+  - treat broader role-dependent preposition/conjunction confusion as later expansion work, not as part of the current runtime contract
 - User confirmation still needed:
   - whether the first release should narrow to a small grammar-error family
 
-Useful first-pass grammar families:
+Possible later grammar expansions after the current verb-form-only live scope:
 
 - subject-verb agreement
 - finite vs nonfinite form
@@ -229,7 +237,8 @@ Current recommendation on registry shape:
 - `mood_atmosphere` is intentionally inactive in the live registry; the current affective draft remains planning-only future work.
 - The shared span-preparation layer now exists inside `PreparedSource`; remaining pending span families should build on that layer rather than redefining it.
 - Pending specs should stay outside `src/questiongen/` until the implementation path is ready.
-- Once these pending specs have been worked into the durable implementation docs and the corresponding types are live, ask for explicit confirmation before deleting the local `QuestionTypeDump`.
+- The local `QuestionTypeDump` has been safely removed following user confirmation after all Wave 4 formats were fully implemented and integrated.
+
 
 ## Planning Direction
 
@@ -454,9 +463,8 @@ Useful parts of the external feedback for this project:
   - finite-verb requirement
   - modifier boundary
   - antecedent
-  - clause role
-  - preposition requirement
   - parallel frame
+- Keep those broader clause-role and preposition/conjunction cues as later expansion ideas; the current live runtime stays verb-form-only.
 - Treat grammar-vs-vocab boundary drift as a real failure mode.
 - Keep explanations structural: explain why the sentence requires the corrected form, not just what grammar label applies.
 
@@ -471,4 +479,4 @@ Current recommendation:
 
 - Keep the broad key `grammar` for now.
 - Treat the first implementation as `grammar_error`, encoded through `format_key` rather than a separate live registry key.
-- Use prompt tightening to force structure-constrained target selection and controlled corruption before doing any major schema rewrite.
+- Keep the live runtime scoped to verb-form corruption for now, and defer preposition/conjunction-role confusion until a later dedicated expansion pass.

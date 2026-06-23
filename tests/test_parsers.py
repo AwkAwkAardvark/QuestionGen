@@ -72,6 +72,24 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(target_span.normalized_text, "resulting inequality brought only discontent")
         self.assertEqual(target_span.sentence_unit_id, "S1")
 
+    def test_antonym_invertible_tag_uses_curated_words_not_prefix_guesses(self) -> None:
+        source = (
+            "Leaders cease wasteful spending when reservoirs run low. "
+            "Officials expand storage before the dry season begins. "
+            "Residents understand the risk and discuss backup plans together."
+        )
+        prepared = prepare_source(source)
+        single_word_spans = {
+            span.text.lower(): span
+            for span in prepared.span_units
+            if "single_word" in span.heuristic_tags
+        }
+
+        self.assertIn("antonym_invertible", single_word_spans["cease"].heuristic_tags)
+        self.assertIn("antonym_invertible", single_word_spans["expand"].heuristic_tags)
+        self.assertNotIn("antonym_invertible", single_word_spans["understand"].heuristic_tags)
+        self.assertNotIn("antonym_invertible", single_word_spans["discuss"].heuristic_tags)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,7 @@ from questiongen.validators import (
     validate_plan_against_prepared_source,
     validate_prepared_source,
     validate_paragraph_ordering_output,
+    validate_question_type_compatibility,
     validate_sentence_insertion_output,
     validate_teacher_facing_explanation,
     validate_underlined_phrase_meaning_output,
@@ -1086,6 +1087,61 @@ class ValidatorTests(unittest.TestCase):
             [],
         )
 
+    def test_vocab_validator_rejects_near_synonym_corruption(self) -> None:
+        source = (
+            "Residents stick to the marked route during storms. "
+            "Helpers assist newcomers at the station each morning. "
+            "Teachers discuss the updated safety map every week. "
+            "Engineers reduce delays with clearer signs near the bridge. "
+            "Leaders expand the shelter behind the library this month. "
+            "Families ignore rumors and wait for official updates."
+        )
+        prepared = prepare_source(source)
+        inventory = vocab_target_inventory(prepared)
+        stick_span = next(span for span in inventory if span.text.lower() == "stick")
+        targets = [stick_span] + [span for span in inventory if span.id != stick_span.id][:4]
+        plan = VocabPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=stick_span.id,
+            corrupted_word="adhere",
+            correction_basis_ko="원문의 의미를 충분히 바꾸지 못합니다.",
+            supporting_evidence="Residents stick to the marked route during storms.",
+            explanation="문맥상 원래 의미를 뒤집지 못하는 치환입니다.",
+        )
+
+        errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"])
+
+        self.assertTrue(any("near-synonym" in error for error in errors))
+
+    def test_vocab_validator_allows_clear_contextual_distortion(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        inventory = vocab_target_inventory(prepared)
+        cease_span = next(span for span in inventory if span.text.lower() == "cease")
+        targets = [cease_span] + [span for span in inventory if span.id != cease_span.id][:4]
+        plan = VocabPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=cease_span.id,
+            corrupted_word="continue",
+            correction_basis_ko="원문의 방향과 반대 의미라서 문맥이 어긋납니다.",
+            supporting_evidence="Leaders cease wasteful spending during droughts.",
+            explanation="문맥상 소비를 멈춘다는 뜻이어야 합니다.",
+        )
+
+        self.assertEqual(
+            validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"]),
+            [],
+        )
+
     def test_grammar_validator_accepts_valid_output(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "
@@ -1176,6 +1232,55 @@ class ValidatorTests(unittest.TestCase):
                 type_spec=QUESTION_TYPES["grammar"],
             ),
             [],
+        )
+
+    def test_allowed_verb_form_variants_exclude_malformed_forms(self) -> None:
+        self.assertIn("reduced", allowed_verb_form_variants("reduce"))
+        self.assertIn("reducing", allowed_verb_form_variants("reduce"))
+        self.assertNotIn("reduceed", allowed_verb_form_variants("reduce"))
+        self.assertNotIn("reduceing", allowed_verb_form_variants("reduce"))
+        self.assertIn("increased", allowed_verb_form_variants("increase"))
+        self.assertIn("increasing", allowed_verb_form_variants("increase"))
+        self.assertNotIn("increaseed", allowed_verb_form_variants("increase"))
+        self.assertNotIn("increaseing", allowed_verb_form_variants("increase"))
+        self.assertIn("understood", allowed_verb_form_variants("understand"))
+        self.assertNotIn("understanded", allowed_verb_form_variants("understand"))
+        self.assertIn("rethought", allowed_verb_form_variants("rethink"))
+        self.assertNotIn("rethinked", allowed_verb_form_variants("rethink"))
+
+    def test_grammar_validator_rejects_malformed_pseudoword(self) -> None:
+        source = (
+            "The city can reduce energy use without raising taxes. "
+            "Officials plan to expand the lighting system next month. "
+            "Residents say the brighter streets feel safer at night. "
+            "Engineers are testing whether the new lamps last longer in winter. "
+            "The mayor hopes to show that the project saves money over time. "
+            "Teachers report that students now walk home with more confidence."
+        )
+        prepared = prepare_source(source)
+        inventory = grammar_target_inventory(prepared)
+        reduce_span = next(span for span in inventory if span.text.lower() == "reduce")
+        targets = [reduce_span] + [span for span in inventory if span.id != reduce_span.id][:4]
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=reduce_span.id,
+            corrupted_word="reduceing",
+            correction_basis_ko="이 자리는 동사원형이 와야 합니다.",
+            supporting_evidence="The city can reduce energy use without raising taxes.",
+            explanation="문맥상 올바른 동사 형태가 필요합니다.",
+        )
+
+        errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["grammar"])
+
+        self.assertTrue(any("malformed pseudo-word" in error for error in errors))
+
+    def test_grammar_compatibility_mentions_verb_form_targets(self) -> None:
+        source = "Birds sing softly at dawn. Leaves fall slowly in autumn."
+        prepared = prepare_source(source)
+        self.assertEqual(
+            validate_question_type_compatibility(source, prepared, QUESTION_TYPES["grammar"]),
+            ["Passage does not contain five workable verb-form targets for grammar."],
         )
 
 

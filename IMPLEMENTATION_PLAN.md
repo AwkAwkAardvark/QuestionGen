@@ -115,7 +115,8 @@
 
 ### Remaining registry work
 
-- [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
+- [x] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
+
 
 ## Wave 5: Span Infrastructure
 
@@ -166,13 +167,14 @@
   - first supported format: `contextual_vocab_error_5`
   - first-release target: one controlled contextual corruption with four still-valid underlined items
   - shipped v1 policy: exactly five numbered single-word targets are rendered, exactly one is replaced by a readable but contextually wrong word, and the other four remain source-preserving
-  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs
+  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs, prefer opposition-capable targets through conservative planner hints, and deterministically reject obvious near-synonym corruptions
 - [x] `grammar`
   - rollout policy: live now for MVP, with the first pass still constrained to controlled verb-form corruption only
   - first supported format: `grammar_error_5`
   - first-release target: one controlled structural corruption with four still-valid grammar-bearing items
   - shipped v1 policy: exactly five numbered single-word verb-form targets are rendered, exactly one is replaced by a controlled verb-form variant, and the other four remain source-preserving
-  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs and write explanations from deterministic structural cues
+  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs, keep the live scope on verb-form-only corruption, and deterministically reject malformed pseudo-word variants
+  - deferred expansion policy: broader grammar families such as role-dependent preposition/conjunction confusion remain future work and are not part of the live runtime contract
 
 ### Multi-span acceptance
 

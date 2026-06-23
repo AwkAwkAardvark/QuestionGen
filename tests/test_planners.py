@@ -848,9 +848,15 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Phrase-span candidates", blank_prompt)
         self.assertIn("shape=proposition", blank_prompt)
         self.assertIn("Single-word vocab targets", vocab_prompt)
+        self.assertIn("antonym_invertible=", vocab_prompt)
         self.assertIn("authoritative contract", vocab_prompt)
+        self.assertIn("near-synonym", vocab_prompt)
         self.assertIn("Single-word grammar targets", grammar_prompt)
         self.assertIn("allowed_variants=", grammar_prompt)
+        self.assertIn("real, standard English word", grammar_prompt)
+        self.assertNotIn("role=", grammar_prompt)
+        self.assertNotIn("preposition[", grammar_prompt)
+        self.assertNotIn("conjunction[", grammar_prompt)
 
     def test_graph_rewrites_vocab_explanation_from_source_evidence(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabDriftPlanner())

@@ -157,8 +157,15 @@ _IRREGULAR_VARIANTS = {
     "speak": {"speak", "speaking", "speaks", "spoke", "spoken"},
     "take": {"take", "taken", "takes", "taking", "took"},
     "think": {"think", "thinking", "thinks", "thought"},
+    "rethink": {"rethink", "rethinking", "rethinks", "rethought"},
+    "understand": {"understand", "understanding", "understands", "understood"},
     "use": {"use", "used", "uses", "using"},
     "write": {"write", "writes", "writing", "written", "wrote"},
+}
+_IRREGULAR_VARIANT_INDEX = {
+    variant: base
+    for base, variants in _IRREGULAR_VARIANTS.items()
+    for variant in variants
 }
 
 
@@ -250,20 +257,20 @@ def allowed_verb_form_variants(word: str) -> set[str]:
     normalized = normalize_english_word(word)
     if not normalized or _ENGLISH_WORD_RE.fullmatch(word.strip()) is None:
         return set()
-    if normalized in _IRREGULAR_VARIANTS:
-        return set(_IRREGULAR_VARIANTS[normalized])
+    irregular_base = _IRREGULAR_VARIANT_INDEX.get(normalized)
+    if irregular_base is not None:
+        return set(_IRREGULAR_VARIANTS[irregular_base])
 
     base = _approximate_base_form(normalized)
     if not base:
         return {normalized}
 
-    variants = {base, f"{base}s", f"{base}ed", f"{base}ing"}
-    if base.endswith("e") and len(base) > 2:
-        variants.add(f"{base[:-1]}ing")
-        variants.add(f"{base}d")
-    if len(base) >= 3 and base.endswith("y") and base[-2] not in "aeiou":
-        variants.add(f"{base[:-1]}ies")
-        variants.add(f"{base[:-1]}ied")
+    variants = {
+        base,
+        _regular_third_person_singular(base),
+        _regular_past_form(base),
+        _regular_present_participle(base),
+    }
     return {variant for variant in variants if variant}
 
 
@@ -388,6 +395,50 @@ def _approximate_base_form(word: str) -> str:
     return word
 
 
+def _regular_third_person_singular(base: str) -> str:
+    if _ends_with_consonant_y(base):
+        return f"{base[:-1]}ies"
+    if base.endswith(("ch", "sh", "o", "s", "x", "z")):
+        return f"{base}es"
+    return f"{base}s"
+
+
+def _regular_past_form(base: str) -> str:
+    if base.endswith("e"):
+        return f"{base}d"
+    if _ends_with_consonant_y(base):
+        return f"{base[:-1]}ied"
+    if _should_double_final_consonant(base):
+        return f"{base}{base[-1]}ed"
+    return f"{base}ed"
+
+
+def _regular_present_participle(base: str) -> str:
+    if base.endswith("ie") and len(base) > 2:
+        return f"{base[:-2]}ying"
+    if base.endswith("e") and not base.endswith(("ee", "oe", "ye")):
+        return f"{base[:-1]}ing"
+    if _should_double_final_consonant(base):
+        return f"{base}{base[-1]}ing"
+    return f"{base}ing"
+
+
+def _ends_with_consonant_y(base: str) -> bool:
+    return len(base) >= 2 and base.endswith("y") and base[-2] not in "aeiou"
+
+
+def _should_double_final_consonant(base: str) -> bool:
+    if len(base) < 3 or len(base) > 4:
+        return False
+    if base.endswith(("w", "x", "y")):
+        return False
+    return (
+        base[-1] not in "aeiou"
+        and base[-2] in "aeiou"
+        and base[-3] not in "aeiou"
+    )
+
+
 def _underlined_span_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
     tags = set(span.heuristic_tags)
     bonus = 0
@@ -478,3 +529,132 @@ def _neighbor_first_token(text: str | None) -> str:
     if match is None:
         return ""
     return normalize_english_word(match.group(0))
+
+
+def malformed_verb_form_reason(original_word: str, corrupted_word: str) -> str | None:
+    """Return a short reason when *corrupted_word* is an obviously malformed form.
+
+    This intentionally stays narrow and deterministic. It is only meant to catch
+    pseudo-forms such as ``increaseed`` or ``reduceing`` before they fall through
+    to the broader controlled-family check.
+    """
+    original = normalize_english_word(original_word)
+    corrupted = normalize_english_word(corrupted_word)
+    if not original or not corrupted:
+        return None
+    if corrupted in allowed_verb_form_variants(original_word):
+        return None
+
+    base = _IRREGULAR_VARIANT_INDEX.get(original, _approximate_base_form(original))
+    if not base:
+        return None
+
+    if base.endswith("e") and corrupted == f"{base}ed":
+        return "adds an extra 'e' before the past-tense ending"
+    if base.endswith("e") and not base.endswith(("ee", "oe", "ye")) and corrupted == f"{base}ing":
+        return "keeps a silent final 'e' before -ing"
+    if base.endswith("ie") and corrupted == f"{base}ing":
+        return "keeps final 'ie' before -ing"
+    if base in _IRREGULAR_VARIANTS and corrupted == f"{base}ed":
+        return "regularizes an irregular past form"
+    if _ends_with_consonant_y(base) and corrupted == f"{base}ed":
+        return "keeps consonant+y before the past-tense ending"
+    if _ends_with_consonant_y(base) and corrupted == f"{base}s":
+        return "keeps consonant+y before the third-person singular ending"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Near-synonym denial (for vocab validator)
+# ---------------------------------------------------------------------------
+
+# Maps a source word (normalised lowercase) to the set of corrupted-word values
+# that are near-synonyms and therefore do NOT constitute a valid contextual error.
+# Using a set lets the validator quickly check: if corrupted ∈ denial_set[original],
+# the corruption is too weak.
+_NEAR_SYNONYM_DENIAL: dict[str, set[str]] = {
+    # stick / adhere / cling family
+    "stick":    {"adhere", "cling", "hold", "attach"},
+    "adhere":   {"stick", "cling", "hold", "attach"},
+    "cling":    {"stick", "adhere", "hold", "attach"},
+    # help / aid / assist family
+    "help":     {"aid", "assist", "support", "facilitate"},
+    "aid":      {"help", "assist", "support", "facilitate"},
+    "assist":   {"help", "aid", "support", "facilitate"},
+    "support":  {"aid", "assist", "help", "back"},
+    # begin / start / commence / initiate
+    "begin":    {"start", "commence", "initiate", "launch"},
+    "start":    {"begin", "commence", "initiate", "launch"},
+    "commence": {"begin", "start", "initiate", "launch"},
+    # end / finish / complete / conclude
+    "end":      {"finish", "complete", "conclude", "finalize"},
+    "finish":   {"end", "complete", "conclude", "finalize"},
+    "complete": {"end", "finish", "conclude", "finalize"},
+    # show / display / demonstrate / reveal
+    "show":     {"display", "demonstrate", "reveal", "exhibit"},
+    "display":  {"show", "demonstrate", "reveal", "exhibit"},
+    "reveal":   {"show", "display", "demonstrate", "uncover"},
+    # use / employ / utilise / apply
+    "use":      {"employ", "utilise", "utilize", "apply"},
+    "employ":   {"use", "utilise", "utilize", "apply"},
+    "utilise":  {"use", "employ", "utilize", "apply"},
+    "utilize":  {"use", "employ", "utilise", "apply"},
+    # get / obtain / acquire / gain / receive
+    "get":      {"obtain", "acquire", "gain", "receive", "attain"},
+    "obtain":   {"get", "acquire", "gain", "receive", "attain"},
+    "acquire":  {"get", "obtain", "gain", "receive", "attain"},
+    # make / create / produce / generate / form
+    "make":     {"create", "produce", "generate", "form", "build"},
+    "create":   {"make", "produce", "generate", "form", "build"},
+    "produce":  {"make", "create", "generate", "form", "build"},
+    # keep / maintain / retain / preserve
+    "keep":     {"maintain", "retain", "preserve", "sustain"},
+    "maintain": {"keep", "retain", "preserve", "sustain"},
+    "retain":   {"keep", "maintain", "preserve", "sustain"},
+    # think / believe / consider / suppose / assume
+    "think":    {"believe", "consider", "suppose", "assume"},
+    "believe":  {"think", "consider", "suppose", "assume"},
+    "consider": {"think", "believe", "regard", "view"},
+    # look / seem / appear / feel (copula family)
+    "look":     {"seem", "appear"},
+    "seem":     {"look", "appear"},
+    "appear":   {"look", "seem"},
+    # big / large / great / significant / major
+    "big":      {"large", "great", "significant", "substantial"},
+    "large":    {"big", "great", "significant", "substantial"},
+    "great":    {"big", "large", "significant", "substantial"},
+    # small / little / minor / slight
+    "small":    {"little", "minor", "slight", "limited"},
+    "little":   {"small", "minor", "slight", "limited"},
+    # important / significant / crucial / vital / key
+    "important":   {"significant", "crucial", "vital", "key", "essential"},
+    "significant": {"important", "crucial", "vital", "key", "essential"},
+    "crucial":     {"important", "significant", "vital", "key", "essential"},
+    "essential":   {"important", "significant", "crucial", "vital", "key"},
+    # allow / permit / enable / let
+    "allow":   {"permit", "enable", "let"},
+    "permit":  {"allow", "enable", "let"},
+    "enable":  {"allow", "permit", "let"},
+    # replaceable / expendable (near enough in context)
+    "expendable":   {"replaceable", "dispensable"},
+    "replaceable":  {"expendable", "dispensable"},
+    "dispensable":  {"expendable", "replaceable"},
+}
+
+
+def is_near_synonym_corruption(original_word: str, corrupted_word: str) -> bool:
+    """Return True if *corrupted_word* is a near-synonym of *original_word*.
+
+    Near-synonym corruptions are invalid vocab items because the sentence logic
+    is not clearly changed by the substitution, so a test-taker cannot identify
+    the error from context alone.
+    """
+    orig = normalize_english_word(original_word)
+    corr = normalize_english_word(corrupted_word)
+    denial_set = _NEAR_SYNONYM_DENIAL.get(orig, set())
+    return corr in denial_set
+
+
+def vocab_target_is_antonym_invertible(span: SpanUnit) -> bool:
+    """Return True if the span carries the ``antonym_invertible`` heuristic tag."""
+    return "antonym_invertible" in span.heuristic_tags

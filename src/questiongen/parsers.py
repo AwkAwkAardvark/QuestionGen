@@ -300,6 +300,37 @@ _IRREGULAR_VERB_CUES = {
     "went",
     "wrote",
 }
+# Words that have a clear semantic opposite and therefore make a strong vocab
+# corruption target: replacing one with its antonym produces an unambiguous error.
+_ANTONYM_INVERTIBLE_WORDS = {
+    # Negation-class verbs
+    "cease", "prevent", "stop", "halt", "ban", "prohibit", "restrict",
+    "avoid", "ignore", "neglect", "reject", "refuse", "oppose", "resist",
+    "destroy", "harm", "damage", "ruin", "eliminate", "remove",
+    "hide", "conceal", "suppress", "deny",
+    # Direction verbs
+    "increase", "decrease", "expand", "shrink", "grow", "reduce",
+    "improve", "worsen", "strengthen", "weaken", "accelerate", "slow",
+    "rise", "fall", "gain", "lose", "add", "subtract",
+    "open", "close", "start", "end", "begin", "finish",
+    # Clear antonym adjectives / state adjectives
+    "active", "passive", "positive", "negative", "major", "minor",
+    "complex", "simple", "direct", "indirect", "efficient", "inefficient",
+    "effective", "ineffective", "successful", "unsuccessful",
+    "stable", "unstable", "certain", "uncertain", "clear", "unclear",
+    "possible", "impossible", "necessary", "unnecessary",
+    "safe", "dangerous", "useful", "useless", "relevant", "irrelevant",
+    "equal", "unequal", "fair", "unfair", "free", "restricted",
+    "eager", "reluctant", "willing", "unwilling",
+    # Common content nouns with clear antonyms
+    "advantage", "disadvantage", "benefit", "harm",
+    "success", "failure", "agreement", "disagreement",
+    "presence", "absence", "truth", "falsehood",
+    "strength", "weakness", "support", "opposition",
+    "inclusion", "exclusion", "unity", "division",
+    "equity", "inequity", "equality", "inequality",
+}
+
 _MAX_SPAN_CANDIDATES = 24
 _MAX_SINGLE_WORD_SPAN_CANDIDATES = 48
 _MAX_SENTENCE_SPAN_TOKENS = 7
@@ -697,11 +728,17 @@ def _score_single_word_candidate(
 
     previous_token = _normalize_token(token_matches[token_index - 1].group(0)) if token_index > 0 else ""
     next_token = _normalize_token(token_matches[token_index + 1].group(0)) if token_index + 1 < len(token_matches) else ""
-
+    # --- vocab candidate tagging ---
     if lowered not in _FINITE_VERB_CUES:
         tags.append("vocab_candidate")
         score += 1
 
+    # antonym_invertible: clear semantic opposite exists, so corruption = strong contextual error
+    if _looks_antonym_invertible(lowered):
+        tags.append("antonym_invertible")
+        score += 2
+
+    # --- grammar candidate tagging ---
     if _looks_grammar_target(lowered, previous_token=previous_token, next_token=next_token):
         score += 2
         tags.append("grammar_candidate")
@@ -882,6 +919,10 @@ def _normalize_token(token: str) -> str:
     if len(lowered) > 3 and lowered.endswith("s") and not lowered.endswith("ss"):
         return lowered[:-1]
     return lowered
+
+
+def _looks_antonym_invertible(lowered: str) -> bool:
+    return lowered in _ANTONYM_INVERTIBLE_WORDS
 
 
 def _looks_grammar_target(current_token: str, *, previous_token: str, next_token: str) -> bool:

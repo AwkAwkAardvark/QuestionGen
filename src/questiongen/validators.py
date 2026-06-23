@@ -33,7 +33,9 @@ from .targeting import (
     fill_blank_target_inventory,
     grammar_target_inventory,
     is_auxiliary_like,
+    is_near_synonym_corruption,
     is_single_english_word,
+    malformed_verb_form_reason,
     normalize_english_choice,
     normalize_english_word,
     phrase_span_inventory,
@@ -1423,13 +1425,30 @@ def _validate_single_word_error_plan(
         if normalize_english_word(corrupted_span.text) == normalize_english_word(corrupted_word):
             errors.append(f"{question_type_key} corrupted_word must differ from the original target word.")
         if require_verb_variant:
+            malformed_reason = malformed_verb_form_reason(corrupted_span.text, corrupted_word)
+            if malformed_reason is not None:
+                errors.append(
+                    "grammar corrupted_word is a malformed pseudo-word for this verb-form family. "
+                    f"It {malformed_reason}. Use a real English form from the allowed family instead."
+                )
             allowed_variants = allowed_verb_form_variants(corrupted_span.text)
-            if normalize_english_word(corrupted_word) not in allowed_variants - {normalize_english_word(corrupted_span.text)}:
+            if (
+                malformed_reason is None
+                and normalize_english_word(corrupted_word)
+                not in allowed_variants - {normalize_english_word(corrupted_span.text)}
+            ):
                 errors.append("grammar corrupted_word must stay within a controlled verb-form variant family.")
-            if "grammar_candidate" not in getattr(corrupted_span, "heuristic_tags"):
+            if "grammar_candidate" not in getattr(corrupted_span, "heuristic_tags", []):
                 errors.append("grammar corrupted target must come from the grammar-target inventory.")
-        elif is_auxiliary_like(corrupted_word):
-            errors.append("vocab corrupted_word should not collapse into an auxiliary-only grammar target.")
+        else:
+            if is_auxiliary_like(corrupted_word):
+                errors.append("vocab corrupted_word should not collapse into an auxiliary-only grammar target.")
+            if is_near_synonym_corruption(corrupted_span.text, corrupted_word):
+                errors.append(
+                    "vocab corrupted_word is a near-synonym of the original word and does not "
+                    "produce a clear contextual error. Choose a word that reverses or clearly "
+                    "distorts the passage meaning."
+                )
 
     return errors
 

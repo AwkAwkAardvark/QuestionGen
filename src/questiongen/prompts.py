@@ -13,6 +13,7 @@ from .targeting import (
     span_shape_label,
     underlined_phrase_inventory,
     vocab_target_inventory,
+    vocab_target_is_antonym_invertible,
 )
 
 _TRANSITION_STARTERS = {
@@ -422,6 +423,7 @@ def build_vocab_prompt(
     target_inventory = "\n".join(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
+            f"antonym_invertible={'YES' if vocab_target_is_antonym_invertible(span) else 'no'}; "
             f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
             f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
         )
@@ -451,9 +453,12 @@ Single-word vocab targets:
 
 Selection reminders:
 - Use exactly five targets from the provided inventory.
+- Prefer targets marked `antonym_invertible=YES`. These have a clear opposite direction and produce an unambiguous contextual error.
 - `target_span_ids` are the authoritative contract; exact source words will be resolved deterministically from those IDs.
+- The corrupted word must REVERSE or clearly DISTORT the sentence meaning. Replacing a word with its near-synonym (e.g. stick → adhere, help → aid) is NOT valid because the meaning barely changes.
 - The corrupted word should stay grammatically readable, but its meaning should clash with the passage context.
 """.strip()
+
 
 
 def build_vocab_repair_prompt(
@@ -475,6 +480,7 @@ Repair rules:
 - `target_span_ids` are authoritative; copy matching source words into `target_span_texts`, but resolve your final selection by ID first.
 - Re-check that `corrupted_span_id` is one of `target_span_ids`.
 - Re-check that `corrupted_word` is a single English word and differs from the original target word.
+- CRITICAL: The corrupted word must clearly reverse or distort the passage meaning. A near-synonym (e.g. stick → adhere, help → aid, big → large) is NOT valid. Use an antonym or a clearly context-wrong word instead.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose about contextual mismatch, without schema fields or mechanics.
@@ -526,8 +532,13 @@ Single-word grammar targets:
 Selection reminders:
 - Use exactly five targets from the provided inventory.
 - `target_span_ids` are the authoritative contract; exact source words will be resolved deterministically from those IDs.
-- The corrupted word must stay in the same narrow verb-form family as the original target.
+- CRITICAL: The corrupted word MUST be a real, standard English word. NEVER invent pseudo-words.
+  - BAD: 'increaseed', 'reduceing', 'understanded', 'emergeed'
+  - GOOD: 'increasing', 'reduced', 'understood', 'emerged'
+- Keep the corruption inside the current verb-form family only.
+- Use the `allowed_variants` list for the selected target. Never produce a form that is not in that list.
 """.strip()
+
 
 
 def build_grammar_repair_prompt(
@@ -548,7 +559,9 @@ Repair rules:
 - Re-check that `target_span_ids` contains exactly five unique IDs from the provided grammar-target inventory.
 - `target_span_ids` are authoritative; copy matching source words into `target_span_texts`, but resolve your final selection by ID first.
 - Re-check that `corrupted_span_id` is one of `target_span_ids`.
-- Re-check that `corrupted_word` is a single English word and a verb-form variant of the original target word.
+- Re-check that `corrupted_word` is a single English word and a grammatically-plausible verb-form variant of the original target word.
+- CRITICAL: `corrupted_word` must be a REAL English word. NEVER use invented pseudo-words (e.g. 'increaseed', 'reduceing').
+  Use only real inflected forms that appear in `allowed_variants`.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose about the structural cue, without schema fields or mechanics.

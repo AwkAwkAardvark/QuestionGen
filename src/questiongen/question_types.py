@@ -124,9 +124,10 @@ VOCAB_PLANNER_PROMPT = """
 - Treat `target_span_ids` as the authoritative source-owned contract; `target_span_texts` should simply mirror those selected IDs.
 - Choose exactly one of those five targets as `corrupted_span_id`.
 - Replace only that one target with one single English word in `corrupted_word`.
-- The corrupted word should remain grammatically readable in the sentence but be contextually wrong for the passage.
+- Prefer targets whose corruption can reverse or clearly distort the passage meaning, not flat content words with weak semantic pressure.
+- The corrupted word should remain grammatically readable in the sentence, but it must reverse or clearly distort the passage meaning.
+- Do not use a near-synonym or near-paraphrase of the original word. Replacements such as `stick -> adhere`, `help -> aid`, or `large -> big` are invalid because they preserve the meaning too closely.
 - Keep the other four target words unchanged from the source.
-- Prefer broad coverage over nuance: if the corruption is clearly topic-relevant but contextually off, that is acceptable for this MVP.
 - Set `correction_basis_ko` to a short Korean note explaining why the corrupted word does not fit and what meaning the original word supports instead.
 - Copy `supporting_evidence` as a short exact snippet from the passage that helps show why the original word fits the context.
 - Write the explanation entirely in Korean.
@@ -141,9 +142,9 @@ GRAMMAR_PLANNER_PROMPT = """
 - Treat `target_span_ids` as the authoritative source-owned contract; `target_span_texts` should simply mirror those selected IDs.
 - Choose exactly one of those five targets as `corrupted_span_id`.
 - Replace only that one target with one single English word in `corrupted_word`.
-- The corrupted word must be a plausible-looking but grammatically wrong verb-form variant chosen from the deterministic allowed family for the original target.
+- The corrupted word must be a real English verb form chosen from the deterministic allowed family for the original target.
+- Never invent malformed pseudo-words such as `increaseed`, `reduceing`, `understanded`, or `rethinked`.
 - Keep the other four target words unchanged from the source.
-- Prefer broad coverage over polish: if the error is local, readable, and clearly verb-form based, that is acceptable for this MVP.
 - Set `correction_basis_ko` to a short Korean note explaining what structural cue makes the original verb form correct and the corrupted form wrong.
 - Copy `supporting_evidence` as a short exact snippet from the passage that helps show the governing structural cue.
 - Write the explanation entirely in Korean.
