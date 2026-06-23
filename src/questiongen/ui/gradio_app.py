@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
+import queue
+import threading
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
-from ..batch import run_batch_files
+from ..batch import BatchProgressUpdate, run_batch_files
 from ..config import create_structured_llm
 from ..graph import compile_question_graph
 from ..question_types import QUESTION_TYPE_SPECS_BY_FAMILY, QUESTION_TYPES
@@ -50,6 +51,14 @@ def default_output_dir() -> Path:
     ).expanduser()
 
 
+def all_question_type_keys() -> list[str]:
+    return list(QUESTION_TYPES.keys())
+
+
+def deselect_all_question_type_keys() -> list[str]:
+    return []
+
+
 def create_app():
     try:
         import gradio as gr
@@ -59,7 +68,7 @@ def create_app():
             "`pip install -e .[ui]` or install `gradio` separately."
         ) from exc
 
-    question_type_choices = list(QUESTION_TYPES.keys())
+    question_type_choices = all_question_type_keys()
     api_key_path_default = default_api_key_path()
     drive_csv_default = default_drive_input_csv()
     output_dir_default = default_output_dir()
@@ -124,10 +133,20 @@ def create_app():
                     label="Question Types",
                     info="All registered types are selected by default.",
                 )
+                with gr.Row():
+                    select_all_button = gr.Button("Select All")
+                    deselect_all_button = gr.Button("Deselect All")
                 run_button = gr.Button("Run QuestionGen", variant="primary")
 
             with gr.Column(scale=2):
                 summary = gr.Markdown(label="Run Summary")
+                run_log = gr.Textbox(
+                    label="Run Log",
+                    lines=12,
+                    max_lines=18,
+                    interactive=False,
+                    show_copy_button=True,
+                )
                 preview = gr.Dataframe(label="CSV Preview")
                 json_preview = gr.Code(label="JSON Preview", language="json")
                 markdown_preview = gr.Code(label="Markdown Preview", language="markdown")
@@ -141,8 +160,40 @@ def create_app():
             outputs=[upload_csv, drive_csv_path],
         )
 
+        select_all_button.click(
+            lambda: all_question_type_keys(),
+            outputs=[question_type_keys],
+        )
+        deselect_all_button.click(
+            lambda: deselect_all_question_type_keys(),
+            outputs=[question_type_keys],
+        )
+
+        def _run_from_ui_with_progress(
+            input_mode: str,
+            uploaded_csv_path: str | None,
+            drive_csv_path: str,
+            api_key_path: str,
+            output_dir: str,
+            model_name: str,
+            temperature: float,
+            question_type_keys: Sequence[str] | None,
+            progress=gr.Progress(track_tqdm=False),
+        ):
+            yield from _run_from_ui(
+                input_mode,
+                uploaded_csv_path,
+                drive_csv_path,
+                api_key_path,
+                output_dir,
+                model_name,
+                temperature,
+                question_type_keys,
+                progress=progress,
+            )
+
         run_button.click(
-            _run_from_ui,
+            _run_from_ui_with_progress,
             inputs=[
                 input_mode,
                 upload_csv,
@@ -155,6 +206,7 @@ def create_app():
             ],
             outputs=[
                 summary,
+                run_log,
                 preview,
                 json_preview,
                 markdown_preview,
@@ -211,7 +263,7 @@ def resolve_input_csv(
 
 def normalize_question_type_keys(question_type_keys: Sequence[str] | None) -> list[str]:
     if not question_type_keys:
-        return list(QUESTION_TYPES.keys())
+        return all_question_type_keys()
 
     normalized = list(question_type_keys)
     unknown = [key for key in normalized if key not in QUESTION_TYPES]
@@ -249,8 +301,11 @@ def _run_from_ui(
     model_name: str,
     temperature: float,
     question_type_keys: Sequence[str] | None,
+    progress=None,
 ):
     try:
+        run_log_lines: list[str] = []
+
         if api_key_path.strip():
             load_api_keys(api_key_path)
         elif not os.getenv("OPENAI_API_KEY"):
@@ -264,6 +319,19 @@ def _run_from_ui(
         )
         input_csv = resolve_input_csv(input_mode, uploaded_csv_path, drive_csv_path)
         output_csv, output_json, output_markdown = _artifact_paths(output_dir, input_csv)
+        running_summary = _running_summary(
+            input_mode=input_mode,
+            input_csv=input_csv,
+            selected_question_types=selected_question_types,
+            expanded_subtype_count=expanded_subtype_count,
+            completed_items=0,
+            total_items=0,
+            latest_status="Preparing batch run...",
+        )
+        yield _ui_outputs(
+            summary=running_summary,
+            run_log="Preparing batch run...",
+        )
 
         runner = compile_question_graph(
             structured_llm_factory=lambda schema: create_structured_llm(
@@ -272,15 +340,84 @@ def _run_from_ui(
                 temperature=float(temperature),
             )
         )
+        progress_queue: queue.Queue[BatchProgressUpdate] = queue.Queue()
+        worker_state: dict[str, object] = {"results": None, "error": None}
 
-        results = run_batch_files(
-            input_csv=str(input_csv),
-            output_csv=str(output_csv),
-            question_type_keys=selected_question_types,
-            runner=runner,
-            output_markdown=str(output_markdown),
-        )
-        _write_json_results(results, output_json)
+        def on_progress(update: BatchProgressUpdate) -> None:
+            progress_queue.put(update)
+
+        def execute_batch() -> None:
+            try:
+                results = run_batch_files(
+                    input_csv=str(input_csv),
+                    output_csv=str(output_csv),
+                    question_type_keys=selected_question_types,
+                    runner=runner,
+                    output_markdown=str(output_markdown),
+                    progress_callback=on_progress,
+                )
+                _write_json_results(results, output_json)
+                worker_state["results"] = results
+            except Exception as exc:  # pragma: no cover - exercised through generator path
+                worker_state["error"] = exc
+
+        worker = threading.Thread(target=execute_batch, daemon=True)
+        worker.start()
+
+        while worker.is_alive() or not progress_queue.empty():
+            try:
+                update = progress_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+
+            if update.event == "started":
+                line = update.message or "Batch run started."
+                latest_status = line
+            elif update.event == "completed":
+                line = update.message or "Batch run completed."
+                latest_status = line
+            else:
+                line = _format_progress_line(update)
+                latest_status = (
+                    f"{update.current_row_number} / "
+                    f"{update.question_subtype_key or update.question_type_key}: "
+                    f"{update.status}"
+                )
+
+            run_log_lines.append(line)
+            if len(run_log_lines) > 200:
+                del run_log_lines[:-200]
+            print(line, flush=True)
+
+            if progress is not None:
+                total = update.total_items or 1
+                progress(
+                    min(update.completed_items / total, 1.0),
+                    desc=_progress_description(update),
+                )
+
+            running_summary = _running_summary(
+                input_mode=input_mode,
+                input_csv=input_csv,
+                selected_question_types=selected_question_types,
+                expanded_subtype_count=expanded_subtype_count,
+                completed_items=update.completed_items,
+                total_items=update.total_items,
+                latest_status=latest_status,
+            )
+            yield _ui_outputs(
+                summary=running_summary,
+                run_log="\n".join(run_log_lines),
+            )
+
+        worker.join()
+        if worker_state["error"] is not None:
+            raise worker_state["error"]  # type: ignore[misc]
+
+        results = worker_state["results"]
+        if results is None:
+            raise RuntimeError("Batch run finished without results.")
+        results = results  # help type checkers locally
 
         status_counts = Counter(result.status for result in results)
         summary = "\n".join(
@@ -293,6 +430,7 @@ def _run_from_ui(
                 f"- Expanded subtypes: `{expanded_subtype_count}`",
                 f"- Total rows: `{len(results)}`",
                 f"- Status counts: `{dict(status_counts)}`",
+                f"- Progress: `{len(results)}/{len(results)}`",
                 f"- CSV: `{output_csv}`",
                 f"- JSON: `{output_json}`",
                 f"- Markdown: `{output_markdown}`",
@@ -306,8 +444,9 @@ def _run_from_ui(
         except Exception:
             preview = [result.model_dump() for result in results]
 
-        return (
+        yield (
             summary,
+            "\n".join(run_log_lines),
             preview,
             output_json.read_text(encoding="utf-8")[:12000],
             output_markdown.read_text(encoding="utf-8")[:12000],
@@ -316,9 +455,11 @@ def _run_from_ui(
             str(output_markdown),
         )
     except Exception as exc:
-        return (
+        print(f"Run failed: {exc}", flush=True)
+        yield (
             "## Run Failed\n\n"
             f"- Error: `{exc}`",
+            f"Run failed: {exc}",
             [],
             "",
             "",
@@ -326,3 +467,65 @@ def _run_from_ui(
             None,
             None,
         )
+
+
+def _progress_description(update: BatchProgressUpdate) -> str:
+    if update.event == "started":
+        return "Starting batch run"
+    if update.event == "completed":
+        return "Batch run complete"
+    subtype = update.question_subtype_key or update.question_type_key or "unknown"
+    row_label = update.current_row_number or f"row {update.batch_row_id}"
+    return f"{update.completed_items}/{max(update.total_items, 1)} | {row_label} | {subtype}"
+
+
+def _format_progress_line(update: BatchProgressUpdate) -> str:
+    subtype = update.question_subtype_key or update.question_type_key or "unknown"
+    row_label = update.current_row_number or f"row {update.batch_row_id}"
+    message = f" | {update.message}" if update.message else ""
+    return (
+        f"[{update.completed_items}/{max(update.total_items, 1)}] "
+        f"{row_label} :: {subtype} -> {update.status}{message}"
+    )
+
+
+def _running_summary(
+    *,
+    input_mode: str,
+    input_csv: Path,
+    selected_question_types: Sequence[str],
+    expanded_subtype_count: int,
+    completed_items: int,
+    total_items: int,
+    latest_status: str,
+) -> str:
+    progress_text = f"{completed_items}/{total_items}" if total_items else "preparing"
+    return "\n".join(
+        [
+            "## Run In Progress",
+            "",
+            f"- Input mode: `{input_mode}`",
+            f"- Input CSV: `{input_csv}`",
+            f"- Question families: `{', '.join(selected_question_types)}`",
+            f"- Expanded subtypes: `{expanded_subtype_count}`",
+            f"- Progress: `{progress_text}`",
+            f"- Latest status: `{latest_status}`",
+        ]
+    )
+
+
+def _ui_outputs(
+    *,
+    summary: str,
+    run_log: str,
+):
+    return (
+        summary,
+        run_log,
+        [],
+        "",
+        "",
+        None,
+        None,
+        None,
+    )

@@ -7,10 +7,12 @@ from pathlib import Path
 
 from questiongen.question_types import QUESTION_TYPES
 from questiongen.ui.gradio_app import (
+    all_question_type_keys,
     create_app,
     default_api_key_path,
     default_drive_input_csv,
     default_output_dir,
+    deselect_all_question_type_keys,
     load_api_keys,
     normalize_question_type_keys,
     resolve_input_csv,
@@ -20,6 +22,10 @@ from questiongen.ui.gradio_app import (
 class GradioAppHelperTests(unittest.TestCase):
     def test_live_registry_includes_reactivated_mood_atmosphere(self) -> None:
         self.assertIn("mood_atmosphere", QUESTION_TYPES)
+
+    def test_question_type_selection_helpers_match_registry(self) -> None:
+        self.assertEqual(all_question_type_keys(), list(QUESTION_TYPES.keys()))
+        self.assertEqual(deselect_all_question_type_keys(), [])
 
     def test_normalize_question_type_keys_defaults_to_registry(self) -> None:
         normalized = normalize_question_type_keys([])

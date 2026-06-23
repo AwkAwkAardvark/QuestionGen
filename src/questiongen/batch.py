@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Protocol, Sequence
+from typing import Callable, Iterable, Literal, Protocol, Sequence
 
 from .exporters import write_results_csv, write_results_markdown
 from .planners import (
@@ -15,6 +16,22 @@ from .question_types import QUESTION_TYPE_SPECS_BY_FAMILY, QUESTION_TYPES, expan
 from .schemas import BatchInputRow, BatchResultRow, GeneratedQuestion, QuestionState, make_initial_state
 
 
+@dataclass(frozen=True)
+class BatchProgressUpdate:
+    event: Literal["started", "item_completed", "completed"]
+    completed_items: int
+    total_items: int
+    current_row_number: str | None = None
+    batch_row_id: int | None = None
+    question_type_key: str | None = None
+    question_subtype_key: str | None = None
+    status: str | None = None
+    message: str | None = None
+
+
+BatchProgressCallback = Callable[[BatchProgressUpdate], None]
+
+
 class RunnerProtocol(Protocol):
     def invoke(self, state: QuestionState) -> QuestionState:
         ...
@@ -24,15 +41,34 @@ def run_batch_rows(
     rows: Iterable[BatchInputRow],
     question_type_keys: Sequence[str],
     runner: RunnerProtocol,
+    progress_callback: BatchProgressCallback | None = None,
 ) -> list[BatchResultRow]:
     _ensure_runner(runner)
     results: list[BatchResultRow] = []
     quota_exhausted = False
     concrete_specs = expand_question_type_keys(list(question_type_keys))
     unknown_question_type_keys = [key for key in question_type_keys if key not in QUESTION_TYPE_SPECS_BY_FAMILY]
+    validated_rows = [
+        row if isinstance(row, BatchInputRow) else BatchInputRow.model_validate(row)
+        for row in rows
+    ]
+    total_items = len(validated_rows) * (len(concrete_specs) + len(unknown_question_type_keys))
+    completed_items = 0
 
-    for row in rows:
-        input_row = row if isinstance(row, BatchInputRow) else BatchInputRow.model_validate(row)
+    _emit_progress(
+        progress_callback,
+        BatchProgressUpdate(
+            event="started",
+            completed_items=0,
+            total_items=total_items,
+            message=(
+                f"Starting batch run for {len(validated_rows)} input rows across "
+                f"{len(concrete_specs)} concrete question subtypes."
+            ),
+        ),
+    )
+
+    for input_row in validated_rows:
         for type_spec in concrete_specs:
             state = make_initial_state(
                 source_paragraph=input_row.source_paragraph,
@@ -52,6 +88,21 @@ def run_batch_rows(
                         }
                     )
                 )
+                completed_items += 1
+                _emit_progress(
+                    progress_callback,
+                    BatchProgressUpdate(
+                        event="item_completed",
+                        completed_items=completed_items,
+                        total_items=total_items,
+                        current_row_number=input_row.OriginalQuestionNumber,
+                        batch_row_id=input_row.BatchRowId,
+                        question_type_key=type_spec.family_key,
+                        question_subtype_key=type_spec.subtype_key,
+                        status="planning_error",
+                        message=PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR,
+                    ),
+                )
                 continue
             try:
                 final_state = runner.invoke(state)
@@ -68,6 +119,21 @@ def run_batch_rows(
             if final_state["status"] == "planning_error" and is_quota_planning_error(final_state["errors"]):
                 quota_exhausted = True
             results.append(_state_to_result_row(final_state))
+            completed_items += 1
+            _emit_progress(
+                progress_callback,
+                BatchProgressUpdate(
+                    event="item_completed",
+                    completed_items=completed_items,
+                    total_items=total_items,
+                    current_row_number=input_row.OriginalQuestionNumber,
+                    batch_row_id=input_row.BatchRowId,
+                    question_type_key=type_spec.family_key,
+                    question_subtype_key=type_spec.subtype_key,
+                    status=final_state["status"],
+                    message=(final_state["errors"][0] if final_state["errors"] else None),
+                ),
+            )
         for question_type_key in unknown_question_type_keys:
             results.append(
                 _state_to_result_row(
@@ -83,11 +149,40 @@ def run_batch_rows(
                     }
                 )
             )
+            completed_items += 1
+            _emit_progress(
+                progress_callback,
+                BatchProgressUpdate(
+                    event="item_completed",
+                    completed_items=completed_items,
+                    total_items=total_items,
+                    current_row_number=input_row.OriginalQuestionNumber,
+                    batch_row_id=input_row.BatchRowId,
+                    question_type_key=question_type_key,
+                    status="input_error",
+                    message=f"Unknown QuestionTypeKey: {question_type_key}",
+                ),
+            )
+
+    _emit_progress(
+        progress_callback,
+        BatchProgressUpdate(
+            event="completed",
+            completed_items=completed_items,
+            total_items=total_items,
+            message=f"Completed batch run with {len(results)} exported rows.",
+        ),
+    )
 
     return results
 
 
-def run_batch_dataframe(df: object, question_type_keys: Sequence[str], runner: RunnerProtocol) -> object:
+def run_batch_dataframe(
+    df: object,
+    question_type_keys: Sequence[str],
+    runner: RunnerProtocol,
+    progress_callback: BatchProgressCallback | None = None,
+) -> object:
     try:
         import pandas as pd
     except ImportError as exc:
@@ -98,7 +193,7 @@ def run_batch_dataframe(df: object, question_type_keys: Sequence[str], runner: R
         BatchInputRow.model_validate(_coerce_tabular_row(record, batch_row_id=index))
         for index, record in enumerate(records)
     ]
-    results = run_batch_rows(rows, question_type_keys, runner)
+    results = run_batch_rows(rows, question_type_keys, runner, progress_callback=progress_callback)
     return pd.DataFrame([result.model_dump() for result in results])
 
 
@@ -108,6 +203,7 @@ def run_batch_files(
     question_type_keys: Sequence[str],
     runner: RunnerProtocol,
     output_markdown: str | Path | None = None,
+    progress_callback: BatchProgressCallback | None = None,
 ) -> list[BatchResultRow]:
     rows: list[BatchInputRow] = []
     with Path(input_csv).open("r", encoding="utf-8", newline="") as handle:
@@ -115,11 +211,20 @@ def run_batch_files(
         for index, raw_row in enumerate(reader):
             rows.append(BatchInputRow.model_validate(_coerce_tabular_row(raw_row, batch_row_id=index)))
 
-    results = run_batch_rows(rows, question_type_keys, runner)
+    results = run_batch_rows(rows, question_type_keys, runner, progress_callback=progress_callback)
     write_results_csv(results, output_csv)
     if output_markdown is not None:
         write_results_markdown(results, output_markdown)
     return results
+
+
+def _emit_progress(
+    progress_callback: BatchProgressCallback | None,
+    update: BatchProgressUpdate,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(update)
 
 
 def _ensure_runner(runner: object) -> None:

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from questiongen.batch import run_batch_dataframe, run_batch_files, run_batch_rows
+from questiongen.batch import BatchProgressUpdate, run_batch_dataframe, run_batch_files, run_batch_rows
 from questiongen.graph import compile_question_graph
 from questiongen.planners import PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR, PLANNER_QUOTA_EXHAUSTED_ERROR
 from questiongen.schemas import (
@@ -325,6 +325,27 @@ class BatchTests(unittest.TestCase):
             self.assertTrue(output_md.exists())
             self.assertIn("BatchRowId", output_csv.read_text(encoding="utf-8"))
             self.assertIn("row 0 / 8-Analysis", output_md.read_text(encoding="utf-8"))
+
+    def test_progress_callback_reports_batch_lifecycle(self) -> None:
+        updates: list[BatchProgressUpdate] = []
+        results = run_batch_rows(
+            self.rows,
+            ["sentence_insertion"],
+            self.runner,
+            progress_callback=updates.append,
+        )
+        self.assertEqual(len(results), 1)
+        self.assertGreaterEqual(len(updates), 3)
+        self.assertEqual(updates[0].event, "started")
+        self.assertEqual(updates[0].completed_items, 0)
+        self.assertEqual(updates[1].event, "item_completed")
+        self.assertEqual(updates[1].completed_items, 1)
+        self.assertEqual(updates[1].total_items, 1)
+        self.assertEqual(updates[1].status, "validation_passed")
+        self.assertEqual(updates[1].current_row_number, "8-Analysis")
+        self.assertEqual(updates[-1].event, "completed")
+        self.assertEqual(updates[-1].completed_items, 1)
+        self.assertEqual(updates[-1].total_items, 1)
 
     def test_invalid_runner_fails_clearly(self) -> None:
         with self.assertRaises(ValueError):
