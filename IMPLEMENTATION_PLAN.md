@@ -87,6 +87,7 @@
 - [x] Keep type-specific failure modes readable in shared exports.
 - [x] Split source provenance from internal deterministic row identity so `OriginalQuestionNumber` can remain an opaque label and `BatchRowId` can drive internal ordering behavior.
 - [x] Keep exported explanations teacher-facing by rejecting internal `S#` / `G#` notation and schema-mechanics language.
+- [x] Separate teacher-facing explanation generation from structural planning so explanation writing can use post-render textual evidence rather than planner-internal notation.
 - [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
 
 ## Acceptance Checklist
@@ -112,4 +113,5 @@
 - [x] `BatchRowId` is the deterministic internal row identifier generated from batch row order and preserved in exports.
 - [x] `source_error` remains reserved for malformed or broken prepared sources, while valid-but-unsuitable passages surface as `qtype_incompatibility_error`.
 - [x] Invalid deterministic plans surface as `planning_error` before rendering rather than leaking into `rendering_error`.
+- [x] Planner rationale and exported explanation do not need to share the same generation step.
 - [x] Future Wave 4 registry entries should keep broad `QuestionTypeKey` values and move exact first supported shapes into `format_key`.

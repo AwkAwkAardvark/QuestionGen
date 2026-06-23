@@ -132,6 +132,8 @@ Rules:
 - `source_error` should be reserved for malformed inputs, failed source preparation, or broken deterministic prepared-source invariants.
 - Deterministic plan violations discovered after LLM planning but before rendering should surface as `planning_error`, not `rendering_error`.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
+- Teacher-facing explanation writing is now treated as a post-render concern rather than as part of structural planning for the live types.
+- Planner rationale may remain internal, but exported explanations for the live types are now rewritten from rendered item context and textual evidence rather than copied directly from planner-internal IDs or schema fields.
 - The launcher may write JSON directly from `result.model_dump()` payloads until a dedicated package-level JSON exporter is added.
 - Exported results should preserve both the original source label (`OriginalQuestionNumber`) and the internal deterministic row handle (`BatchRowId`).
 

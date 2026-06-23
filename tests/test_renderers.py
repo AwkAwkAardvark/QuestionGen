@@ -43,6 +43,7 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(generated.QuestionType, QUESTION_TYPES["sentence_insertion"].label_ko)
         self.assertEqual(generated.OriginalQuestionNumber, "8-Analysis")
         self.assertEqual(generated.BatchRowId, 0)
+        self.assertEqual(generated.explanation, "문맥상 이 위치가 가장 자연스럽습니다.")
         self.assertEqual(generated.student_paragraph, "① A. ② B. ③ D. ④ E. ⑤ F.")
 
     def test_paragraph_ordering_renderer_builds_expected_output(self) -> None:

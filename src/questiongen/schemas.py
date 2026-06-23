@@ -164,6 +164,7 @@ class QuestionState(TypedDict):
     QuestionTypeKey: str
     prepared_source: PreparedSource | None
     plan: BaseModel | None
+    explanation_context: dict[str, object] | None
     generated: GeneratedQuestion | None
     status: PipelineStatus
     errors: list[str]
@@ -182,6 +183,7 @@ def make_initial_state(
         "QuestionTypeKey": question_type_key,
         "prepared_source": None,
         "plan": None,
+        "explanation_context": None,
         "generated": None,
         "status": "pending",
         "errors": [],

@@ -19,7 +19,7 @@ class _StubPlanner:
             target_unit_ids=["S2"],
             selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
             correct_gap_id="G2",
-            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+            explanation="문장 S2는 G2 위치에 들어가야 자연스럽습니다.",
         )
 
 
@@ -46,6 +46,8 @@ class BatchTests(unittest.TestCase):
         results = run_batch_rows(self.rows, ["sentence_insertion"], self.runner)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].status, "validation_passed")
+        self.assertNotIn("S2", results[0].explanation or "")
+        self.assertNotIn("G2", results[0].explanation or "")
 
     def test_one_row_multiple_types(self) -> None:
         results = run_batch_rows(self.rows, ["sentence_insertion", "unknown_type"], self.runner)

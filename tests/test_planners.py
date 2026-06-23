@@ -56,7 +56,7 @@ class _ParagraphOrderingPlanner:
         return ParagraphOrderingPlan(
             intro_unit_ids=["S0"],
             continuation_blocks=[["S1", "S2"], ["S3", "S4"], ["S5"]],
-            explanation="도입부 다음에 세 개의 흐름 덩어리로 나누는 것이 가장 자연스럽습니다.",
+            explanation="S0 다음에 S1과 S2가 이어지는 흐름입니다.",
         )
 
 
@@ -152,6 +152,16 @@ class PlannerTests(unittest.TestCase):
         result = runner.invoke(paragraph_state)
         self.assertEqual(result["status"], "planning_error")
         self.assertTrue(any("cover all sentence IDs" in error for error in result["errors"]))
+
+    def test_graph_rewrites_internal_paragraph_ordering_explanation(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _ParagraphOrderingPlanner())
+        paragraph_state = {
+            **self.state,
+            "QuestionTypeKey": "paragraph_ordering",
+        }
+        result = runner.invoke(paragraph_state)
+        self.assertEqual(result["status"], "validation_passed")
+        self.assertNotIn("S0", result["generated"].explanation or "")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from .explanations import build_explanation_context, write_teacher_facing_explanation
 from .parsers import prepare_source
 from .planners import PLANNERS, StructuredLLMFactory
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
@@ -57,6 +58,14 @@ class LocalQuestionGraphRunner:
 
         renderer = RENDERERS[type_spec.renderer_key]
         self._apply_result(working_state, renderer(working_state, type_spec))
+        if working_state["status"] != "rendered":
+            return working_state
+
+        self._apply_result(working_state, build_explanation_context(working_state))
+        if working_state["status"] != "rendered":
+            return working_state
+
+        self._apply_result(working_state, write_teacher_facing_explanation(working_state))
         if working_state["status"] != "rendered":
             return working_state
 
