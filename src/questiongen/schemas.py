@@ -113,6 +113,58 @@ class ParagraphOrderingPlan(BaseModel):
         return self
 
 
+_CHOICE_PAIR_RE = re.compile(r"^[A-Za-z][A-Za-z '\-/]*(?:\s*->\s*)[A-Za-z][A-Za-z '\-/]*$")
+
+
+def _normalize_choice_pair(value: str) -> str:
+    left, right = [part.strip().lower() for part in value.split("->", 1)]
+    return f"{left} -> {right}"
+
+
+class MoodAtmospherePlan(BaseModel):
+    subtype: Literal["emotion_shift"] = "emotion_shift"
+    target_holder: str
+    initial_emotion: str
+    final_emotion: str
+    choice_pairs: list[str] = Field(default_factory=list)
+    correct_choice: str
+    initial_evidence: str
+    final_evidence: str
+    shift_trigger: str | None = None
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_plan(self) -> MoodAtmospherePlan:
+        if not self.target_holder or not self.target_holder.strip():
+            raise ValueError("MoodAtmospherePlan target_holder is required.")
+        if not self.initial_emotion or not self.initial_emotion.strip():
+            raise ValueError("MoodAtmospherePlan initial_emotion is required.")
+        if not self.final_emotion or not self.final_emotion.strip():
+            raise ValueError("MoodAtmospherePlan final_emotion is required.")
+        if self.initial_emotion.strip().lower() == self.final_emotion.strip().lower():
+            raise ValueError("MoodAtmospherePlan initial_emotion and final_emotion must differ.")
+        if len(self.choice_pairs) != 5:
+            raise ValueError("MoodAtmospherePlan requires exactly five choice_pairs.")
+        if len({_normalize_choice_pair(choice) for choice in self.choice_pairs}) != 5:
+            raise ValueError("MoodAtmospherePlan choice_pairs must be unique.")
+        if any(not _CHOICE_PAIR_RE.match(choice.strip()) for choice in self.choice_pairs):
+            raise ValueError("MoodAtmospherePlan choice_pairs must use English 'emotion -> emotion' format.")
+        if self.correct_choice not in self.choice_pairs:
+            raise ValueError("MoodAtmospherePlan correct_choice must be included in choice_pairs.")
+        correct_pair = f"{self.initial_emotion.strip()} -> {self.final_emotion.strip()}"
+        if _normalize_choice_pair(self.correct_choice) != _normalize_choice_pair(correct_pair):
+            raise ValueError("MoodAtmospherePlan correct_choice must match initial_emotion -> final_emotion.")
+        if not self.initial_evidence or not self.initial_evidence.strip():
+            raise ValueError("MoodAtmospherePlan initial_evidence is required.")
+        if not self.final_evidence or not self.final_evidence.strip():
+            raise ValueError("MoodAtmospherePlan final_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("MoodAtmospherePlan explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("MoodAtmospherePlan explanation must contain Korean text.")
+        return self
+
+
 class GeneratedQuestion(BaseModel):
     OriginalQuestionNumber: str
     BatchRowId: int

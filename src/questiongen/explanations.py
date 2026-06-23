@@ -3,7 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES
-from .schemas import GeneratedQuestion, ParagraphOrderingPlan, PreparedSource, QuestionState, SentenceInsertionPlan
+from .schemas import (
+    GeneratedQuestion,
+    MoodAtmospherePlan,
+    ParagraphOrderingPlan,
+    PreparedSource,
+    QuestionState,
+    SentenceInsertionPlan,
+)
 
 
 def build_explanation_context(state: QuestionState) -> dict[str, Any]:
@@ -42,6 +49,18 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
             "errors": [],
         }
 
+    if question_type_key == "mood_atmosphere":
+        if not isinstance(plan, MoodAtmospherePlan):
+            return {
+                "status": "rendering_error",
+                "errors": ["MoodAtmospherePlan is required before explanation generation."],
+            }
+        return {
+            "explanation_context": _build_mood_atmosphere_context(plan, generated),
+            "status": "rendered",
+            "errors": [],
+        }
+
     return {
         "status": "rendering_error",
         "errors": [f"No explanation-context builder is registered for {question_type_key}."],
@@ -63,6 +82,8 @@ def write_teacher_facing_explanation(state: QuestionState) -> dict[str, Any]:
         explanation = _write_sentence_insertion_explanation(explanation_context)
     elif question_type_key == "paragraph_ordering":
         explanation = _write_paragraph_ordering_explanation(explanation_context)
+    elif question_type_key == "mood_atmosphere":
+        explanation = _write_mood_atmosphere_explanation(explanation_context)
     else:
         return {
             "status": "rendering_error",
@@ -126,6 +147,24 @@ def _build_paragraph_ordering_context(
     }
 
 
+def _build_mood_atmosphere_context(
+    plan: MoodAtmospherePlan,
+    generated: GeneratedQuestion,
+) -> dict[str, str | None]:
+    correct_marker = generated.answer
+    correct_choice = generated.choices[["①", "②", "③", "④", "⑤"].index(correct_marker)] if generated.choices else plan.correct_choice
+    return {
+        "target_holder": plan.target_holder,
+        "initial_emotion": plan.initial_emotion,
+        "final_emotion": plan.final_emotion,
+        "initial_evidence": plan.initial_evidence,
+        "final_evidence": plan.final_evidence,
+        "shift_trigger": plan.shift_trigger,
+        "correct_marker": correct_marker,
+        "correct_choice": correct_choice,
+    }
+
+
 def _write_sentence_insertion_explanation(context: dict[str, str | None]) -> str:
     target_text = _sentence_snippet(context["target_text"])
     before_text = context["before_text"]
@@ -172,6 +211,31 @@ def _write_paragraph_ordering_explanation(context: dict[str, Any]) -> str:
         f"이후 ({second_label})의 {second_block}이 앞내용을 확장합니다. "
         f"마지막으로 ({third_label})의 {third_block}이 글을 마무리하므로 "
         f"순서는 ({first_label})-({second_label})-({third_label})가 가장 적절합니다."
+    )
+
+
+def _write_mood_atmosphere_explanation(context: dict[str, str | None]) -> str:
+    target_holder = context["target_holder"] or "중심 인물"
+    initial_emotion = context["initial_emotion"] or "initial"
+    final_emotion = context["final_emotion"] or "final"
+    initial_evidence = context["initial_evidence"] or ""
+    final_evidence = context["final_evidence"] or ""
+    shift_trigger = context["shift_trigger"]
+    correct_marker = context["correct_marker"] or "①"
+    correct_choice = context["correct_choice"] or f"{initial_emotion} -> {final_emotion}"
+
+    if shift_trigger:
+        return (
+            f"글에서 {target_holder}는 처음에 '{initial_evidence}'에서 드러나듯 {initial_emotion}한 상태입니다. "
+            f"이후 '{shift_trigger}'를 계기로 정서의 방향이 바뀌고, "
+            f"마지막에는 '{final_evidence}'에서 보이듯 {final_emotion}한 상태에 이릅니다. "
+            f"따라서 심경 변화로 가장 적절한 것은 {correct_marker} {correct_choice}입니다."
+        )
+
+    return (
+        f"글에서 {target_holder}는 처음에 '{initial_evidence}'에서 드러나듯 {initial_emotion}한 상태입니다. "
+        f"반면 마지막에는 '{final_evidence}'에서 보이듯 {final_emotion}한 상태로 바뀝니다. "
+        f"따라서 심경 변화로 가장 적절한 것은 {correct_marker} {correct_choice}입니다."
     )
 
 

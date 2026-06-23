@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .schemas import ParagraphOrderingPlan, SentenceInsertionPlan
+from .schemas import MoodAtmospherePlan, ParagraphOrderingPlan, SentenceInsertionPlan
 
 SENTENCE_INSERTION_STEM = "글의 흐름으로 보아, 주어진 문장이 들어가기에 가장 적절한 곳은?"
 PARAGRAPH_ORDERING_STEM = "주어진 글 다음에 이어질 글의 순서로 가장 적절한 것은?"
+MOOD_ATMOSPHERE_STEM = "다음 글에 나타난 심경 변화로 가장 적절한 것은?"
 
 SENTENCE_INSERTION_PLANNER_PROMPT = """
 - Select exactly one target sentence ID from the sentence inventory.
@@ -30,6 +31,24 @@ PARAGRAPH_ORDERING_PLANNER_PROMPT = """
 - Do not generate final student-facing paragraph text.
 - Write the explanation entirely in Korean.
 - The explanation must be teacher-facing: explain the thematic or logical progression, not internal sentence IDs, block inventories, or schema mechanics.
+""".strip()
+
+MOOD_ATMOSPHERE_PLANNER_PROMPT = """
+- Treat this first rollout as the emotion_shift subtype under the broad key mood_atmosphere.
+- Use the source passage unchanged; do not remove, reorder, or underline any text.
+- Only create an item if the passage contains one clear feeling-holder such as the writer, narrator, or a single clearly identifiable character.
+- Reject neutral, informational, or weakly affective passages rather than forcing an emotion question onto them.
+- Identify a real emotional change from an initial state to a different final state.
+- Set `target_holder` to a short natural label for that one clear holder.
+- Set `initial_emotion` and `final_emotion` to distinct English emotion adjectives or short adjective phrases.
+- Create exactly five unique English answer choices in `emotion -> emotion` format.
+- Set `correct_choice` to the one choice that exactly matches `initial_emotion -> final_emotion`.
+- Use distractors that are plausible but clearly wrong in direction, endpoint, or nuance.
+- Copy `initial_evidence` and `final_evidence` as short exact snippets from the passage that support the initial and final emotional states.
+- `shift_trigger` may be omitted, but if present it must be a short exact snippet from the passage that helps explain the change.
+- Write the explanation entirely in Korean.
+- The explanation must be teacher-facing: explain the emotional movement using textual evidence, not schema fields, internal labels, or mechanics.
+- Do not generate final student-facing paragraph text.
 """.strip()
 
 
@@ -70,6 +89,18 @@ QUESTION_TYPES: dict[str, QuestionTypeSpec] = {
         validator_key="paragraph_ordering",
         plan_schema=ParagraphOrderingPlan,
         min_source_units=6,
+        choice_count=5,
+    ),
+    "mood_atmosphere": QuestionTypeSpec(
+        format_key="emotion_shift_pair_choice_5",
+        label_ko="심경·분위기",
+        planner_prompt=MOOD_ATMOSPHERE_PLANNER_PROMPT,
+        question_stem=MOOD_ATMOSPHERE_STEM,
+        unit_level="passage",
+        renderer_key="mood_atmosphere",
+        validator_key="mood_atmosphere",
+        plan_schema=MoodAtmospherePlan,
+        min_source_units=5,
         choice_count=5,
     ),
 }

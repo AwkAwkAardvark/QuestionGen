@@ -121,3 +121,61 @@ Repair rules:
 - Rewrite the explanation as teacher-facing Korean prose that uses thematic or logical progression rather than internal sentence IDs, block inventories, or schema mechanics.
 - Return only structured data matching the schema.
 """.strip()
+
+
+def build_mood_atmosphere_prompt(
+    *,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> str:
+    sentence_inventory = "\n".join(
+        f"- {unit.id}: {unit.text}"
+        for unit in prepared_source.sentence_units
+    )
+    return f"""
+You are planning an English exam mood/atmosphere question.
+
+Return only structured data matching the required schema.
+
+Question type:
+- Key: mood_atmosphere
+- Label: {type_spec.label_ko}
+- Active subtype: emotion_shift
+- Student-facing stem: {type_spec.question_stem}
+
+Planning rules:
+{type_spec.planner_prompt}
+
+Source paragraph:
+{source_paragraph}
+
+Sentence units:
+{sentence_inventory}
+""".strip()
+
+
+def build_mood_atmosphere_repair_prompt(
+    *,
+    base_prompt: str,
+    previous_error: str,
+) -> str:
+    return f"""
+{base_prompt}
+
+Your previous answer did not satisfy the required schema.
+
+Previous validation error:
+{previous_error}
+
+Repair rules:
+- Return a fully corrected answer.
+- Keep the subtype as emotion_shift.
+- Re-check that `initial_emotion` and `final_emotion` are different.
+- Re-check that `choice_pairs` contains exactly five unique English `emotion -> emotion` choices.
+- Re-check that `correct_choice` is one of `choice_pairs` and exactly matches `initial_emotion -> final_emotion`.
+- Re-check that `initial_evidence`, `final_evidence`, and optional `shift_trigger` are copied as exact passage snippets.
+- Keep the explanation in Korean.
+- Rewrite the explanation as teacher-facing Korean prose that uses emotional evidence rather than schema fields or mechanics.
+- Return only structured data matching the schema.
+""".strip()

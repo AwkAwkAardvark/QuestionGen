@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .parsers import normalize_text
 from .question_types import QuestionTypeSpec
-from .schemas import GeneratedQuestion, ParagraphOrderingPlan, PreparedSource, QuestionState, SentenceInsertionPlan
+from .schemas import (
+    GeneratedQuestion,
+    MoodAtmospherePlan,
+    ParagraphOrderingPlan,
+    PreparedSource,
+    QuestionState,
+    SentenceInsertionPlan,
+)
 
 MARKER_CHOICES = ["①", "②", "③", "④", "⑤"]
 ORDERING_CHOICES = [
@@ -22,6 +30,7 @@ DISPLAY_PERMUTATIONS = [
     (2, 0, 1),
     (2, 1, 0),
 ]
+_CHOICE_PAIR_SPACING_RE = re.compile(r"\s*->\s*")
 
 
 def render_sentence_insertion(
@@ -76,6 +85,39 @@ def render_paragraph_ordering(
             original_question_number=state["OriginalQuestionNumber"],
             batch_row_id=state["BatchRowId"],
             prepared_source=prepared_source,
+            plan=plan,
+            type_spec=type_spec,
+        )
+    except Exception as exc:
+        return {
+            "status": "rendering_error",
+            "errors": [f"Renderer failed: {exc}"],
+        }
+
+    return {
+        "generated": generated,
+        "status": "rendered",
+        "errors": [],
+    }
+
+
+def render_mood_atmosphere(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> dict[str, Any]:
+    plan = state["plan"]
+
+    if not isinstance(plan, MoodAtmospherePlan):
+        return {
+            "status": "rendering_error",
+            "errors": ["MoodAtmospherePlan is required for rendering."],
+        }
+
+    try:
+        generated = _build_mood_atmosphere_question(
+            original_question_number=state["OriginalQuestionNumber"],
+            batch_row_id=state["BatchRowId"],
+            source_paragraph=state["source_paragraph"],
             plan=plan,
             type_spec=type_spec,
         )
@@ -205,6 +247,36 @@ def _build_paragraph_ordering_question(
     )
 
 
+def _build_mood_atmosphere_question(
+    *,
+    original_question_number: str,
+    batch_row_id: int,
+    source_paragraph: str,
+    plan: MoodAtmospherePlan,
+    type_spec: QuestionTypeSpec,
+) -> GeneratedQuestion:
+    if type_spec.choice_count != len(MARKER_CHOICES):
+        raise ValueError("Mood/atmosphere renderer expects exactly five choices.")
+
+    if plan.correct_choice not in plan.choice_pairs:
+        raise ValueError("MoodAtmospherePlan correct_choice must be included in choice_pairs.")
+
+    choices = [_normalize_choice_pair(choice) for choice in plan.choice_pairs]
+    answer = MARKER_CHOICES[choices.index(_normalize_choice_pair(plan.correct_choice))]
+
+    return GeneratedQuestion(
+        OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
+        QuestionType=type_spec.label_ko,
+        student_paragraph=normalize_text(source_paragraph),
+        question_stem=type_spec.question_stem,
+        given_sentence=None,
+        choices=choices,
+        answer=answer,
+        explanation=plan.explanation,
+    )
+
+
 def rendered_gap_positions(prepared_source: PreparedSource, target_id: str) -> dict[str, tuple[str | None, str | None]]:
     positions: dict[str, tuple[str | None, str | None]] = {}
     sentence_ids = [unit.id for unit in prepared_source.sentence_units]
@@ -229,4 +301,9 @@ def rendered_gap_positions(prepared_source: PreparedSource, target_id: str) -> d
 RENDERERS = {
     "sentence_insertion": render_sentence_insertion,
     "paragraph_ordering": render_paragraph_ordering,
+    "mood_atmosphere": render_mood_atmosphere,
 }
+
+
+def _normalize_choice_pair(value: str) -> str:
+    return _CHOICE_PAIR_SPACING_RE.sub(" -> ", value.strip())

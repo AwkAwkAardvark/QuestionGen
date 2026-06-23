@@ -80,7 +80,7 @@
 
 - [x] Add additional registered question types beyond `sentence_insertion`.
 - [x] Add broad registry keys plus `format_key`-level first supported formats for Wave 4 types.
-- [ ] Use `mood_atmosphere` as the registry key for the 심경·분위기 family.
+- [x] Use `mood_atmosphere` as the registry key for the 심경·분위기 family.
 - [x] Reuse the same planner-renderer-validator architecture per new type.
 - [x] Introduce `qtype_incompatibility_error` for passages that are valid inputs but not suitable for a given question type.
 - [x] Ensure "all registered types" automatically expands as the registry grows.
@@ -88,6 +88,8 @@
 - [x] Split source provenance from internal deterministic row identity so `OriginalQuestionNumber` can remain an opaque label and `BatchRowId` can drive internal ordering behavior.
 - [x] Keep exported explanations teacher-facing by rejecting internal `S#` / `G#` notation and schema-mechanics language.
 - [x] Separate teacher-facing explanation generation from structural planning so explanation writing can use post-render textual evidence rather than planner-internal notation.
+- [x] Ship `mood_atmosphere` v1 as the `emotion_shift` subtype while keeping `emotion_state` and `atmosphere` deferred.
+- [x] Keep the broad `mood_atmosphere` key but use a subtype-specific stem and English adjective-pair choices for the live `emotion_shift` rollout.
 - [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
 
 ## Acceptance Checklist

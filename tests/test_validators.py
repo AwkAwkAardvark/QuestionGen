@@ -4,10 +4,11 @@ import unittest
 
 from questiongen.parsers import prepare_source
 from questiongen.question_types import QUESTION_TYPES
-from questiongen.schemas import GeneratedQuestion, ParagraphOrderingPlan, SentenceInsertionPlan
+from questiongen.schemas import GeneratedQuestion, MoodAtmospherePlan, ParagraphOrderingPlan, SentenceInsertionPlan
 from questiongen.validators import (
     plan_check,
     source_check,
+    validate_mood_atmosphere_output,
     validate_plan_against_prepared_source,
     validate_paragraph_ordering_output,
     validate_sentence_insertion_output,
@@ -72,6 +73,25 @@ class ValidatorTests(unittest.TestCase):
             self.type_spec,
         )
         self.assertEqual(result["status"], "source_passed")
+
+    def test_mood_atmosphere_source_check_rejects_neutral_passage(self) -> None:
+        neutral_source = "Markets respond to prices over time. Producers adjust output when costs rise. Consumers compare alternatives before buying. Public policy can influence incentives in different sectors. Long-term trends often depend on resource allocation."
+        result = source_check(
+            {
+                "source_paragraph": neutral_source,
+                "OriginalQuestionNumber": "12-02",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "mood_atmosphere",
+                "prepared_source": prepare_source(neutral_source),
+                "plan": None,
+                "generated": None,
+                "status": "source_prepared",
+                "errors": [],
+            },
+            QUESTION_TYPES["mood_atmosphere"],
+        )
+        self.assertEqual(result["status"], "qtype_incompatibility_error")
+        self.assertTrue(any("affective cues" in error for error in result["errors"]))
 
     def test_plan_check_rejects_collapsed_sentence_insertion_gaps_as_planning_error(self) -> None:
         plan = SentenceInsertionPlan(
@@ -255,6 +275,38 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("must not mention internal sentence or gap IDs" in error for error in errors))
 
+    def test_mood_atmosphere_plan_validator_requires_source_evidence_snippets(self) -> None:
+        prepared = prepare_source(
+            "The child was nervous before the recital. She avoided eye contact and kept checking her hands. "
+            "But after the first few notes, she smiled with growing confidence. By the end, she bowed proudly to the audience. "
+            "Her parents cheered from the back of the hall."
+        )
+        plan = MoodAtmospherePlan(
+            target_holder="the child",
+            initial_emotion="nervous",
+            final_emotion="proud",
+            choice_pairs=[
+                "nervous -> proud",
+                "calm -> worried",
+                "excited -> ashamed",
+                "content -> relieved",
+                "curious -> disappointed",
+            ],
+            correct_choice="nervous -> proud",
+            initial_evidence="was nervous before the recital",
+            final_evidence="bowed proudly to the audience",
+            shift_trigger="after the first few notes",
+            explanation="처음에는 긴장하지만 마지막에는 자랑스러워집니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["mood_atmosphere"]),
+            [],
+        )
+
+        bad_plan = plan.model_copy(update={"initial_evidence": "not in the passage"})
+        errors = validate_plan_against_prepared_source(prepared, bad_plan, QUESTION_TYPES["mood_atmosphere"])
+        self.assertTrue(any("initial_evidence" in error for error in errors))
+
     def test_plan_validator_matches_sentence_insertion_constraints(self) -> None:
         plan = SentenceInsertionPlan(
             target_unit_ids=["S2"],
@@ -292,6 +344,103 @@ class ValidatorTests(unittest.TestCase):
             type_spec=QUESTION_TYPES["paragraph_ordering"],
         )
         self.assertEqual(errors, [])
+
+    def test_mood_atmosphere_validator_accepts_valid_output(self) -> None:
+        source = (
+            "The child was nervous before the recital. She avoided eye contact and kept checking her hands. "
+            "But after the first few notes, she smiled with growing confidence. By the end, she bowed proudly to the audience. "
+            "Her parents cheered from the back of the hall."
+        )
+        prepared = prepare_source(source)
+        plan = MoodAtmospherePlan(
+            target_holder="the child",
+            initial_emotion="nervous",
+            final_emotion="proud",
+            choice_pairs=[
+                "nervous -> proud",
+                "calm -> worried",
+                "excited -> ashamed",
+                "content -> relieved",
+                "curious -> disappointed",
+            ],
+            correct_choice="nervous -> proud",
+            initial_evidence="was nervous before the recital",
+            final_evidence="bowed proudly to the audience",
+            shift_trigger="after the first few notes",
+            explanation="처음에는 긴장하지만 마지막에는 자랑스러워집니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="13-03",
+            BatchRowId=0,
+            QuestionType=QUESTION_TYPES["mood_atmosphere"].label_ko,
+            student_paragraph=source,
+            question_stem=QUESTION_TYPES["mood_atmosphere"].question_stem,
+            choices=[
+                "nervous -> proud",
+                "calm -> worried",
+                "excited -> ashamed",
+                "content -> relieved",
+                "curious -> disappointed",
+            ],
+            answer="①",
+            explanation="글에서 the child는 처음에 'was nervous before the recital'에서 드러나듯 nervous한 상태입니다. 이후 'after the first few notes'를 계기로 정서의 방향이 바뀌고, 마지막에는 'bowed proudly to the audience'에서 보이듯 proud한 상태에 이릅니다. 따라서 심경 변화로 가장 적절한 것은 ① nervous -> proud입니다.",
+        )
+        errors = validate_mood_atmosphere_output(
+            prepared_source=prepared,
+            plan=plan,
+            generated=generated,
+            type_spec=QUESTION_TYPES["mood_atmosphere"],
+        )
+        self.assertEqual(errors, [])
+
+    def test_mood_atmosphere_validator_rejects_bad_choices(self) -> None:
+        source = (
+            "The child was nervous before the recital. She avoided eye contact and kept checking her hands. "
+            "But after the first few notes, she smiled with growing confidence. By the end, she bowed proudly to the audience. "
+            "Her parents cheered from the back of the hall."
+        )
+        prepared = prepare_source(source)
+        plan = MoodAtmospherePlan(
+            target_holder="the child",
+            initial_emotion="nervous",
+            final_emotion="proud",
+            choice_pairs=[
+                "nervous -> proud",
+                "calm -> worried",
+                "excited -> ashamed",
+                "content -> relieved",
+                "curious -> disappointed",
+            ],
+            correct_choice="nervous -> proud",
+            initial_evidence="was nervous before the recital",
+            final_evidence="bowed proudly to the audience",
+            shift_trigger="after the first few notes",
+            explanation="처음에는 긴장하지만 마지막에는 자랑스러워집니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="13-03",
+            BatchRowId=0,
+            QuestionType=QUESTION_TYPES["mood_atmosphere"].label_ko,
+            student_paragraph=source,
+            question_stem=QUESTION_TYPES["mood_atmosphere"].question_stem,
+            choices=[
+                "nervous -> proud",
+                "calm -> worried",
+                "excited -> ashamed",
+                "content -> relieved",
+                "content -> relieved",
+            ],
+            answer="②",
+            explanation="choice_pairs를 보면 ②가 맞습니다.",
+        )
+        errors = validate_mood_atmosphere_output(
+            prepared_source=prepared,
+            plan=plan,
+            generated=generated,
+            type_spec=QUESTION_TYPES["mood_atmosphere"],
+        )
+        self.assertTrue(any("choices must be unique" in error for error in errors))
+        self.assertTrue(any("must not mention schema fields" in error for error in errors))
 
 
 if __name__ == "__main__":

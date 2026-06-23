@@ -34,7 +34,7 @@ PENDING_CATALOG_CONTEXT = {
     "drive_backed_runtime": True,
     "run_all_registered_types": True,
     "incompatibility_status": "qtype_incompatibility_error",
-    "live_question_type_keys": ("sentence_insertion", "paragraph_ordering"),
+    "live_question_type_keys": ("sentence_insertion", "paragraph_ordering", "mood_atmosphere"),
     "live_type_refinement_note": (
         "The same PendingQuestionTypeSpec shape may also be used to capture "
         "non-runtime refinement guidance for already live types. Those notes "
@@ -51,169 +51,165 @@ PENDING_CATALOG_CONTEXT = {
 
 PENDING_QUESTION_TYPES: tuple[PendingQuestionTypeSpec, ...] = (
     PendingQuestionTypeSpec(
-        broad_key="mood_atmosphere",
-        label_ko="심경·분위기",
-        format_key="emotion_shift_pair_choice_5",
-        stem_direction_ko=(
-            "Treat this family as subtype-driven affective inference rather "
-            "than generic sentiment. Exact Korean stems should be selected by "
-            "subtype, not hardcoded to a single generic stem."
-        ),
-        expected_output_shape=(
-            "Original passage preserved unchanged; five subtype-appropriate "
-            "answer choices; marker answer ①-⑤; Korean explanation grounded "
-            "in affective textual cues."
-        ),
-        infrastructure="passage",
-        likely_incompatibility_patterns=(
-            "Informational or expository passages with no stable emotional signal.",
-            "Passages where the target character or scene is unclear.",
-            "Passages where atmosphere is too diffuse to support one best answer.",
-            "Passages that hint at mood but not clearly enough for five-way choice quality.",
-            "Passages that do not contain a real emotional shift even if the surface situation changes.",
-            "Passages with multiple plausible near-synonym answers because the affective evidence is too weak or too mixed.",
-        ),
-        implementation_risks=(
-            "High false-positive risk if the planner forces mood onto neutral passages.",
-            "Choice quality is largely LLM-dependent and may need subtype-specific validation to avoid near-synonym clusters.",
-            "Atmosphere can be confused with a character's private emotion if subtype targeting is weak.",
-            "Teacher-facing explanations must avoid internal engine notation and vague sentiment labels.",
-        ),
-        requires_user_confirmation=(
-            "Confirm whether the first live rollout under this broad key should support only emotion_shift or both emotion_shift and atmosphere.",
-            "Confirm whether emotion_state should wait until after the first subtype rollout or be included from the start.",
-            "Confirm whether answer choices should stay in English adjective form for the first release.",
-        ),
-        notes=(
-            "Best next implementation candidate because it exercises qtype_incompatibility_error without requiring span preparation.",
-            "Expected to yield a relatively high incompatibility rate in real mixed-source batches.",
-            "Useful external guidance: model this family as affective inference, not positive-versus-negative sentiment.",
-            "Useful subtype split: emotion_state, emotion_shift, and atmosphere differ in target selection, evidence shape, and choice construction.",
-            "Recommended broad-key policy for now: keep one broad key, `mood_atmosphere`, and differentiate early support through subtype-aware prompts and later format_key variants rather than three live registry keys immediately.",
-            "Recommended first rollout: emotion_shift first, then atmosphere; emotion_state can follow once target-clarity and answer-choice distinctiveness are reliable.",
-            "Useful explanation standard: cite concrete cue phrases such as reactions, setting details, or turning events rather than only naming the final affect label.",
-        ),
-    ),
-    PendingQuestionTypeSpec(
         broad_key="fill_in_the_blank",
         label_ko="빈칸",
-        format_key="blank_best_fit_5_choices",
+        format_key="blank_inference_proposition_5_choices",
         stem_direction_ko=(
             "Likely first stem: '다음 빈칸에 들어갈 말로 가장 적절한 것은?' "
-            "Keep the exact blank shape open until the first supported span "
-            "granularity is confirmed."
+            "Treat the first implementation as 빈칸추론 rather than a generic "
+            "blank. Keep the exact blank span shape open until the first "
+            "supported proposition granularity is confirmed."
         ),
         expected_output_shape=(
-            "One source passage with one selected span replaced by a blank; "
-            "five answer choices; marker answer ①-⑤; Korean explanation."
+            "One source passage with one selected proposition-like span "
+            "replaced by a blank; five answer choices; marker answer ①-⑤; "
+            "Korean explanation."
         ),
         infrastructure="span",
         likely_incompatibility_patterns=(
-            "Passages with no single removable span that remains inferable from context.",
+            "Passages with no recoverable proposition that can be reconstructed from context.",
             "Passages where blanking a span creates multiple defensible answers.",
-            "Passages whose best removable unit is too long or too trivial for exam use.",
+            "Passages whose best removable unit is too short and becomes vocabulary-like rather than inferential.",
+            "Passages whose best removable unit is too long or too structurally messy for a clean one-blank format.",
+            "Passages where the answer would be copied too directly from nearby text instead of requiring paraphrase or inference.",
         ),
         implementation_risks=(
             "Needs a real span-preparation layer before planning is trustworthy.",
-            "Distractor quality will dominate item usefulness and may require extra deterministic checks.",
+            "Distractor quality will dominate item usefulness and may require explicit polarity, scope, and logic-aware validation.",
             "Blank placement must match 수능/내신 expectations rather than arbitrary deletion.",
+            "The planner may drift toward easy lexical deletion unless the prompt anchors it to proposition reconstruction.",
         ),
         requires_user_confirmation=(
             "Confirm the preferred broad key: fill_in_the_blank versus the shorter historical blank label.",
-            "Confirm the first removable unit target: phrase, clause, or sentence-length span.",
+            "Confirm whether the first live format should be only blank_inference or whether lower-level blank subtypes should be considered later under the same broad key.",
+            "Confirm the first removable unit target: phrase, clause, sentence-length span, or other proposition unit.",
         ),
         notes=(
             "Do not force this into the current sentence/gap pipeline.",
             "Depends on span IDs and span-preserving rendering.",
+            "Useful external guidance: treat the first blank type as missing-proposition reconstruction, not generic word deletion.",
+            "Useful role model: blank targets should usually act as a claim, conclusion, mechanism, contrast, limitation, or similar discourse function.",
+            "Useful evidence standard: support the answer with multiple clues, ideally including evidence before and after the blank.",
+            "Useful choice-quality direction: distractors should often be near-topic but wrong in polarity, scope, relation, or paraphrase accuracy.",
+            "Recommended broad-key policy for now: keep one broad key, `fill_in_the_blank`, and place the first supported subtype in `format_key` rather than splitting into multiple live registry keys immediately.",
         ),
     ),
     PendingQuestionTypeSpec(
-        broad_key="phrase_translation",
+        broad_key="underlined_phrase_meaning",
         label_ko="밑줄 친 부분 의미",
-        format_key="underlined_phrase_translation_5_ko",
+        format_key="underlined_phrase_meaning_5_ko",
         stem_direction_ko=(
-            "Likely first stem: '다음 글의 밑줄 친 부분의 의미로 가장 적절한 것은?'"
+            "Likely first stem: '다음 글의 밑줄 친 부분의 의미로 가장 적절한 것은?' "
+            "Treat this as contextual meaning / 함축 의미 추론 rather than "
+            "literal translation."
         ),
         expected_output_shape=(
-            "Original passage with one underlined English span; five Korean "
-            "choice glosses; marker answer ①-⑤; Korean explanation."
+            "Original passage with one underlined English phrase; five Korean "
+            "contextual paraphrase choices; marker answer ①-⑤; Korean explanation."
         ),
         infrastructure="span",
         likely_incompatibility_patterns=(
-            "Passages whose best candidate span is either too literal or too context-free.",
+            "Passages whose best candidate phrase is too literal and becomes a dictionary-definition target.",
+            "Passages whose underlined phrase is not central to the passage claim or argument.",
             "Passages with multiple acceptable Korean paraphrases and weak one-best-answer pressure.",
-            "Idiomatic or compressed spans whose distractors would become arbitrary without stronger guidance.",
+            "Idiomatic or figurative phrases whose interpretation depends mainly on outside knowledge rather than passage evidence.",
         ),
         implementation_risks=(
             "Needs span selection that respects contextual meaning rather than dictionary glossing.",
             "Korean answer choices need normalization rules to avoid near-duplicate valid answers.",
+            "The planner may drift toward pure vocabulary or idiom-memory questions unless the prompt anchors interpretation to passage-level evidence.",
             "Future optional CSV-driven target-span input may change the interface, so keep v1 assumptions explicit.",
         ),
         requires_user_confirmation=(
-            "Confirm whether the first release should always self-select the underlined span from the source paragraph.",
+            "Confirm whether the pending family should be renamed from the older phrase_translation draft to underlined_phrase_meaning before implementation begins.",
+            "Confirm whether the first release should always self-select the underlined phrase from the source paragraph.",
+            "Confirm whether the first release should prioritize metaphorical / abstract phrases over simpler evaluative phrases.",
         ),
         notes=(
+            "Useful external guidance: this type is a contextual paraphrase task, not a literal translation task.",
+            "Useful target standard: choose a phrase with a recoverable bridge from surface wording to passage-level meaning.",
+            "Useful explanation standard: explain 'surface image -> contextual meaning -> supporting evidence' rather than giving a bare gloss.",
+            "Recommended family rename before implementation: `underlined_phrase_meaning` fits the intended Korean exam task better than `phrase_translation`.",
             "Span-based but usually simpler than vocab or grammar because only one target is rendered.",
         ),
     ),
     PendingQuestionTypeSpec(
         broad_key="vocab",
         label_ko="어휘",
-        format_key="vocab_incorrect_contextual_usage_5",
+        format_key="contextual_vocab_error_5",
         stem_direction_ko=(
             "Likely first stem: '다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 "
-            "적절하지 않은 것은?'"
+            "적절하지 않은 것은?' Treat the first implementation as a "
+            "contextual lexical-fit task, not a definition task."
         ),
         expected_output_shape=(
             "Original passage with five numbered underlined targets; one "
-            "target deterministically replaced with a wrong-but-plausible word "
-            "or phrase; marker answer ①-⑤; Korean explanation."
+            "target deterministically replaced with a grammatically possible "
+            "but contextually wrong word or short phrase; marker answer ①-⑤; "
+            "Korean explanation."
         ),
         infrastructure="span",
         likely_incompatibility_patterns=(
             "Passages without five clean lexical targets worth underlining.",
+            "Passages where no candidate word is strongly constrained by passage logic.",
             "Passages where a wrong replacement becomes obviously impossible rather than plausibly testable.",
             "Passages whose key vocabulary is too technical, culture-bound, or semantically flat for this format.",
+            "Passages where multiple underlined words could plausibly be disputed once one corruption is inserted.",
         ),
         implementation_risks=(
             "Requires multi-span preparation and deterministic replacement rendering.",
             "Replacement candidates must be plausible enough for exam quality but still clearly wrong in context.",
-            "Validation likely needs stronger lexical sanity checks than current types.",
+            "The planner may drift toward dictionary-difficulty words unless the prompt anchors it to passage-level logic and expected meaning.",
+            "Validation likely needs lexical and grammatical sanity checks beyond current types, including part-of-speech preservation and single-answer uniqueness.",
         ),
         requires_user_confirmation=(
             "Confirm whether the first release should allow short phrases as well as single-word targets.",
         ),
         notes=(
+            "Useful external guidance: treat this as contextual lexical-fit, not vocabulary-definition recall.",
+            "Useful first-format direction: one underlined item should be intentionally corrupted while four other underlined items remain contextually appropriate.",
+            "Useful evidence standard: prove the expected meaning from polarity, logic, semantic role, or broader discourse flow rather than from a bare dictionary gloss.",
+            "Recommended broad-key policy for now: keep one broad key, `vocab`, and place the first supported subtype in `format_key` rather than splitting into multiple live registry keys immediately.",
             "Should come after phrase-level span tooling is stable.",
         ),
     ),
     PendingQuestionTypeSpec(
         broad_key="grammar",
         label_ko="어법",
-        format_key="grammar_incorrect_underlined_form_5",
+        format_key="grammar_error_5",
         stem_direction_ko=(
-            "Likely first stem: '다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?'"
+            "Likely first stem: '다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?' "
+            "Treat the first implementation as sentence-structure integrity, "
+            "not isolated rule recall."
         ),
         expected_output_shape=(
-            "Original passage with five numbered underlined grammar targets; "
-            "one target replaced with a grammatically wrong form; marker "
-            "answer ①-⑤; Korean explanation."
+            "Original passage with five numbered underlined grammar-bearing "
+            "targets; one target replaced with a plausible-looking but "
+            "structurally wrong form; marker answer ①-⑤; Korean explanation."
         ),
         infrastructure="span",
         likely_incompatibility_patterns=(
             "Passages without five stable grammar targets suitable for underlining.",
+            "Passages where no grammar-bearing structure is constrained clearly enough for one provable corruption.",
             "Passages where a wrong inflection or construction would sound too obviously broken.",
             "Passages where multiple grammar points compete and reduce one-best-answer clarity.",
+            "Passages where the corruption would drift into vocabulary meaning change rather than structure error.",
         ),
         implementation_risks=(
             "Most fragile of the current span-based candidates because the error must be subtle, local, and explainable.",
             "Requires grammar-aware replacement planning, not just surface word substitution.",
+            "Validation will likely need explicit checks for readability, unique correction, and grammar-versus-vocab boundary.",
             "High risk of accidental semantic distortion or multiple valid corrections.",
         ),
         requires_user_confirmation=(
             "Confirm the preferred first grammar error family, if the release should narrow scope initially.",
         ),
         notes=(
+            "Useful external guidance: treat this as sentence-structure integrity, not rule-quiz memorization.",
+            "Useful first-format direction: introduce one controlled structural corruption while four other underlined grammar-bearing parts remain valid.",
+            "Useful target families for the first pass include subject-verb agreement, finite versus nonfinite form, participle/voice relation, relative-clause structure, noun-clause introducers, parallel structure, and conjunction-versus-preposition contrasts.",
+            "Useful evidence standard: explanations should point to the true subject, clause role, modifier boundary, antecedent, or other structural cue rather than only naming a grammar rule.",
+            "Recommended broad-key policy for now: keep one broad key, `grammar`, and place the first supported subtype in `format_key` rather than splitting into multiple live registry keys immediately.",
             "Likely the last of the currently discussed candidates to implement.",
         ),
     ),
@@ -221,6 +217,38 @@ PENDING_QUESTION_TYPES: tuple[PendingQuestionTypeSpec, ...] = (
 
 
 LIVE_TYPE_REFINEMENTS: tuple[PendingQuestionTypeSpec, ...] = (
+    PendingQuestionTypeSpec(
+        broad_key="mood_atmosphere",
+        label_ko="심경·분위기",
+        format_key="emotion_shift_pair_choice_5",
+        stem_direction_ko=(
+            "Keep the broad family key, but make the first live rollout "
+            "subtype-specific: use an emotion-shift stem rather than a generic "
+            "심경·분위기 stem."
+        ),
+        expected_output_shape=(
+            "Current live shape for v1: original passage preserved unchanged, "
+            "five English emotion-shift pair choices, marker answer ①-⑤, and "
+            "teacher-facing Korean explanation."
+        ),
+        infrastructure="passage",
+        likely_incompatibility_patterns=(
+            "Informational or expository passages with no stable affective cues.",
+            "Passages with no single clear feeling-holder.",
+            "Passages that contain affective language but no real initial-to-final emotional change.",
+        ),
+        implementation_risks=(
+            "Planner may still force emotion labels onto weakly affective passages unless incompatibility gating stays strict.",
+            "Choice sets can collapse into near-synonym pairs unless prompt and validation keep direction and endpoint distinctions sharp.",
+            "Exported explanations can become generic unless they cite concrete initial/final evidence and the turning point.",
+        ),
+        notes=(
+            "Chosen first-rollout policy: broad key stays `mood_atmosphere`, live subtype is only `emotion_shift` for now.",
+            "Chosen v1 choice policy: use English adjective-pair choices such as `anxious -> relieved`.",
+            "Chosen target policy: allow writer/narrator or one clearly identifiable character, but reject passages with ambiguous holders.",
+            "Deferred subtypes: `atmosphere` and `emotion_state` stay out of the live registry until v1 suitability and explanation quality are stable.",
+        ),
+    ),
     PendingQuestionTypeSpec(
         broad_key="sentence_insertion",
         label_ko="문장 삽입",

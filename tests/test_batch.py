@@ -7,19 +7,37 @@ from pathlib import Path
 
 from questiongen.batch import run_batch_dataframe, run_batch_files, run_batch_rows
 from questiongen.graph import compile_question_graph
-from questiongen.schemas import BatchInputRow, SentenceInsertionPlan
+from questiongen.schemas import BatchInputRow, MoodAtmospherePlan, SentenceInsertionPlan
 
 
 class _StubPlanner:
-    def __init__(self, output_schema: type[SentenceInsertionPlan]) -> None:
+    def __init__(self, output_schema: type[SentenceInsertionPlan | MoodAtmospherePlan]) -> None:
         self.output_schema = output_schema
 
-    def invoke(self, prompt: str) -> SentenceInsertionPlan:
+    def invoke(self, prompt: str) -> SentenceInsertionPlan | MoodAtmospherePlan:
+        if self.output_schema is SentenceInsertionPlan:
+            return self.output_schema(
+                target_unit_ids=["S2"],
+                selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
+                correct_gap_id="G2",
+                explanation="문장 S2는 G2 위치에 들어가야 자연스럽습니다.",
+            )
         return self.output_schema(
-            target_unit_ids=["S2"],
-            selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
-            correct_gap_id="G2",
-            explanation="문장 S2는 G2 위치에 들어가야 자연스럽습니다.",
+            target_holder="the child",
+            initial_emotion="nervous",
+            final_emotion="proud",
+            choice_pairs=[
+                "nervous -> proud",
+                "calm -> worried",
+                "excited -> ashamed",
+                "content -> relieved",
+                "curious -> disappointed",
+            ],
+            correct_choice="nervous -> proud",
+            initial_evidence="was nervous before the recital",
+            final_evidence="bowed proudly to the audience",
+            shift_trigger="after the first few notes",
+            explanation="초반에는 긴장하지만 마지막에는 자랑스러워집니다.",
         )
 
 
@@ -50,10 +68,22 @@ class BatchTests(unittest.TestCase):
         self.assertNotIn("G2", results[0].explanation or "")
 
     def test_one_row_multiple_types(self) -> None:
-        results = run_batch_rows(self.rows, ["sentence_insertion", "unknown_type"], self.runner)
-        self.assertEqual(len(results), 2)
+        mood_rows = [
+            BatchInputRow(
+                OriginalQuestionNumber="13-03",
+                BatchRowId=0,
+                source_paragraph=(
+                    "The child was nervous before the recital. She avoided eye contact and kept checking her hands. "
+                    "But after the first few notes, she smiled with growing confidence. By the end, she bowed proudly "
+                    "to the audience. Her parents cheered from the back of the hall."
+                ),
+            )
+        ]
+        results = run_batch_rows(mood_rows, ["sentence_insertion", "mood_atmosphere", "unknown_type"], self.runner)
+        self.assertEqual(len(results), 3)
         self.assertEqual(results[0].status, "validation_passed")
-        self.assertEqual(results[1].status, "input_error")
+        self.assertEqual(results[1].status, "validation_passed")
+        self.assertEqual(results[2].status, "input_error")
 
     def test_per_row_failure_is_captured(self) -> None:
         results = run_batch_rows(self.rows, ["sentence_insertion"], _FailingRunner())

@@ -4,8 +4,8 @@ import unittest
 
 from questiongen.parsers import prepare_source
 from questiongen.question_types import QUESTION_TYPES
-from questiongen.renderers import render_paragraph_ordering, render_sentence_insertion
-from questiongen.schemas import ParagraphOrderingPlan, SentenceInsertionPlan
+from questiongen.renderers import render_mood_atmosphere, render_paragraph_ordering, render_sentence_insertion
+from questiongen.schemas import MoodAtmospherePlan, ParagraphOrderingPlan, SentenceInsertionPlan
 
 
 class RendererTests(unittest.TestCase):
@@ -75,6 +75,54 @@ class RendererTests(unittest.TestCase):
         self.assertIn("(A)", generated.student_paragraph)
         self.assertEqual(len(generated.choices), 5)
         self.assertIn(generated.answer, ["①", "②", "③", "④", "⑤"])
+
+    def test_mood_atmosphere_renderer_builds_expected_output(self) -> None:
+        source = (
+            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
+            "to those around them. In one experiment, two capuchin monkeys were initially perfectly content "
+            "with a reward of cucumbers when they successfully performed a task. But when one monkey receiving "
+            "plain old cucumbers became enraged, angrily throwing the previously satisfactory salad vegetable "
+            "at its handler. The monkey's economy had grown, since grapes are better than cucumbers. "
+            "But the resulting inequality brought only discontent."
+        )
+        plan = MoodAtmospherePlan(
+            target_holder="the monkey",
+            initial_emotion="content",
+            final_emotion="angry",
+            choice_pairs=[
+                "content -> angry",
+                "anxious -> relieved",
+                "confident -> embarrassed",
+                "curious -> disappointed",
+                "proud -> grateful",
+            ],
+            correct_choice="content -> angry",
+            initial_evidence="were initially perfectly content with a reward of cucumbers",
+            final_evidence="became enraged",
+            shift_trigger="when one monkey receiving plain old cucumbers",
+            explanation="초반에는 만족하지만 이후 상황 변화로 분노하게 됩니다.",
+        )
+        result = render_mood_atmosphere(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "9-03",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "mood_atmosphere",
+                "prepared_source": prepare_source(source),
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_TYPES["mood_atmosphere"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        generated = result["generated"]
+        self.assertEqual(generated.QuestionType, QUESTION_TYPES["mood_atmosphere"].label_ko)
+        self.assertEqual(generated.given_sentence, None)
+        self.assertEqual(generated.student_paragraph, source)
+        self.assertEqual(generated.choices[0], "content -> angry")
+        self.assertEqual(generated.answer, "①")
 
 
 if __name__ == "__main__":

@@ -6,15 +6,47 @@ from typing import Any
 from .parsers import normalize_text
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
 from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, ORDERING_CHOICES, rendered_gap_positions
-from .schemas import GeneratedQuestion, ParagraphOrderingPlan, PreparedSource, QuestionState, SentenceInsertionPlan
+from .schemas import (
+    GeneratedQuestion,
+    MoodAtmospherePlan,
+    ParagraphOrderingPlan,
+    PreparedSource,
+    QuestionState,
+    SentenceInsertionPlan,
+)
 
 _INTERNAL_EXPLANATION_ID_RE = re.compile(r"[SG]\d+")
+_MOOD_CHOICE_PAIR_RE = re.compile(r"^[A-Za-z][A-Za-z '\-/]*(?:\s*->\s*)[A-Za-z][A-Za-z '\-/]*$")
+_AFFECTIVE_CUE_RE = re.compile(
+    r"\b("
+    r"afraid|angry|annoyed|anxious|ashamed|calm|confident|confidence|confused|content|curious|"
+    r"delighted|discouraged|disappointed|distressed|eager|embarrassed|enraged|excited|"
+    r"frustrated|glad|grateful|guilty|happy|hopeful|jealous|lonely|miserable|nervous|"
+    r"panicked|pleased|proud|proudly|regretful|relieved|sad|satisfied|scared|shocked|surprised|"
+    r"tense|uneasy|upset|worried"
+    r")\b",
+    re.IGNORECASE,
+)
+_HOLDER_CUE_RE = re.compile(
+    r"\b("
+    r"i|me|my|mine|we|us|our|ours|he|him|his|she|her|hers|they|them|their|theirs|"
+    r"person|people|child|children|student|students|teacher|teachers|employee|employees|"
+    r"manager|managers|worker|workers|resident|residents|boy|girl|farmer|narrator|writer|"
+    r"monkey|monkeys"
+    r")\b",
+    re.IGNORECASE,
+)
 _INTERNAL_EXPLANATION_TERM_PATTERNS = (
     "selected_gap_ids",
     "correct_gap_id",
     "target_unit_ids",
     "continuation_blocks",
     "intro_unit_ids",
+    "choice_pairs",
+    "correct_choice",
+    "initial_emotion",
+    "final_emotion",
+    "target_holder",
     "렌더",
     "renderer",
     "schema",
@@ -68,6 +100,13 @@ def source_check(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[str,
         return {
             "status": "source_error",
             "errors": errors,
+        }
+
+    compatibility_errors = validate_question_type_compatibility(state["source_paragraph"], prepared_source, type_spec)
+    if compatibility_errors:
+        return {
+            "status": "qtype_incompatibility_error",
+            "errors": compatibility_errors,
         }
     return {
         "status": "source_passed",
@@ -184,7 +223,19 @@ def validate_plan_against_prepared_source(
         return _validate_sentence_insertion_plan(prepared_source, plan)
     if type_spec.validator_key == "paragraph_ordering":
         return _validate_paragraph_ordering_plan(prepared_source, plan)
+    if type_spec.validator_key == "mood_atmosphere":
+        return _validate_mood_atmosphere_plan(prepared_source, plan)
     return [f"No deterministic plan validator is registered for {type_spec.validator_key}."]
+
+
+def validate_question_type_compatibility(
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if type_spec.validator_key == "mood_atmosphere":
+        return _validate_mood_atmosphere_compatibility(source_paragraph, prepared_source)
+    return []
 
 
 def _validate_sentence_insertion_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
@@ -224,6 +275,39 @@ def _validate_paragraph_ordering_plan(prepared_source: PreparedSource, plan: obj
     flattened = plan.intro_unit_ids + [unit_id for block in plan.continuation_blocks for unit_id in block]
     if flattened != sentence_ids:
         return ["ParagraphOrderingPlan must cover all sentence IDs exactly once in source order."]
+    return []
+
+
+def _validate_mood_atmosphere_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+    if not isinstance(plan, MoodAtmospherePlan):
+        return ["MoodAtmospherePlan is missing for deterministic plan checks."]
+
+    errors: list[str] = []
+    source_text = normalize_text(" ".join(unit.text for unit in prepared_source.sentence_units))
+    for field_name in ("initial_evidence", "final_evidence"):
+        evidence = getattr(plan, field_name)
+        if normalize_text(evidence) not in source_text:
+            errors.append(f"MoodAtmospherePlan {field_name} must be copied from the source passage.")
+    if plan.shift_trigger and normalize_text(plan.shift_trigger) not in source_text:
+        errors.append("MoodAtmospherePlan shift_trigger must be copied from the source passage.")
+    return errors
+
+
+def _validate_mood_atmosphere_compatibility(
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+) -> list[str]:
+    source_text = normalize_text(source_paragraph)
+    affective_cues = {match.group(0).lower() for match in _AFFECTIVE_CUE_RE.finditer(source_text)}
+    if len(affective_cues) < 2:
+        return ["Passage does not contain enough clear affective cues for an emotion-shift item."]
+
+    if _HOLDER_CUE_RE.search(source_text) is None:
+        return ["Passage does not provide a clear feeling-holder cue for an emotion-shift item."]
+
+    if len(prepared_source.sentence_units) < 2:
+        return ["Passage does not contain enough sentence-level development for an emotion-shift item."]
+
     return []
 
 
@@ -387,6 +471,33 @@ def _validate_paragraph_ordering_state(
     )
 
 
+def _validate_mood_atmosphere_state(
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+    generated = state["generated"]
+
+    if prepared_source is None:
+        return ["PreparedSource is missing for validation."]
+    if not isinstance(plan, MoodAtmospherePlan):
+        return ["MoodAtmospherePlan is missing for validation."]
+    if not isinstance(generated, GeneratedQuestion):
+        return ["GeneratedQuestion is missing for validation."]
+    if generated.OriginalQuestionNumber != state["OriginalQuestionNumber"]:
+        return ["GeneratedQuestion OriginalQuestionNumber must match the state."]
+    if generated.BatchRowId != state["BatchRowId"]:
+        return ["GeneratedQuestion BatchRowId must match the state."]
+
+    return validate_mood_atmosphere_output(
+        prepared_source=prepared_source,
+        plan=plan,
+        generated=generated,
+        type_spec=type_spec,
+    )
+
+
 def validate_paragraph_ordering_output(
     *,
     prepared_source: PreparedSource,
@@ -463,7 +574,72 @@ def validate_paragraph_ordering_output(
     return errors
 
 
+def validate_mood_atmosphere_output(
+    *,
+    prepared_source: PreparedSource,
+    plan: MoodAtmospherePlan,
+    generated: GeneratedQuestion,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    errors: list[str] = []
+    expected_choices = [_normalize_choice_pair(choice) for choice in plan.choice_pairs]
+    source_text = normalize_text(" ".join(unit.text for unit in prepared_source.sentence_units))
+
+    if generated.QuestionType != type_spec.label_ko:
+        errors.append(f"QuestionType should be '{type_spec.label_ko}', got '{generated.QuestionType}'.")
+    if generated.question_stem != type_spec.question_stem:
+        errors.append("question_stem does not match the question type metadata.")
+    if generated.given_sentence is not None:
+        errors.append("given_sentence must be None for mood_atmosphere.")
+    if normalize_text(generated.student_paragraph) != source_text:
+        errors.append("student_paragraph must preserve the original passage for mood_atmosphere.")
+
+    if generated.choices is None or len(generated.choices) != type_spec.choice_count:
+        errors.append(f"choices must contain exactly {type_spec.choice_count} items.")
+    else:
+        normalized_choices = [_normalize_choice_pair(choice) for choice in generated.choices]
+        if len(set(normalized_choices)) != len(normalized_choices):
+            errors.append("choices must be unique.")
+        if any(_MOOD_CHOICE_PAIR_RE.match(choice) is None for choice in normalized_choices):
+            errors.append("choices must use English 'emotion -> emotion' format.")
+        if normalized_choices != expected_choices:
+            errors.append(f"choices must be exactly {expected_choices}.")
+        if generated.answer not in MARKER_CHOICES[: len(generated.choices)]:
+            errors.append("answer must be one of the rendered marker choices.")
+        else:
+            expected_answer = MARKER_CHOICES[expected_choices.index(_normalize_choice_pair(plan.correct_choice))]
+            if generated.answer != expected_answer:
+                errors.append(
+                    f"answer should map to the correct emotion shift as {expected_answer}, got {generated.answer}."
+                )
+
+    if plan.initial_emotion.strip().lower() == plan.final_emotion.strip().lower():
+        errors.append("initial_emotion and final_emotion must differ.")
+
+    for field_name in ("initial_evidence", "final_evidence"):
+        evidence = getattr(plan, field_name)
+        if normalize_text(evidence) not in source_text:
+            errors.append(f"{field_name} must appear in the source passage.")
+    if plan.shift_trigger and normalize_text(plan.shift_trigger) not in source_text:
+        errors.append("shift_trigger must appear in the source passage.")
+
+    errors.extend(
+        validate_teacher_facing_explanation(
+            generated.explanation,
+            question_type_key="mood_atmosphere",
+        )
+    )
+
+    return errors
+
+
 GENERATED_QUESTION_VALIDATORS = {
     "sentence_insertion": _validate_sentence_insertion_state,
     "paragraph_ordering": _validate_paragraph_ordering_state,
+    "mood_atmosphere": _validate_mood_atmosphere_state,
 }
+
+
+def _normalize_choice_pair(value: str) -> str:
+    left, right = [part.strip().lower() for part in value.split("->", 1)]
+    return f"{left} -> {right}"

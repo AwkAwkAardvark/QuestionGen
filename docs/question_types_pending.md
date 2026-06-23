@@ -6,6 +6,7 @@ Current live registry:
 
 - `sentence_insertion`
 - `paragraph_ordering`
+- `mood_atmosphere` (`emotion_shift` subtype only in v1)
 
 Current product direction:
 
@@ -18,13 +19,12 @@ Because the launcher runs every registered type, new types should not be added t
 
 ## Recommended Order
 
-1. `mood_atmosphere`
-2. `fill_in_the_blank`
-3. `phrase_translation`
-4. `vocab`
-5. `grammar`
+1. `fill_in_the_blank`
+2. `underlined_phrase_meaning`
+3. `vocab`
+4. `grammar`
 
-Why `mood_atmosphere` should come next:
+Why `mood_atmosphere` came next:
 
 - It does not require the future span-preparation layer.
 - It will directly exercise the new `qtype_incompatibility_error` path, which is already an explicit product requirement.
@@ -33,7 +33,7 @@ Why `mood_atmosphere` should come next:
 
 Why the remaining order is span-first rather than registry-first:
 
-- `fill_in_the_blank` and `phrase_translation` need a single target span, so they are the most natural first consumers of a new span layer.
+- `fill_in_the_blank` and `underlined_phrase_meaning` need a single target span, so they are the most natural first consumers of a new span layer.
 - `vocab` and `grammar` both need multiple numbered underlined targets and one intentionally corrupted target, which makes them more demanding than the single-span families.
 - `grammar` is the riskiest because grammatical corruption must stay subtle, local, and teacher-explainable.
 
@@ -41,150 +41,168 @@ Why the remaining order is span-first rather than registry-first:
 
 The following keys are broad registry candidates. The `format_key` values name the first supported house format and should carry the early specificity instead of overloading the broad key.
 
-### `mood_atmosphere`
-
-- First format key: `emotion_shift_pair_choice_5`
-- Korean stem direction:
-  - treat the family as subtype-specific rather than as generic sentiment
-  - use different Korean stems for `emotion_state`, `emotion_shift`, and `atmosphere`
-  - recommended first rollout is `emotion_shift`, with `atmosphere` next
-- Output shape:
-  - preserve the original passage exactly
-  - render 5 subtype-appropriate choices
-  - return marker answer `①`-`⑤`
-  - export Korean explanation
-- Infrastructure:
-  - passage-level question
-  - may use sentence evidence internally, but does not require gap or span rendering
-- Expected incompatibility patterns:
-  - informational passages with no stable emotional cue
-  - unclear target character or unclear scene target
-  - passages with ambiguous or weak atmosphere
-  - passages where no real emotional change occurs
-  - passages where multiple mood readings would all feel defensible
-- Major risks:
-  - over-forcing mood labels onto neutral texts
-  - low-quality distractors or near-synonym choice sets
-  - confusing atmosphere with a character's private feeling
-  - explanations that sound generic instead of evidence-based
-- User confirmation still needed:
-  - whether first rollout under the broad key should support only `emotion_shift` or both `emotion_shift` and `atmosphere`
-  - whether `emotion_state` should wait for a later pass
-  - whether first-release choices remain in English adjective form
-
-Subtype direction that looks useful for this project:
-
-- `emotion_state`
-  - asks for one character's dominant feeling
-  - strongest when the target character is obvious and the final affect is well-supported
-- `emotion_shift`
-  - asks for initial feeling -> final feeling
-  - currently looks like the best first subtype because it tends to produce clearer evidence and more objective recovery
-- `atmosphere`
-  - asks for the scene mood rather than one character's private emotion
-  - should stay separate from character-feeling logic even if it shares the same broad key
-
-Current recommendation on registry shape:
-
-- Do not split this family into three live registry keys yet.
-- Keep `mood_atmosphere` as the broad family key for now.
-- Differentiate the family through subtype-aware prompts and, when needed, additional `format_key` variants such as:
-  - `emotion_shift_pair_choice_5`
-  - `atmosphere_adjective_pair_choice_5`
-  - `emotion_state_adjective_choice_5`
-- Revisit separate registry keys only if later product needs distinct analytics, filtering, or launch behavior per subtype.
-
 ### `fill_in_the_blank`
 
-- First format key: `blank_best_fit_5_choices`
+- First format key: `blank_inference_proposition_5_choices`
 - Korean stem direction:
   - likely `다음 빈칸에 들어갈 말로 가장 적절한 것은?`
+  - treat the first release as 빈칸추론 rather than a generic blank
 - Output shape:
   - one source passage
-  - one span replaced with a blank
+  - one proposition-like span replaced with a blank
   - 5 answer choices
   - marker answer `①`-`⑤`
   - Korean explanation
 - Infrastructure:
   - span-based
 - Expected incompatibility patterns:
-  - no clean inferable span
+  - no recoverable proposition-like span
   - multiple defensible completions
-  - blank target too trivial or too long
+  - blank target too trivial, too copied, or too long
 - Major risks:
   - current package has no span-preparation layer yet
   - distractor quality will likely dominate item quality
   - blank placement may drift away from real 수능/내신 expectations if under-specified
+  - the planner may produce vocabulary-style deletion instead of true inference
 - User confirmation still needed:
   - whether the broad key should stay `fill_in_the_blank` or use the shorter historical `blank`
+  - whether the first live format should stay strictly with blank inference
   - what the first removable unit should be
 
-### `phrase_translation`
+Subtype direction that looks useful for this project:
 
-- First format key: `underlined_phrase_translation_5_ko`
+- `blank_inference`
+  - the important first subtype for CSAT-like use
+  - blank represents a missing claim, conclusion, mechanism, contrast, limitation, or similar proposition
+- possible later subtypes under the same broad family:
+  - connective blank
+  - summary completion
+  - lexical blank
+  - grammar blank
+
+Current recommendation on registry shape:
+
+- Do not split this family into multiple live registry keys yet.
+- Keep `fill_in_the_blank` as the broad family key for now.
+- Put the first supported subtype in `format_key`, starting with `blank_inference_proposition_5_choices`.
+- Revisit narrower registry keys only if later product needs distinct launch behavior or clearly different infrastructure.
+
+### `underlined_phrase_meaning`
+
+- First format key: `underlined_phrase_meaning_5_ko`
 - Korean stem direction:
   - likely `다음 글의 밑줄 친 부분의 의미로 가장 적절한 것은?`
+  - treat the task as contextual meaning / 함축 의미 추론 rather than literal translation
 - Output shape:
-  - original passage with one underlined English span
-  - 5 Korean choices
+  - original passage with one underlined English phrase
+  - 5 Korean contextual paraphrase choices
   - marker answer `①`-`⑤`
   - Korean explanation
 - Infrastructure:
   - span-based
 - Expected incompatibility patterns:
   - no good contextual phrase target
+  - phrase too literal and answerable by dictionary knowledge alone
   - many equally acceptable Korean paraphrases
-  - phrase too literal or too context-free to be worth asking
+  - phrase too context-free or too weakly tied to the main claim
 - Major risks:
   - dictionary-style translation instead of contextual meaning
   - duplicate or near-duplicate Korean distractors
+  - pure idiom-memory behavior if the phrase is not grounded in passage evidence
   - possible future demand for CSV-specified target spans, which should stay out of v1 unless explicitly chosen
+- User confirmation still needed:
+  - whether this pending family should be renamed from `phrase_translation` to `underlined_phrase_meaning` before implementation starts
+  - whether the first release should prioritize metaphorical / abstract phrases
+  - whether the first release should always self-select the underlined phrase
+
+Current recommendation on family naming:
+
+- The older draft name `phrase_translation` is probably too literal for the intended exam task.
+- `underlined_phrase_meaning` fits the current product direction better because the task is to recover contextual meaning, not translate a phrase word-for-word.
+- Keep the Korean label aligned with `밑줄 친 부분 의미` unless later exam-format research suggests a sharper distinction.
 
 ### `vocab`
 
-- First format key: `vocab_incorrect_contextual_usage_5`
+- First format key: `contextual_vocab_error_5`
 - Korean stem direction:
   - likely `다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 적절하지 않은 것은?`
+  - treat the first release as contextual lexical-fit rather than vocabulary-definition recall
 - Output shape:
   - original passage with 5 numbered underlined targets
-  - one target deterministically replaced with a wrong-but-plausible word or phrase
+  - one target deterministically replaced with a grammatically possible but contextually wrong word or short phrase
   - marker answer `①`-`⑤`
   - Korean explanation
 - Infrastructure:
   - span-based, multi-target
 - Expected incompatibility patterns:
   - fewer than 5 good lexical targets
+  - no candidate word strongly constrained by passage logic
   - replacement becomes too obvious or too arbitrary
   - vocabulary profile too technical or too flat
+  - inserted corruption creates more than one arguable wrong answer
 - Major risks:
   - needs stronger span prep than the single-target types
   - wrong replacement must remain plausible
-  - validation likely needs lexical-quality checks beyond current deterministic rules
+  - validation likely needs lexical-quality and grammar-preservation checks beyond current deterministic rules
 - User confirmation still needed:
   - whether short phrases are allowed as first-release targets or only single words
 
+Possible later variants under the same broad family:
+
+- contextual vocab error
+- contextual vocab choice
+- narrower failure modes such as polarity, semantic-role, scope, or collocation errors
+
+Current recommendation on registry shape:
+
+- Do not split this family into multiple live registry keys yet.
+- Keep `vocab` as the broad family key for now.
+- Put the first supported subtype in `format_key`, starting with `contextual_vocab_error_5`.
+- Revisit narrower registry keys only if later product needs clearly different launch behavior or evaluation surfaces.
+
 ### `grammar`
 
-- First format key: `grammar_incorrect_underlined_form_5`
+- First format key: `grammar_error_5`
 - Korean stem direction:
   - likely `다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?`
+  - treat the first release as sentence-structure integrity rather than isolated rule recall
 - Output shape:
-  - original passage with 5 numbered underlined targets
-  - one target replaced with a grammatically wrong form
+  - original passage with 5 numbered underlined grammar-bearing targets
+  - one target replaced with a plausible-looking but structurally wrong form
   - marker answer `①`-`⑤`
   - Korean explanation
 - Infrastructure:
   - span-based, multi-target
 - Expected incompatibility patterns:
   - fewer than 5 clean grammar targets
+  - no clearly constrained structure suitable for one provable corruption
   - multiple valid corrections
   - corruption becomes too obvious or rewrites meaning too much
+  - corruption drifts into vocabulary meaning change instead of grammar
 - Major risks:
   - subtle error generation is hard
   - explanation quality will be unforgiving
   - highest chance of producing fake-but-bad exam items
+  - validation needs stronger readability and uniqueness checks than current types
 - User confirmation still needed:
   - whether the first release should narrow to a small grammar-error family
+
+Useful first-pass grammar families:
+
+- subject-verb agreement
+- finite vs nonfinite form
+- active vs passive participle / modifier relation
+- relative clause structure
+- noun-clause introducers such as `what`
+- parallel structure
+- conjunction vs preposition
+
+Current recommendation on registry shape:
+
+- Do not split this family into multiple live registry keys yet.
+- Keep `grammar` as the broad family key for now.
+- Put the first supported subtype in `format_key`, starting with `grammar_error_5`.
+- Revisit narrower registry keys only if later product needs clearly different launch behavior or evaluation surfaces.
 
 ## Boundary Notes
 
@@ -302,4 +320,123 @@ Current recommendation:
 
 - Keep the broad key `mood_atmosphere` for now.
 - Use subtype-aware prompt tightening and validation heuristics before considering a registry split.
-- Favor `emotion_shift` as the first live subtype because it is usually the easiest to make objective and teacher-explainable.
+- The live v1 shape is now locked to `emotion_shift` only.
+- Use an emotion-shift-specific stem under the broad family key rather than a generic family stem.
+- Use English adjective-pair choices in the first live release.
+- Allow writer/narrator or one clearly identifiable character as the feeling-holder, but reject ambiguous-holder passages as incompatibility.
+- Keep `atmosphere` and `emotion_state` deferred until v1 suitability gating and explanation quality are stable.
+
+### `fill_in_the_blank`
+
+Useful parts of the external feedback for this project:
+
+- Treat the first blank type as missing-proposition reconstruction rather than generic phrase deletion.
+- Prefer blanks that function as a claim, conclusion, reason, effect, contrast, mechanism, limitation, or similar discourse role.
+- Require support from multiple textual clues rather than one nearby hint.
+- Treat paraphrase recovery as a quality signal: the answer should usually be inferable, not copied directly.
+- Make distractors diagnostic by varying polarity, scope, relation, and paraphrase accuracy rather than writing unrelated wrong answers.
+- Keep blank feedback focused on what the missing idea must mean, not just where it appears.
+
+Useful later, but not yet stable enough to adopt as schema truth:
+
+- a fully structured blank-evidence schema
+- mandatory wrong-choice notes for every distractor
+- explicit polarity and scope fields in the live plan schema
+- splitting blank families into multiple live registry keys immediately
+
+Current recommendation:
+
+- Keep the broad key `fill_in_the_blank` for now.
+- Treat the first implementation as `blank_inference`, encoded through `format_key` rather than a separate live registry key.
+- Use prompt tightening to force proposition-level target selection before doing any major schema rewrite.
+
+### `underlined_phrase_meaning`
+
+Useful parts of the external feedback for this project:
+
+- Treat this type as contextual paraphrase, not literal translation.
+- Prefer phrases that have both:
+  - a surface image or wording worth interpreting
+  - a recoverable bridge to the passage's main claim
+- Require evidence that connects the underlined phrase to the broader argument, not just to one nearby sentence.
+- Treat pure idiom memorization and pure vocabulary difficulty as failure modes, not as acceptable versions of this type.
+- Make distractors diagnostic by including overly literal, wrong-polarity, wrong-scope, or near-topic-but-wrong interpretations.
+- Build explanations around the pattern:
+  - surface meaning
+  - contextual meaning
+  - passage evidence that bridges the two
+
+Useful later, but not yet stable enough to adopt as schema truth:
+
+- a fully structured interpretation-evidence schema
+- explicit surface-meaning / contextual-meaning fields in the live plan schema
+- mandatory wrong-choice notes for every distractor
+- difficulty scoring and phrase-type taxonomies in the live runtime contract
+
+Current recommendation:
+
+- Rename the pending family from `phrase_translation` to `underlined_phrase_meaning` before implementation starts.
+- Keep it as a single broad family key for now.
+- Use prompt tightening to force contextual interpretation and evidence-bridging before deciding whether any deeper schema rewrite is necessary.
+
+### `vocab`
+
+Useful parts of the external feedback for this project:
+
+- Treat this type as contextual lexical fit, not vocabulary-definition recall.
+- Prefer targets where the expected word meaning is constrained by passage logic, polarity, semantic role, or discourse flow.
+- Build the first format around one controlled corruption:
+  - original correct word in source
+  - one grammatically possible but contextually wrong replacement in the rendered item
+  - four other underlined words that are still contextually appropriate
+- Treat explanation quality as passage-based:
+  - what meaning the context requires
+  - why the inserted wrong word contradicts that meaning
+  - why the other underlined items remain acceptable
+- Treat dictionary-only explanation as a quality failure.
+
+Useful later, but not yet stable enough to adopt as schema truth:
+
+- a fully structured vocab-evidence schema
+- mandatory notes for all non-answer underlined items
+- explicit failure-type enums in the live plan schema
+- splitting vocab families into multiple live registry keys immediately
+
+Current recommendation:
+
+- Keep the broad key `vocab` for now.
+- Treat the first implementation as `contextual_vocab_error`, encoded through `format_key` rather than a separate live registry key.
+- Use prompt tightening to force context-constrained target selection and controlled wrong-word replacement before doing any major schema rewrite.
+
+### `grammar`
+
+Useful parts of the external feedback for this project:
+
+- Treat this type as sentence-structure integrity, not isolated rule recall.
+- Build the first format around one controlled structural corruption:
+  - original correct form in source
+  - one plausible-looking but structurally wrong replacement in the rendered item
+  - four other underlined grammar-bearing parts that remain valid
+- Prefer targets whose wrongness is provable from structural cues such as:
+  - true subject
+  - finite-verb requirement
+  - modifier boundary
+  - antecedent
+  - clause role
+  - preposition requirement
+  - parallel frame
+- Treat grammar-vs-vocab boundary drift as a real failure mode.
+- Keep explanations structural: explain why the sentence requires the corrected form, not just what grammar label applies.
+
+Useful later, but not yet stable enough to adopt as schema truth:
+
+- a fully structured grammar-evidence schema
+- mandatory notes for all non-answer underlined parts
+- explicit grammar-point enums in the live plan schema
+- splitting grammar into multiple live registry keys immediately
+
+Current recommendation:
+
+- Keep the broad key `grammar` for now.
+- Treat the first implementation as `grammar_error`, encoded through `format_key` rather than a separate live registry key.
+- Use prompt tightening to force structure-constrained target selection and controlled corruption before doing any major schema rewrite.

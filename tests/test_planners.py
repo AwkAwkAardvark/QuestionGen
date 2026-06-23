@@ -4,9 +4,9 @@ import unittest
 
 from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
-from questiongen.planners import plan_paragraph_ordering, plan_sentence_insertion
+from questiongen.planners import plan_mood_atmosphere, plan_paragraph_ordering, plan_sentence_insertion
 from questiongen.question_types import QUESTION_TYPES
-from questiongen.schemas import ParagraphOrderingPlan, SentenceInsertionPlan
+from questiongen.schemas import MoodAtmospherePlan, ParagraphOrderingPlan, SentenceInsertionPlan
 
 
 class _ValidPlanner:
@@ -76,6 +76,27 @@ class _InvalidOrderingCoveragePlanner:
             intro_unit_ids=["S0"],
             continuation_blocks=[["S1"], ["S2"], ["S4", "S5"]],
             explanation="도입부 이후 흐름을 나누었다고 판단했습니다.",
+        )
+
+
+class _MoodAtmospherePlanner:
+    def invoke(self, prompt: str) -> MoodAtmospherePlan:
+        return MoodAtmospherePlan(
+            target_holder="the monkey",
+            initial_emotion="content",
+            final_emotion="angry",
+            choice_pairs=[
+                "content -> angry",
+                "anxious -> relieved",
+                "confident -> embarrassed",
+                "curious -> disappointed",
+                "proud -> grateful",
+            ],
+            correct_choice="content -> angry",
+            initial_evidence="were initially perfectly content with a reward of cucumbers",
+            final_evidence="became enraged",
+            shift_trigger="when one monkey receiving plain old cucumbers",
+            explanation="초반에는 만족하지만 이후 상황 변화로 분노하게 됩니다.",
         )
 
 
@@ -162,6 +183,56 @@ class PlannerTests(unittest.TestCase):
         result = runner.invoke(paragraph_state)
         self.assertEqual(result["status"], "validation_passed")
         self.assertNotIn("S0", result["generated"].explanation or "")
+
+    def test_mood_atmosphere_planner_output_validates(self) -> None:
+        mood_state = {
+            **self.state,
+            "source_paragraph": (
+                "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
+                "to those around them. In one experiment, two capuchin monkeys were initially perfectly content "
+                "with a reward of cucumbers when they successfully performed a task. But when one monkey receiving "
+                "plain old cucumbers became enraged, angrily throwing the previously satisfactory salad vegetable "
+                "at its handler. The monkey's economy had grown, since grapes are better than cucumbers. "
+                "But the resulting inequality brought only discontent."
+            ),
+            "QuestionTypeKey": "mood_atmosphere",
+            "prepared_source": prepare_source(
+                "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
+                "to those around them. In one experiment, two capuchin monkeys were initially perfectly content "
+                "with a reward of cucumbers when they successfully performed a task. But when one monkey receiving "
+                "plain old cucumbers became enraged, angrily throwing the previously satisfactory salad vegetable "
+                "at its handler. The monkey's economy had grown, since grapes are better than cucumbers. "
+                "But the resulting inequality brought only discontent."
+            ),
+        }
+        result = plan_mood_atmosphere(
+            mood_state,
+            QUESTION_TYPES["mood_atmosphere"],
+            structured_llm_factory=lambda schema: _MoodAtmospherePlanner(),
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertIsInstance(result["plan"], MoodAtmospherePlan)
+
+    def test_graph_rewrites_mood_atmosphere_explanation(self) -> None:
+        mood_source = (
+            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
+            "to those around them. In one experiment, two capuchin monkeys were initially perfectly content "
+            "with a reward of cucumbers when they successfully performed a task. But when one monkey receiving "
+            "plain old cucumbers became enraged, angrily throwing the previously satisfactory salad vegetable "
+            "at its handler. The monkey's economy had grown, since grapes are better than cucumbers. "
+            "But the resulting inequality brought only discontent."
+        )
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _MoodAtmospherePlanner())
+        mood_state = {
+            **self.state,
+            "source_paragraph": mood_source,
+            "QuestionTypeKey": "mood_atmosphere",
+            "prepared_source": prepare_source(mood_source),
+        }
+        result = runner.invoke(mood_state)
+        self.assertEqual(result["status"], "validation_passed")
+        self.assertIn("the monkey", result["generated"].explanation or "")
+        self.assertNotIn("choice_pairs", result["generated"].explanation or "")
 
 
 if __name__ == "__main__":
