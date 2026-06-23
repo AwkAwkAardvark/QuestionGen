@@ -12,7 +12,7 @@ def create_llm(
     from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(
-        model=model_name or "gpt-4.1-mini",
+        model=model_name or "gpt-5-mini",
         temperature=0.0 if temperature is None else temperature,
         **kwargs,
     )

@@ -12,6 +12,7 @@ from questiongen.schemas import (
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
 )
+from questiongen.validators import validate_sentence_insertion_output
 
 
 class RendererTests(unittest.TestCase):
@@ -51,6 +52,61 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(generated.BatchRowId, 0)
         self.assertEqual(generated.explanation, "문맥상 이 위치가 가장 자연스럽습니다.")
         self.assertEqual(generated.student_paragraph, "① A. ② B. ③ D. ④ E. ⑤ F.")
+
+    def test_sentence_insertion_renderer_keeps_abbreviation_heavy_target_intact(self) -> None:
+        source = (
+            "Some people love this combination, whereas others can’t seem to stand it. "
+            "It can even cause quite heated arguments. "
+            "If you haven’t guessed already, it’s the tasty or nasty - depending on your taste - ham and pineapple pizza. "
+            "The man who created this pizza was neither Italian nor Hawaiian. "
+            "A Greek immigrant from Canada, Sam Panopoulos did not want to stick to the usual ingredients on pizzas, like pepperoni and mushrooms. "
+            "He spread canned pineapple and sliced ham onto a pizza and called it “the Hawaiian” as that was what was written on the pineapple can. "
+            "Hardly did he know that he had created a classic combination. "
+            "Even now, in the U.S. and U.K., no pizza menu seems complete without it. "
+            "In Italy, however, most people find pineapple on pizza distasteful. "
+            "Why is the Hawaiian pizza so divisive? "
+            "The combination is not that odd. "
+            "Pineapple and ham is not the only fruit and meat pairing in kitchens around the world. "
+            "In France, duck is paired with a sweet orange sauce, and an American Thanksgiving turkey dinner would not be complete without cranberry sauce. "
+            "Many people enjoy salty and sweet flavor combinations, while some others prefer keeping those tastes as far from each other as possible."
+        )
+        prepared = prepare_source(source)
+        plan = SentenceInsertionPlan(
+            target_unit_ids=["S6"],
+            selected_gap_ids=["G0", "G2", "G4", "G6", "G12"],
+            correct_gap_id="G6",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        result = render_sentence_insertion(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "10-03",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "sentence_insertion",
+                "prepared_source": prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_TYPES["sentence_insertion"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        generated = result["generated"]
+        self.assertEqual(
+            generated.given_sentence,
+            "Even now, in the U.S. and U.K., no pizza menu seems complete without it.",
+        )
+        self.assertNotIn("and U.K., no pizza menu seems complete without it.", generated.student_paragraph)
+        self.assertEqual(
+            validate_sentence_insertion_output(
+                prepared_source=prepared,
+                plan=plan,
+                generated=generated,
+                type_spec=QUESTION_TYPES["sentence_insertion"],
+            ),
+            [],
+        )
 
     def test_paragraph_ordering_renderer_builds_expected_output(self) -> None:
         prepared = prepare_source("A. B. C. D. E. F.")

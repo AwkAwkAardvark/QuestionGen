@@ -61,8 +61,9 @@ Repair rules:
 - Re-check that `selected_gap_ids` contains exactly five unique gap IDs.
 - Re-check that you did not choose both gaps immediately before and after the target sentence.
 - Re-check that the five selected gap IDs still map to five distinct rendered positions after removing the target sentence.
+- Re-check that the target sentence is not fragmentary, first-only, last-only, or supported by only one side of the context.
 - Keep the explanation in Korean.
-- Rewrite the explanation as teacher-facing Korean prose that uses sentence meaning rather than internal IDs, gap labels, schema field names, or renderer mechanics.
+- Rewrite the explanation as teacher-facing Korean prose that uses the surrounding sentences as evidence rather than the given sentence itself, internal IDs, gap labels, schema field names, or renderer mechanics.
 - Return only structured data matching the schema.
 """.strip()
 
@@ -117,8 +118,9 @@ Repair rules:
 - Re-check that flattening the intro block followed by the three continuation blocks reproduces the full sentence inventory in exactly the original order.
 - Keep exactly three continuation blocks.
 - Keep each block non-empty.
+- Re-check that the ordering is forced by adjacency, not just by a generic intro-middle-end summary or interchangeable examples.
 - Keep the explanation in Korean.
-- Rewrite the explanation as teacher-facing Korean prose that uses thematic or logical progression rather than internal sentence IDs, block inventories, or schema mechanics.
+- Rewrite the explanation as teacher-facing Korean prose that explains why one block follows the previous block rather than using internal sentence IDs, block inventories, or schema mechanics.
 - Return only structured data matching the schema.
 """.strip()
 
@@ -243,6 +245,7 @@ Repair rules:
 - Re-check that `paraphrase_choices_ko` contains exactly five unique Korean choices.
 - Re-check that `correct_choice` is one of `paraphrase_choices_ko`.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
+- Re-check that the selected span is not a dangling fragment, a surface comparison phrase, or a weakly central literal phrase.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains surface wording, contextual meaning, and passage evidence without schema fields or mechanics.
 - Return only structured data matching the schema.

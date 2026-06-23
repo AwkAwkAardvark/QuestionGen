@@ -12,6 +12,8 @@
 - [x] Preserve failed type/passage combinations as exported results with readable `status` and `errors`.
 - [x] Treat question-type incompatibility as a first-class expected outcome rather than forcing it into generic planner/source failure labels.
 - [x] Use CSV and JSON as the primary debug artifacts once orchestration/export work is complete.
+- [x] Ship one cheaper default model first: `gpt-5-mini`.
+- [x] Defer per-question-type model routing until after the live pipeline is stable.
 
 ## Wave 1: Backend Foundation
 
@@ -89,6 +91,10 @@
 - [x] Split source provenance from internal deterministic row identity so `OriginalQuestionNumber` can remain an opaque label and `BatchRowId` can drive internal ordering behavior.
 - [x] Keep exported explanations teacher-facing by rejecting internal `S#` / `G#` notation and schema-mechanics language.
 - [x] Separate teacher-facing explanation generation from structural planning so explanation writing can use post-render textual evidence rather than planner-internal notation.
+- [x] Make sentence parsing abbreviation-safe and reject fragmentary sentence units before they leak into live question families.
+- [x] Harden `sentence_insertion` so weak one-sided targets fail deterministically and explanations rely on left/right context rather than on the given sentence itself.
+- [x] Harden `paragraph_ordering` so weakly forced or parallel-example block splits fail deterministically and explanations justify adjacency edge by edge.
+- [x] Harden `underlined_phrase_meaning` so literal, fragmentary, and weakly central spans fail earlier in the pipeline.
 
 ### Live families already shipped
 
@@ -133,7 +139,7 @@
   - first-release target: contextual paraphrase / 함축 의미 추론, not literal translation
   - shipped v1 policy: self-select one phrase, prefer abstract or claim-bearing spans, use Korean contextual paraphrase choices, and render `[밑줄]...[/밑줄]` in exports
 - [ ] `fill_in_the_blank`
-  - reason for order: next planned single-span consumer now that the span layer and `underlined_phrase_meaning` are live; still riskier because it also needs blank-shape policy and proposition-level distractor logic
+  - reason for order: next planned single-span consumer now that the parser/validator stabilization pass and live-family hardening pass are complete; still riskier because it also needs blank-shape policy and proposition-level distractor logic
   - first supported format: `blank_inference_proposition_5_choices`
   - first-release target: 빈칸추론, not generic phrase deletion
   - main hard problems: proposition-level target selection, non-trivial recoverability, and diagnostic distractors

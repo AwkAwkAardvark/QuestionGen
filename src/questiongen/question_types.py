@@ -21,6 +21,9 @@ SENTENCE_INSERTION_PLANNER_PROMPT = """
 - Before returning, verify that the five selected gap IDs still map to five distinct rendered positions after removing the target sentence from the paragraph.
 - First finalize `selected_gap_ids`, then choose `correct_gap_id` from that exact five-item list only.
 - Set correct_gap_id to the gap where the target sentence best fits back into the paragraph.
+- Prefer target sentences with distinct evidence on both sides: the left context should make the target sentence necessary, and the right context should read better because the target sentence is present.
+- Reject first-sentence, last-sentence, fragmentary, or connector-only targets instead of forcing a weak item.
+- Do not treat the given sentence itself as the main explanation evidence. Use the surrounding sentences as the evidence anchors.
 - The target sentence text must remain unchanged.
 - Use only IDs that appear in the inventories.
 - Write the explanation entirely in Korean.
@@ -34,6 +37,9 @@ PARAGRAPH_ORDERING_PLANNER_PROMPT = """
 - The remaining three blocks are the continuation blocks that must follow the intro in their original logical order.
 - Use every sentence exactly once across the intro block and the three continuation blocks.
 - Before returning, verify that flattening the intro block followed by the three continuation blocks reproduces the full sentence inventory in exactly the original order.
+- Prefer block boundaries whose adjacency is forced by the passage, not just by a generic start-middle-end outline.
+- Reject partitions where the continuation blocks behave like parallel examples or interchangeable subpoints.
+- In the explanation, justify why one block follows the previous block, not just that the text starts, develops, and ends.
 - Do not generate final student-facing paragraph text.
 - Write the explanation entirely in Korean.
 - The explanation must be teacher-facing: explain the thematic or logical progression, not internal sentence IDs, block inventories, or schema mechanics.
@@ -61,7 +67,8 @@ UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT = """
 - Treat this first rollout as a single-span contextual paraphrase item under the broad key underlined_phrase_meaning.
 - Self-select exactly one span candidate from the provided span inventory.
 - Prefer abstract, figurative, evaluative, or claim-bearing phrases whose meaning must be inferred from the passage.
-- Reject literal dictionary-gloss phrases, phrase targets that are too context-free, and weak targets that are not central to the passage claim.
+- Reject literal dictionary-gloss phrases, dangling phrase fragments, surface comparison phrases, and weak targets that are not central to the passage claim.
+- Prefer propositionally or argumentatively central spans over easy surface-paraphrase fragments.
 - Copy the selected span ID into `selected_span_id` and the exact source text into `selected_span_text`.
 - Do not alter the source passage text or generate final student-facing paragraph text.
 - Create exactly five unique Korean contextual paraphrase choices in `paraphrase_choices_ko`.

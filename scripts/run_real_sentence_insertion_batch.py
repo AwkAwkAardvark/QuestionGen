@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="gpt-4.1-mini",
+        default="gpt-5-mini",
         help="OpenAI chat model to use for structured planning.",
     )
     return parser.parse_args()

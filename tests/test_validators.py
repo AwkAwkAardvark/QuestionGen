@@ -5,10 +5,13 @@ import unittest
 from questiongen.parsers import prepare_source
 from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
 from questiongen.schemas import (
+    GapUnit,
     GeneratedQuestion,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
+    PreparedSource,
     SentenceInsertionPlan,
+    SourceUnit,
     UnderlinedPhraseMeaningPlan,
 )
 from questiongen.validators import (
@@ -16,6 +19,7 @@ from questiongen.validators import (
     source_check,
     validate_mood_atmosphere_output,
     validate_plan_against_prepared_source,
+    validate_prepared_source,
     validate_paragraph_ordering_output,
     validate_sentence_insertion_output,
     validate_teacher_facing_explanation,
@@ -81,6 +85,23 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "source_passed")
 
+    def test_prepared_source_rejects_fragmentary_sentence_units(self) -> None:
+        prepared = PreparedSource(
+            source_text="Even now, in the U.S. and U.K., no pizza menu seems complete without it.",
+            sentence_units=[
+                SourceUnit(id="S0", text="Even now, in the U.S.", index=0),
+                SourceUnit(id="S1", text="and U.K., no pizza menu seems complete without it.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[],
+        )
+        errors = validate_prepared_source(prepared)
+        self.assertTrue(any("fragmentary" in error for error in errors))
+
     def test_mood_atmosphere_source_check_rejects_neutral_passage(self) -> None:
         neutral_source = "Markets respond to prices over time. Producers adjust output when costs rise. Consumers compare alternatives before buying. Public policy can influence incentives in different sectors. Long-term trends often depend on resource allocation."
         result = source_check(
@@ -122,6 +143,40 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "qtype_incompatibility_error")
         self.assertTrue(any("too literal" in error for error in result["errors"]))
+
+    def test_underlined_phrase_meaning_source_check_rejects_pizza_passage_as_weak_inventory(self) -> None:
+        pizza_source = (
+            "Some people love this combination, whereas others can’t seem to stand it. "
+            "It can even cause quite heated arguments. "
+            "If you haven’t guessed already, it’s the tasty or nasty - depending on your taste - ham and pineapple pizza. "
+            "The man who created this pizza was neither Italian nor Hawaiian. "
+            "A Greek immigrant from Canada, Sam Panopoulos did not want to stick to the usual ingredients on pizzas, like pepperoni and mushrooms. "
+            "He spread canned pineapple and sliced ham onto a pizza and called it “the Hawaiian” as that was what was written on the pineapple can. "
+            "Hardly did he know that he had created a classic combination. "
+            "Even now, in the U.S. and U.K., no pizza menu seems complete without it. "
+            "In Italy, however, most people find pineapple on pizza distasteful. "
+            "Why is the Hawaiian pizza so divisive? "
+            "The combination is not that odd. "
+            "Pineapple and ham is not the only fruit and meat pairing in kitchens around the world. "
+            "In France, duck is paired with a sweet orange sauce, and an American Thanksgiving turkey dinner would not be complete without cranberry sauce. "
+            "Many people enjoy salty and sweet flavor combinations, while some others prefer keeping those tastes as far from each other as possible."
+        )
+        result = source_check(
+            {
+                "source_paragraph": pizza_source,
+                "OriginalQuestionNumber": "10-03",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "underlined_phrase_meaning",
+                "prepared_source": prepare_source(pizza_source),
+                "plan": None,
+                "generated": None,
+                "status": "source_prepared",
+                "errors": [],
+            },
+            QUESTION_TYPES["underlined_phrase_meaning"],
+        )
+        self.assertEqual(result["status"], "qtype_incompatibility_error")
+        self.assertTrue(any("weakly central" in error or "too literal" in error for error in result["errors"]))
 
     def test_plan_check_rejects_collapsed_sentence_insertion_gaps_as_planning_error(self) -> None:
         plan = SentenceInsertionPlan(
@@ -169,6 +224,28 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planning_error")
         self.assertTrue(any("cover all sentence IDs" in error for error in result["errors"]))
+
+    def test_paragraph_ordering_plan_rejects_parallel_example_blocks(self) -> None:
+        source = (
+            "Researchers use migration stories to compare how birds react to seasonal change. "
+            "In Canada, geese travel south when the lakes freeze each winter. "
+            "In Europe, storks leave their nesting grounds as temperatures drop. "
+            "In Asia, cranes move between wetlands during the dry season. "
+            "Each route reflects a local climate pattern. "
+            "Together, these cases show how migration follows environmental pressure."
+        )
+        prepared = prepare_source(source)
+        plan = ParagraphOrderingPlan(
+            intro_unit_ids=["S0"],
+            continuation_blocks=[["S1"], ["S2"], ["S3", "S4", "S5"]],
+            explanation="도입부 다음에 사례들을 배열하는 흐름입니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_TYPES["paragraph_ordering"],
+        )
+        self.assertTrue(any("parallel examples" in error or "too weakly forced" in error for error in errors))
 
     def test_final_validator_catches_plan_and_rendering_mismatches(self) -> None:
         plan = SentenceInsertionPlan(
@@ -351,6 +428,29 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("collapse" in error for error in errors))
 
+    def test_sentence_insertion_plan_rejects_one_sided_connector_target(self) -> None:
+        source = (
+            "Many schools now rely on digital platforms for daily assignments. "
+            "Students often check several apps before class even begins. "
+            "However, the schedule occasionally changes without warning. "
+            "Teachers then post updates across multiple channels. "
+            "Parents struggle to follow the latest instructions at home. "
+            "Administrators are now looking for a simpler system."
+        )
+        prepared = prepare_source(source)
+        plan = SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_TYPES["sentence_insertion"],
+        )
+        self.assertTrue(any("one-sided linkage" in error or "connector cues" in error for error in errors))
+
     def test_underlined_phrase_meaning_plan_validator_requires_known_span_and_exact_text(self) -> None:
         source = (
             "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
@@ -382,6 +482,36 @@ class ValidatorTests(unittest.TestCase):
         bad_plan = plan.model_copy(update={"selected_span_text": "brought only satisfaction"})
         errors = validate_plan_against_prepared_source(prepared, bad_plan, QUESTION_TYPES["underlined_phrase_meaning"])
         self.assertTrue(any("selected_span_text" in error for error in errors))
+
+    def test_underlined_phrase_meaning_plan_rejects_surface_comparison_span(self) -> None:
+        source = (
+            "It has been said that most people listen with the intention to reply rather than to understand. "
+            "Facilitating your mentee’s thinking, rather than trying to do it for them, is your primary responsibility as a mentor, however tempting that may be. "
+            "If during a mentoring session, you realize you're doing most of the talking, then just stop, sit back and listen with a patient mind. "
+            "A good part of the mentee’s learning process, which involves dealing with complex ideas, happens when he/she thinks out loud. "
+            "Therefore, your mentee should be doing most of the talking. "
+            "Listening actively and empathically helps a mentee to have a sense of having their thoughts valued and acknowledged; it is essential that you listen well."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(span for span in prepared.span_units if span.text == "reply rather than to understand")
+        plan = UnderlinedPhraseMeaningPlan(
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            paraphrase_choices_ko=[
+                "이해보다 반응에 치우친 태도를 뜻한다",
+                "경청의 중요성을 요약한 표현이다",
+                "멘토가 직접 해결책을 주어야 한다는 뜻이다",
+                "말하기보다 침묵이 더 중요하다는 뜻이다",
+                "학생의 감정을 즉시 교정해야 한다는 뜻이다",
+            ],
+            correct_choice="이해보다 반응에 치우친 태도를 뜻한다",
+            surface_meaning="이해하기보다 대답하려 한다는 말",
+            contextual_meaning="상대의 말을 진정으로 이해하기보다 즉각 반응하려는 태도를 뜻한다",
+            supporting_evidence="most people listen with the intention to reply rather than to understand",
+            explanation="문맥상 이해보다 반응에 치우친 태도를 뜻합니다.",
+        )
+        errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["underlined_phrase_meaning"])
+        self.assertTrue(any("surface comparison phrase" in error for error in errors))
 
     def test_paragraph_ordering_validator_accepts_valid_output(self) -> None:
         plan = ParagraphOrderingPlan(

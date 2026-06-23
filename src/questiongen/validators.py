@@ -4,7 +4,7 @@ from collections.abc import Mapping
 import re
 from typing import Any
 
-from .parsers import normalize_text
+from .parsers import content_tokens, looks_fragmentary_sentence, looks_hanging_phrase, normalize_text
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
 from .renderers import (
     DISPLAY_PERMUTATIONS,
@@ -70,6 +70,44 @@ _INTERNAL_EXPLANATION_TERM_PATTERNS = (
     "gap id",
     "sentence id",
 )
+_TRANSITION_STARTERS = {
+    "accordingly",
+    "as",
+    "because",
+    "but",
+    "consequently",
+    "for",
+    "however",
+    "instead",
+    "meanwhile",
+    "moreover",
+    "so",
+    "therefore",
+    "thus",
+    "while",
+}
+_REFERENTIAL_CUES = {
+    "another",
+    "he",
+    "it",
+    "its",
+    "she",
+    "such",
+    "that",
+    "theirs",
+    "them",
+    "these",
+    "they",
+    "this",
+    "those",
+}
+_PARALLEL_BLOCK_STARTERS = {
+    "for example",
+    "for instance",
+    "in",
+    "another",
+    "similarly",
+}
 
 
 def input_check(
@@ -184,6 +222,11 @@ def validate_prepared_source(
             errors.append(f"Sentence unit {unit.id} must have kind 'sentence'.")
         if unit.index != index:
             errors.append(f"Sentence unit {unit.id} should have index {index}, got {unit.index}.")
+        previous_text = sentence_units[index - 1].text if index > 0 else None
+        if looks_fragmentary_sentence(unit.text, previous_text=previous_text):
+            errors.append(
+                f"Sentence unit {unit.id} appears fragmentary after deterministic parsing: {unit.text}"
+            )
 
     expected_gap_count = len(sentence_units) + 1
     if len(gap_units) != expected_gap_count:
@@ -293,7 +336,9 @@ def _validate_sentence_insertion_plan(prepared_source: PreparedSource, plan: obj
         return ["SentenceInsertionPlan is missing for deterministic plan checks."]
 
     errors: list[str] = []
-    sentence_ids = [unit.id for unit in prepared_source.sentence_units]
+    sentence_units = prepared_source.sentence_units
+    sentence_ids = [unit.id for unit in sentence_units]
+    sentence_map = {unit.id: unit for unit in sentence_units}
     gap_ids = {gap.id for gap in prepared_source.gap_units}
     target_id = plan.target_unit_ids[0] if plan.target_unit_ids else None
 
@@ -314,6 +359,34 @@ def _validate_sentence_insertion_plan(prepared_source: PreparedSource, plan: obj
             "after removing the target sentence."
         )
 
+    target_unit = sentence_map[target_id]
+    target_index = target_unit.index
+    if looks_fragmentary_sentence(
+        target_unit.text,
+        previous_text=sentence_units[target_index - 1].text if target_index > 0 else None,
+    ):
+        errors.append("SentenceInsertionPlan target sentence is fragmentary and should be rejected.")
+
+    if _should_apply_live_quality_gates(sentence_units):
+        if target_index == 0 or target_index == len(sentence_units) - 1:
+            errors.append(
+                "SentenceInsertionPlan target sentence must have both left and right source context for a stable item."
+            )
+            return errors
+
+        before_text = sentence_units[target_index - 1].text
+        after_text = sentence_units[target_index + 1].text
+        left_score = _adjacency_score(before_text, target_unit.text)
+        right_score = _adjacency_score(target_unit.text, after_text)
+        if left_score < 2 or right_score < 2:
+            errors.append(
+                "SentenceInsertionPlan target sentence needs distinct left-context and right-context evidence, not one-sided linkage."
+            )
+        if _looks_connector_only_sentence(target_unit.text) and left_score <= 2 and right_score <= 2:
+            errors.append(
+                "SentenceInsertionPlan target sentence relies too heavily on surface connector cues without stronger textual anchors."
+            )
+
     return errors
 
 
@@ -325,6 +398,25 @@ def _validate_paragraph_ordering_plan(prepared_source: PreparedSource, plan: obj
     flattened = plan.intro_unit_ids + [unit_id for block in plan.continuation_blocks for unit_id in block]
     if flattened != sentence_ids:
         return ["ParagraphOrderingPlan must cover all sentence IDs exactly once in source order."]
+    if not _should_apply_live_quality_gates(prepared_source.sentence_units):
+        return []
+
+    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
+    intro_text = " ".join(sentence_map[unit_id] for unit_id in plan.intro_unit_ids)
+    logical_blocks = [
+        " ".join(sentence_map[unit_id] for unit_id in block)
+        for block in plan.continuation_blocks
+    ]
+    ordered_segments = [intro_text, *logical_blocks]
+    edge_scores = [
+        _adjacency_score(ordered_segments[index], ordered_segments[index + 1])
+        for index in range(len(ordered_segments) - 1)
+    ]
+    if any(score < 2 for score in edge_scores):
+        return ["ParagraphOrderingPlan adjacency is too weakly forced to support a stable ordering item."]
+
+    if _looks_like_parallel_blocks(logical_blocks) and max(edge_scores, default=0) <= 3:
+        return ["ParagraphOrderingPlan continuation blocks behave like parallel examples rather than forced adjacency."]
     return []
 
 
@@ -390,6 +482,11 @@ def _validate_underlined_phrase_meaning_plan(prepared_source: PreparedSource, pl
     if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
         errors.append("UnderlinedPhraseMeaningPlan supporting_evidence must be copied from the source passage.")
 
+    if _should_apply_live_quality_gates(prepared_source.sentence_units):
+        span_quality_error = _underlined_span_quality_error(selected_span.text, selected_span.heuristic_tags, selected_span.priority_score)
+        if span_quality_error is not None:
+            errors.append(span_quality_error)
+
     return errors
 
 
@@ -398,13 +495,21 @@ def _validate_underlined_phrase_meaning_compatibility(prepared_source: PreparedS
     if not span_units:
         return ["Passage has no suitable contextual phrase candidate for underlined_phrase_meaning."]
 
-    top_score = max(span.priority_score for span in span_units)
+    viable_spans = [
+        span
+        for span in span_units
+        if _underlined_span_quality_error(span.text, span.heuristic_tags, span.priority_score) is None
+    ]
+    if not viable_spans:
+        return ["Available phrase candidates are too literal, fragmentary, or weakly central for underlined_phrase_meaning."]
+
+    top_score = max(span.priority_score for span in viable_spans)
     if top_score < 5:
         return ["Available phrase candidates are too literal for an underlined_phrase_meaning item."]
 
     claim_bearing_spans = [
         span
-        for span in span_units
+        for span in viable_spans
         if {"abstract_term", "claim_bearing", "contextual_cue", "phrase_frame"} & set(span.heuristic_tags)
     ]
     if not claim_bearing_spans:
@@ -506,6 +611,8 @@ def validate_sentence_insertion_output(
     target_sentence = sentence_map[target_id].text
     if generated.given_sentence != target_sentence:
         errors.append("given_sentence must exactly match the selected target sentence.")
+    if looks_fragmentary_sentence(target_sentence):
+        errors.append("given_sentence must not be a fragmentary sentence unit.")
 
     marker_counts = {marker: generated.student_paragraph.count(marker) for marker in expected_choices}
     for marker, count in marker_counts.items():
@@ -834,6 +941,73 @@ def validate_underlined_phrase_meaning_output(
     )
 
     return errors
+
+
+def _should_apply_live_quality_gates(sentence_units: list[object]) -> bool:
+    long_sentences = 0
+    for unit in sentence_units:
+        text = getattr(unit, "text", "")
+        if len(text.split()) >= 4:
+            long_sentences += 1
+    return long_sentences >= 3
+
+
+def _adjacency_score(left_text: str, right_text: str) -> int:
+    score = 0
+    shared = content_tokens(left_text) & content_tokens(right_text)
+    if shared:
+        score += min(3, len(shared) + 1)
+
+    right_lower = normalize_text(right_text).lower()
+    left_lower = normalize_text(left_text).lower()
+    if left_text.rstrip().endswith("?"):
+        score += 2
+    if _starts_with_any(right_lower, _TRANSITION_STARTERS):
+        score += 1
+    if _contains_any(right_lower, _REFERENTIAL_CUES):
+        score += 1
+    if any(token in right_lower for token in ("this", "these", "such", "therefore", "however")) and left_lower:
+        score += 1
+    return score
+
+
+def _looks_connector_only_sentence(text: str) -> bool:
+    normalized = normalize_text(text).lower()
+    if not normalized:
+        return False
+    starts_with_connector = _starts_with_any(normalized, _TRANSITION_STARTERS)
+    content = content_tokens(text)
+    return starts_with_connector and len(content) <= 3
+
+
+def _looks_like_parallel_blocks(blocks: list[str]) -> bool:
+    parallel_count = 0
+    for block in blocks:
+        normalized = normalize_text(block).lower()
+        if _starts_with_any(normalized, _PARALLEL_BLOCK_STARTERS):
+            parallel_count += 1
+    return parallel_count >= 2
+
+
+def _underlined_span_quality_error(text: str, tags: list[str], priority_score: int) -> str | None:
+    tag_set = set(tags)
+    if looks_hanging_phrase(text):
+        return "Selected span is fragmentary and leaves a dangling phrase boundary."
+    if priority_score < 5:
+        return "Selected span is too literal or weak for underlined_phrase_meaning."
+    if "surface_comparison" in tag_set and "abstract_term" not in tag_set:
+        return "Selected span is a surface comparison phrase, not a central contextual target."
+    if not {"abstract_term", "claim_bearing", "phrase_frame"} & tag_set:
+        return "Selected span is not central enough to the passage claim for underlined_phrase_meaning."
+    return None
+
+
+def _starts_with_any(text: str, phrases: set[str]) -> bool:
+    return any(text.startswith(f"{phrase} ") or text == phrase for phrase in phrases)
+
+
+def _contains_any(text: str, tokens: set[str]) -> bool:
+    return any(re.search(rf"\b{re.escape(token)}\b", text) is not None for token in tokens)
 
 
 GENERATED_QUESTION_VALIDATORS = {

@@ -75,7 +75,7 @@ def create_app():
                 )
                 model_name = gr.Textbox(
                     label="Model Name",
-                    value=os.getenv("QUESTIONGEN_MODEL", "gpt-4.1-mini"),
+                    value=os.getenv("QUESTIONGEN_MODEL", "gpt-5-mini"),
                 )
                 temperature = gr.Number(
                     label="Temperature",

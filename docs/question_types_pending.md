@@ -14,8 +14,16 @@ Current product direction:
 - Google Drive-backed runtime data and `api_key.txt`
 - launcher runs all registered question types automatically
 - valid but poor-fit passage/type pairs should surface as `qtype_incompatibility_error`
+- `gpt-5-mini` is the single default model for the current MVP
+- per-type model-tier routing is intentionally deferred until after live-pipeline stabilization
 
 Because the launcher runs every registered type, new types should not be added to the live registry until they are implementation-complete enough to tolerate mixed-source batches.
+
+Latest gating lessons from sample review:
+
+- abbreviation-safe sentence parsing matters for sentence-based families; `U.S.` / `U.K.` style splits can otherwise create fake sentence units and malformed live items
+- current live families should reject weak items more aggressively before `fill_in_the_blank` expands the registry again
+- model-tier specialization is a later optimization problem, not part of the current MVP hardening pass
 
 ## Recommended Order
 
@@ -214,10 +222,11 @@ Current recommendation on registry shape:
 
 The remaining workflow should be treated as:
 
-1. harden current live families
-2. use the live span layer to ship the blank family
-3. move to multi-span corruption families
-4. reconsider `mood_atmosphere` only at the very end, and only after explicit user confirmation
+1. stabilize parser and structural validation for live sentence/span families
+2. harden current live families
+3. use the live span layer to ship the blank family
+4. move to multi-span corruption families
+5. reconsider `mood_atmosphere` only at the very end, and only after explicit user confirmation
 
 This is safer than thinking in terms of question-type names alone because the next real architectural boundary is no longer basic span preparation itself, but how far the live span contract can be pushed without breaking mixed-batch quality.
 
@@ -297,7 +306,7 @@ Why this direction is safer:
 
 Recommended near-term shape:
 
-- `sentence_insertion`: explanation context should expose left textual anchor, target sentence text, right textual anchor, and the final correct marker
+- `sentence_insertion`: explanation context should expose distinct left/right textual anchors and the final correct marker, without treating the given sentence itself as the primary evidence anchor
 - `paragraph_ordering`: explanation context should expose intro text, displayed blocks, correct ordering, and the specific edge-by-edge reasons that force that ordering
 - future span types: explanation context should expose chosen span text, surrounding context, and the specific reason the correct option is supported
 - deferred `mood_atmosphere`: explanation context should expose cue phrases, tonal progression, and the dominant emotional or atmospheric signal if the family is revisited later

@@ -24,6 +24,21 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(normalize_text(" A \n B\t C "), "A B C")
         self.assertEqual(split_sentences("One.\n\nTwo."), ["One.", "Two."])
 
+    def test_split_sentences_keeps_u_s_and_u_k_in_one_sentence(self) -> None:
+        source = (
+            "Hardly did he know that he had created a classic combination. "
+            "Even now, in the U.S. and U.K., no pizza menu seems complete without it. "
+            "In Italy, however, most people find pineapple on pizza distasteful."
+        )
+        self.assertEqual(
+            split_sentences(source),
+            [
+                "Hardly did he know that he had created a classic combination.",
+                "Even now, in the U.S. and U.K., no pizza menu seems complete without it.",
+                "In Italy, however, most people find pineapple on pizza distasteful.",
+            ],
+        )
+
     def test_span_preparation_is_deterministic_and_source_preserving(self) -> None:
         source = (
             "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "

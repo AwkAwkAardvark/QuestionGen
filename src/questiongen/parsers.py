@@ -4,8 +4,26 @@ import re
 
 from .schemas import GapUnit, PreparedSource, SourceUnit, SpanUnit
 
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'’][A-Za-z]+)*")
+_BOUNDARY_CLOSERS = "\"')]}”’"
+_COMMON_ABBREVIATIONS = {
+    "a.m.",
+    "dr.",
+    "e.g.",
+    "etc.",
+    "i.e.",
+    "jr.",
+    "mr.",
+    "mrs.",
+    "ms.",
+    "p.m.",
+    "prof.",
+    "sr.",
+    "st.",
+    "u.k.",
+    "u.s.",
+    "vs.",
+}
 _FUNCTION_WORDS = {
     "a",
     "an",
@@ -44,6 +62,7 @@ _FUNCTION_WORDS = {
     "was",
     "were",
     "with",
+    "you",
 }
 _CONTEXTUAL_CUE_WORDS = {
     "against",
@@ -96,6 +115,7 @@ _ABSTRACT_CUE_WORDS = {
     "risk",
     "shift",
     "signal",
+    "spectrum",
     "status",
     "value",
     "wealth",
@@ -104,12 +124,68 @@ _MULTIWORD_CUE_PATTERNS = (
     "as if",
     "as though",
     "at stake",
+    "end of the spectrum",
     "in fact",
     "in turn",
     "more than",
     "no longer",
     "rather than",
 )
+_SENTENCE_FRAGMENT_STARTERS = {
+    "and",
+    "because",
+    "but",
+    "or",
+    "than",
+    "though",
+    "while",
+    "whereas",
+}
+_HANGING_EDGE_WORDS = {
+    "and",
+    "as",
+    "because",
+    "for",
+    "from",
+    "if",
+    "in",
+    "of",
+    "on",
+    "or",
+    "than",
+    "that",
+    "though",
+    "to",
+    "when",
+    "while",
+    "with",
+    "without",
+}
+_FINITE_VERB_CUES = {
+    "am",
+    "are",
+    "be",
+    "been",
+    "being",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "had",
+    "has",
+    "have",
+    "is",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "should",
+    "was",
+    "were",
+    "will",
+    "would",
+}
 _MAX_SPAN_CANDIDATES = 24
 
 
@@ -122,6 +198,48 @@ def split_sentences(text: str) -> list[str]:
     if not sentence_spans:
         return []
     return [sentence for sentence, _, _ in sentence_spans]
+
+
+def content_tokens(text: str) -> set[str]:
+    tokens = [
+        normalized
+        for match in _TOKEN_RE.finditer(text)
+        if (normalized := _normalize_token(match.group(0)))
+    ]
+    return {
+        token
+        for token in tokens
+        if token not in _FUNCTION_WORDS and len(token) >= 3
+    }
+
+
+def looks_hanging_phrase(text: str) -> bool:
+    tokens = [_normalize_token(match.group(0)) for match in _TOKEN_RE.finditer(text)]
+    if not tokens:
+        return False
+    return tokens[0] in _HANGING_EDGE_WORDS or tokens[-1] in _HANGING_EDGE_WORDS
+
+
+def looks_fragmentary_sentence(text: str, *, previous_text: str | None = None) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+
+    tokens = [_normalize_token(match.group(0)) for match in _TOKEN_RE.finditer(normalized)]
+    if not tokens:
+        return False
+
+    first_alpha = next((char for char in normalized if char.isalpha()), "")
+    if previous_text and first_alpha and first_alpha.islower() and tokens[0] in _SENTENCE_FRAGMENT_STARTERS:
+        return True
+
+    if _ends_with_abbreviation(normalized) and not _has_finite_verb(tokens):
+        return True
+
+    if tokens[-1] in _HANGING_EDGE_WORDS:
+        return True
+
+    return False
 
 
 def prepare_source(source_paragraph: str) -> PreparedSource:
@@ -160,26 +278,54 @@ def _split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
         return []
 
     leading_whitespace = len(text) - len(text.lstrip())
-    parts = _SENTENCE_SPLIT_RE.split(normalized)
-    cursor = 0
     sentence_spans: list[tuple[str, int, int]] = []
+    sentence_start = 0
+    index = 0
 
-    for part in parts:
-        sentence = part.strip()
-        if not sentence:
+    while index < len(normalized):
+        char = normalized[index]
+        if char not in ".!?":
+            index += 1
             continue
-        relative_start = normalized.find(sentence, cursor)
+
+        boundary_end = index
+        while boundary_end + 1 < len(normalized) and normalized[boundary_end + 1] in _BOUNDARY_CLOSERS:
+            boundary_end += 1
+
+        if not _is_sentence_boundary(normalized, index, boundary_end):
+            index = boundary_end + 1
+            continue
+
+        sentence = normalized[sentence_start : boundary_end + 1].strip()
+        if sentence:
+            relative_start = normalized.find(sentence, sentence_start)
+            if relative_start < 0:
+                relative_start = sentence_start
+            relative_end = relative_start + len(sentence)
+            sentence_spans.append(
+                (
+                    sentence,
+                    leading_whitespace + relative_start,
+                    leading_whitespace + relative_end,
+                )
+            )
+
+        sentence_start = _skip_whitespace(normalized, boundary_end + 1)
+        index = sentence_start
+
+    remainder = normalized[sentence_start:].strip()
+    if remainder:
+        relative_start = normalized.find(remainder, sentence_start)
         if relative_start < 0:
-            relative_start = cursor
-        relative_end = relative_start + len(sentence)
+            relative_start = sentence_start
+        relative_end = relative_start + len(remainder)
         sentence_spans.append(
             (
-                sentence,
+                remainder,
                 leading_whitespace + relative_start,
                 leading_whitespace + relative_end,
             )
         )
-        cursor = relative_end
 
     return sentence_spans
 
@@ -269,9 +415,12 @@ def _score_span_candidate(
     candidate_text: str,
 ) -> tuple[int, list[str]]:
     token_texts = [match.group(0) for match in token_matches[start_index:end_index]]
-    lowered_tokens = [token.lower() for token in token_texts]
-    content_tokens = [token for token in lowered_tokens if token not in _FUNCTION_WORDS]
-    if len(content_tokens) < 1:
+    lowered_tokens = [_normalize_token(token) for token in token_texts]
+    candidate_lowered = candidate_text.lower()
+    content = [token for token in lowered_tokens if token not in _FUNCTION_WORDS]
+    if len(content) < 1:
+        return 0, []
+    if looks_hanging_phrase(candidate_text):
         return 0, []
 
     score = 0
@@ -279,7 +428,7 @@ def _score_span_candidate(
 
     if 2 <= len(token_texts) <= 5:
         score += 2
-    if len(content_tokens) >= 2:
+    if len(content) >= 2:
         score += 1
     if any(token in _CONTEXTUAL_CUE_WORDS for token in lowered_tokens):
         score += 2
@@ -287,16 +436,21 @@ def _score_span_candidate(
     if any(token in _ABSTRACT_CUE_WORDS for token in lowered_tokens):
         score += 2
         tags.append("abstract_term")
-    if any(pattern in candidate_text.lower() for pattern in _MULTIWORD_CUE_PATTERNS):
+    if any(pattern in candidate_lowered for pattern in _MULTIWORD_CUE_PATTERNS):
         score += 2
         tags.append("phrase_frame")
+    if "rather than" in candidate_lowered and "abstract_term" not in tags:
+        score -= 3
+        tags.append("surface_comparison")
     if start_index > 0 and end_index < len(token_matches):
         score += 1
         tags.append("embedded_phrase")
-    if any(len(token) >= 8 for token in content_tokens):
+    if any(len(token) >= 8 for token in content):
         score += 1
         tags.append("dense_lexis")
-    if {"contextual_cue", "abstract_term"} <= set(tags) or "phrase_frame" in tags:
+    if {"contextual_cue", "abstract_term"} <= set(tags) or (
+        "phrase_frame" in tags and "surface_comparison" not in tags
+    ):
         score += 1
         tags.append("claim_bearing")
     if len(token_texts) == 2 and not {"contextual_cue", "abstract_term", "phrase_frame"} & set(tags):
@@ -344,3 +498,69 @@ def _overlaps_too_much(left: dict[str, object], right: dict[str, object]) -> boo
 
     shorter = min(left_end - left_start, right_end - right_start)
     return overlap / shorter > 0.6
+
+
+def _is_sentence_boundary(text: str, period_index: int, boundary_end: int) -> bool:
+    next_index = _skip_whitespace(text, boundary_end + 1)
+    if next_index >= len(text):
+        return True
+
+    if text[period_index] == "." and _looks_like_nonterminal_period(text, period_index):
+        return False
+
+    next_char = text[next_index]
+    if next_char.islower():
+        return False
+    return True
+
+
+def _looks_like_nonterminal_period(text: str, period_index: int) -> bool:
+    previous_char = text[period_index - 1] if period_index > 0 else ""
+    next_char = text[period_index + 1] if period_index + 1 < len(text) else ""
+    if previous_char.isdigit() and next_char.isdigit():
+        return True
+    if previous_char.isupper() and next_char.isupper():
+        if period_index + 2 < len(text) and text[period_index + 2] == ".":
+            return True
+
+    if _ends_with_abbreviation(text[: period_index + 1]):
+        next_index = _skip_whitespace(text, period_index + 1)
+        if next_index < len(text):
+            return True
+
+    return False
+
+
+def _skip_whitespace(text: str, index: int) -> int:
+    while index < len(text) and text[index].isspace():
+        index += 1
+    return index
+
+
+def _ends_with_abbreviation(text: str) -> bool:
+    stripped = text.strip().lower()
+    if any(stripped.endswith(abbreviation) for abbreviation in _COMMON_ABBREVIATIONS):
+        return True
+    return re.search(r"(?:\b[A-Za-z]\.){2,}$", stripped) is not None
+
+
+def _has_finite_verb(tokens: list[str]) -> bool:
+    for token in tokens:
+        if token in _FINITE_VERB_CUES:
+            return True
+        if len(token) >= 4 and token.endswith("ed"):
+            return True
+    return False
+
+
+def _normalize_token(token: str) -> str:
+    lowered = token.lower().strip("'’")
+    if lowered.endswith("'s") or lowered.endswith("’s"):
+        lowered = lowered[:-2]
+    if len(lowered) > 4 and lowered.endswith("ies"):
+        return lowered[:-3] + "y"
+    if len(lowered) > 4 and lowered.endswith("es") and not lowered.endswith("ses"):
+        return lowered[:-2]
+    if len(lowered) > 3 and lowered.endswith("s") and not lowered.endswith("ss"):
+        return lowered[:-1]
+    return lowered

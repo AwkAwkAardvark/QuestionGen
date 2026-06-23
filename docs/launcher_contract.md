@@ -36,7 +36,7 @@ Expected `api_key.txt` format:
 
 ```txt
 OPENAI_API_KEY=sk-...
-QUESTIONGEN_MODEL=gpt-4.1-mini
+QUESTIONGEN_MODEL=gpt-5-mini
 QUESTIONGEN_TEMPERATURE=0
 ```
 
@@ -46,6 +46,8 @@ Rules:
 - `src/questiongen/` must not read secret files directly.
 - Environment variables remain the final runtime interface consumed by the LLM client layer.
 - Model and temperature values in the secret file are launcher configuration, not package-owned defaults.
+- The current MVP policy is one shared default model, `gpt-5-mini`; launcher overrides still win through `QUESTIONGEN_MODEL` or explicit `model_name`.
+- Per-question-type model routing is intentionally deferred until after the live pipeline is stable.
 
 ## Package and Launcher Boundary
 
@@ -133,6 +135,7 @@ Rules:
 - Expected incompatibility between a valid passage and a specific question type should surface as `qtype_incompatibility_error`, not be collapsed into generic source or planner failure.
 - `source_error` should be reserved for malformed inputs, failed source preparation, or broken deterministic prepared-source invariants.
 - Deterministic plan violations discovered after LLM planning but before rendering should surface as `planning_error`, not `rendering_error`.
+- `validation_passed` rows are expected to be structurally intact, including abbreviation-safe sentence preparation and fragment-safe rendered text, not just schema-valid fields.
 - `underlined_phrase_meaning` should preserve the original passage exactly except for wrapping the chosen source span as `[밑줄]...[/밑줄]` in exported `student_paragraph`.
 - The deferred `mood_atmosphere` implementation must not appear in default launcher or batch outputs unless it is explicitly reactivated in the live registry later.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
@@ -140,6 +143,7 @@ Rules:
 - Planner rationale may remain internal, but exported explanations for the live types are now rewritten from rendered item context and textual evidence rather than copied directly from planner-internal IDs or schema fields.
 - The launcher may write JSON directly from `result.model_dump()` payloads until a dedicated package-level JSON exporter is added.
 - Exported results should preserve both the original source label (`OriginalQuestionNumber`) and the internal deterministic row handle (`BatchRowId`).
+- Model selection remains launcher-controlled for now; the launcher should not assume any live per-type routing policy yet.
 
 ## Notebook Shape
 

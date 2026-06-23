@@ -89,6 +89,25 @@ class _InvalidOrderingCoveragePlanner:
         )
 
 
+class _ContextAnchoredInsertionPlanner:
+    def invoke(self, prompt: str) -> SentenceInsertionPlan:
+        return SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G4", "G6"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+
+
+class _AdjacencyParagraphPlanner:
+    def invoke(self, prompt: str) -> ParagraphOrderingPlan:
+        return ParagraphOrderingPlan(
+            intro_unit_ids=["S0"],
+            continuation_blocks=[["S1", "S2"], ["S3", "S4"], ["S5"]],
+            explanation="도입부 다음에 각 전개 단계를 배열하는 흐름입니다.",
+        )
+
+
 class _MoodAtmospherePlanner:
     def invoke(self, prompt: str) -> MoodAtmospherePlan:
         return MoodAtmospherePlan(
@@ -206,6 +225,22 @@ class PlannerTests(unittest.TestCase):
             for span in self.underlined_prepared.span_units
             if span.text == "brought only discontent"
         )
+        self.contextual_insertion_source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        self.ordering_source = (
+            "Many museums are rethinking how visitors experience their collections. "
+            "First, they replace long wall labels with short questions that invite curiosity. "
+            "This curiosity encourages people to look closely before reading an explanation. "
+            "Next, curators turn that curiosity into quiet audio guides for visitors who want more detail. "
+            "Those guides let each person choose how much background information to hear. "
+            "Finally, the feedback gathered through those guides helps museums redesign later exhibits."
+        )
 
     def test_planner_output_validates(self) -> None:
         result = plan_sentence_insertion(
@@ -275,6 +310,36 @@ class PlannerTests(unittest.TestCase):
         result = runner.invoke(paragraph_state)
         self.assertEqual(result["status"], "validation_passed")
         self.assertNotIn("S0", result["generated"].explanation or "")
+
+    def test_graph_rewrites_sentence_insertion_explanation_from_surrounding_context(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _ContextAnchoredInsertionPlanner())
+        insertion_state = {
+            **self.state,
+            "source_paragraph": self.contextual_insertion_source,
+            "QuestionTypeKey": "sentence_insertion",
+            "prepared_source": prepare_source(self.contextual_insertion_source),
+        }
+        result = runner.invoke(insertion_state)
+        self.assertEqual(result["status"], "validation_passed")
+        explanation = result["generated"].explanation or ""
+        self.assertNotIn("The new lights also use less electricity than the older fixtures.", explanation)
+        self.assertIn("new lights", explanation)
+        self.assertIn("Because the lights use less electricity", explanation)
+
+    def test_graph_rewrites_paragraph_ordering_explanation_as_edge_chain(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _AdjacencyParagraphPlanner())
+        paragraph_state = {
+            **self.state,
+            "source_paragraph": self.ordering_source,
+            "QuestionTypeKey": "paragraph_ordering",
+            "prepared_source": prepare_source(self.ordering_source),
+        }
+        result = runner.invoke(paragraph_state)
+        self.assertEqual(result["status"], "validation_passed")
+        explanation = result["generated"].explanation or ""
+        self.assertNotIn("핵심 화제 제시", explanation)
+        self.assertIn("뒤에는", explanation)
+        self.assertIn("다음에는", explanation)
 
     def test_mood_atmosphere_planner_output_validates(self) -> None:
         mood_state = {

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES
+from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, rendered_gap_positions
 from .schemas import (
     GeneratedQuestion,
     MoodAtmospherePlan,
@@ -117,16 +117,15 @@ def _build_sentence_insertion_context(
     plan: SentenceInsertionPlan,
 ) -> dict[str, str | None]:
     sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
-    gap_map = {gap.id: gap for gap in prepared_source.gap_units}
     target_id = plan.target_unit_ids[0]
-    correct_gap = gap_map[plan.correct_gap_id]
     correct_marker = MARKER_CHOICES[plan.selected_gap_ids.index(plan.correct_gap_id)]
+    rendered_positions = rendered_gap_positions(prepared_source, target_id)
+    before_unit_id, after_unit_id = rendered_positions[plan.correct_gap_id]
 
-    before_text = sentence_map.get(correct_gap.before_unit_id) if correct_gap.before_unit_id else None
-    after_text = sentence_map.get(correct_gap.after_unit_id) if correct_gap.after_unit_id else None
+    before_text = sentence_map.get(before_unit_id) if before_unit_id else None
+    after_text = sentence_map.get(after_unit_id) if after_unit_id else None
 
     return {
-        "target_text": sentence_map[target_id],
         "before_text": before_text,
         "after_text": after_text,
         "correct_marker": correct_marker,
@@ -139,17 +138,27 @@ def _build_paragraph_ordering_context(
     batch_row_id: int,
 ) -> dict[str, Any]:
     sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
-    logical_blocks = [
-        " ".join(sentence_map[unit_id] for unit_id in block)
-        for block in plan.continuation_blocks
-    ]
+    logical_blocks = [[sentence_map[unit_id] for unit_id in block] for block in plan.continuation_blocks]
     permutation = DISPLAY_PERMUTATIONS[batch_row_id % len(DISPLAY_PERMUTATIONS)]
-    displayed_blocks = [logical_blocks[index] for index in permutation]
+    displayed_blocks = [" ".join(logical_blocks[index]) for index in permutation]
     label_by_logical_index = {
         logical_index: label
         for label, logical_index in zip(("A", "B", "C"), permutation)
     }
     correct_sequence = tuple(label_by_logical_index[index] for index in range(3))
+    ordered_segments = [
+        ("주어진 글", [sentence_map[unit_id] for unit_id in plan.intro_unit_ids]),
+        *((label_by_logical_index[index], logical_blocks[index]) for index in range(3)),
+    ]
+    edges = [
+        {
+            "from_label": ordered_segments[index][0],
+            "to_label": ordered_segments[index + 1][0],
+            "from_tail": ordered_segments[index][1][-1],
+            "to_head": ordered_segments[index + 1][1][0],
+        }
+        for index in range(len(ordered_segments) - 1)
+    ]
 
     return {
         "intro_text": " ".join(sentence_map[unit_id] for unit_id in plan.intro_unit_ids),
@@ -159,6 +168,7 @@ def _build_paragraph_ordering_context(
             "C": displayed_blocks[2],
         },
         "correct_sequence": correct_sequence,
+        "edges": edges,
     }
 
 
@@ -198,31 +208,29 @@ def _build_underlined_phrase_meaning_context(
 
 
 def _write_sentence_insertion_explanation(context: dict[str, str | None]) -> str:
-    target_text = _sentence_snippet(context["target_text"])
     before_text = context["before_text"]
     after_text = context["after_text"]
     correct_marker = context["correct_marker"]
 
     if before_text and after_text:
         return (
-            f"주어진 문장은 {target_text}에 관한 내용을 담고 있습니다. "
-            f"앞에서는 {_sentence_snippet(before_text)}을 말하고, "
-            f"뒤에서는 {_sentence_snippet(after_text)}을 이어 설명하므로 "
-            f"이 문장이 두 내용을 자연스럽게 연결합니다. "
+            f"앞의 {_sentence_snippet(before_text)} 뒤에서 내용이 한 번 더 이어져야 하고, "
+            f"그다음에는 {_sentence_snippet(after_text)}로 넘어가야 흐름이 자연스럽습니다. "
+            f"즉, 주어진 문장이 앞문장의 내용을 받아 뒤문장으로 연결하는 다리 역할을 하므로 "
             f"따라서 {correct_marker} 위치에 들어가는 것이 가장 적절합니다."
         )
 
     if before_text:
         return (
-            f"주어진 문장은 {target_text}에 관한 내용을 덧붙이며 "
-            f"앞의 {_sentence_snippet(before_text)}을 자연스럽게 이어 줍니다. "
+            f"앞의 {_sentence_snippet(before_text)} 다음에 주어진 문장이 덧붙어야 "
+            f"핵심 내용이 자연스럽게 이어집니다. "
             f"따라서 {correct_marker} 위치에 들어가는 것이 가장 적절합니다."
         )
 
     if after_text:
         return (
-            f"주어진 문장은 {target_text}에 관한 내용을 먼저 제시한 뒤 "
-            f"뒤의 {_sentence_snippet(after_text)}으로 이어지는 흐름을 만듭니다. "
+            f"주어진 문장이 먼저 제시된 뒤에 {_sentence_snippet(after_text)}로 이어져야 "
+            f"문맥이 자연스럽게 연결됩니다. "
             f"따라서 {correct_marker} 위치에 들어가는 것이 가장 적절합니다."
         )
 
@@ -230,18 +238,16 @@ def _write_sentence_insertion_explanation(context: dict[str, str | None]) -> str
 
 
 def _write_paragraph_ordering_explanation(context: dict[str, Any]) -> str:
-    intro_text = _sentence_snippet(context["intro_text"])
-    displayed_blocks = context["displayed_blocks"]
     first_label, second_label, third_label = context["correct_sequence"]
-    first_block = _sentence_snippet(displayed_blocks[first_label])
-    second_block = _sentence_snippet(displayed_blocks[second_label])
-    third_block = _sentence_snippet(displayed_blocks[third_label])
+    first_edge, second_edge, third_edge = context["edges"]
 
     return (
-        f"주어진 글은 {intro_text}로 핵심 화제를 제시합니다. "
-        f"그다음에는 ({first_label})의 {first_block}이 가장 자연스럽게 이어지며, "
-        f"이후 ({second_label})의 {second_block}이 앞내용을 확장합니다. "
-        f"마지막으로 ({third_label})의 {third_block}이 글을 마무리하므로 "
+        f"{first_edge['from_label']}의 {_sentence_snippet(first_edge['from_tail'])} 뒤에는 "
+        f"({first_label})의 {_sentence_snippet(first_edge['to_head'])}가 이어져야 합니다. "
+        f"이어 ({first_label})의 {_sentence_snippet(second_edge['from_tail'])} 다음에는 "
+        f"({second_label})의 {_sentence_snippet(second_edge['to_head'])}가 와야 하고, "
+        f"마지막으로 ({second_label})의 {_sentence_snippet(third_edge['from_tail'])} 뒤에 "
+        f"({third_label})의 {_sentence_snippet(third_edge['to_head'])}가 놓일 때 전개가 완성됩니다. "
         f"순서는 ({first_label})-({second_label})-({third_label})가 가장 적절합니다."
     )
 
