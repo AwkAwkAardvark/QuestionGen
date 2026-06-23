@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
 from questiongen.planners import plan_paragraph_ordering, plan_sentence_insertion
 from questiongen.question_types import QUESTION_TYPES
@@ -56,6 +57,25 @@ class _ParagraphOrderingPlanner:
             intro_unit_ids=["S0"],
             continuation_blocks=[["S1", "S2"], ["S3", "S4"], ["S5"]],
             explanation="도입부 다음에 세 개의 흐름 덩어리로 나누는 것이 가장 자연스럽습니다.",
+        )
+
+
+class _CollapsedGapPlanner:
+    def invoke(self, prompt: str) -> SentenceInsertionPlan:
+        return SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G3", "G4"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+
+
+class _InvalidOrderingCoveragePlanner:
+    def invoke(self, prompt: str) -> ParagraphOrderingPlan:
+        return ParagraphOrderingPlan(
+            intro_unit_ids=["S0"],
+            continuation_blocks=[["S1"], ["S2"], ["S4", "S5"]],
+            explanation="도입부 이후 흐름을 나누었다고 판단했습니다.",
         )
 
 
@@ -116,6 +136,22 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planned")
         self.assertIsInstance(result["plan"], ParagraphOrderingPlan)
+
+    def test_graph_reclassifies_collapsed_gap_plan_as_planning_error(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _CollapsedGapPlanner())
+        result = runner.invoke(self.state)
+        self.assertEqual(result["status"], "planning_error")
+        self.assertTrue(any("collapse" in error for error in result["errors"]))
+
+    def test_graph_reclassifies_invalid_ordering_plan_as_planning_error(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _InvalidOrderingCoveragePlanner())
+        paragraph_state = {
+            **self.state,
+            "QuestionTypeKey": "paragraph_ordering",
+        }
+        result = runner.invoke(paragraph_state)
+        self.assertEqual(result["status"], "planning_error")
+        self.assertTrue(any("cover all sentence IDs" in error for error in result["errors"]))
 
 
 if __name__ == "__main__":

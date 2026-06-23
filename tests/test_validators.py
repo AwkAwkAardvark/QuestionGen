@@ -6,7 +6,9 @@ from questiongen.parsers import prepare_source
 from questiongen.question_types import QUESTION_TYPES
 from questiongen.schemas import GeneratedQuestion, ParagraphOrderingPlan, SentenceInsertionPlan
 from questiongen.validators import (
+    plan_check,
     source_check,
+    validate_plan_against_prepared_source,
     validate_paragraph_ordering_output,
     validate_sentence_insertion_output,
 )
@@ -17,7 +19,7 @@ class ValidatorTests(unittest.TestCase):
         self.type_spec = QUESTION_TYPES["sentence_insertion"]
         self.prepared = prepare_source("A. B. C. D. E. F.")
 
-    def test_source_check_fails_for_too_few_sentences(self) -> None:
+    def test_source_check_marks_too_few_sentences_as_incompatibility(self) -> None:
         prepared = prepare_source("A. B. C. D.")
         result = source_check(
             {
@@ -33,7 +35,7 @@ class ValidatorTests(unittest.TestCase):
             },
             self.type_spec,
         )
-        self.assertEqual(result["status"], "source_error")
+        self.assertEqual(result["status"], "qtype_incompatibility_error")
 
     def test_source_check_fails_for_malformed_gap(self) -> None:
         self.prepared.gap_units[1].before_unit_id = "BROKEN"
@@ -69,6 +71,53 @@ class ValidatorTests(unittest.TestCase):
             self.type_spec,
         )
         self.assertEqual(result["status"], "source_passed")
+
+    def test_plan_check_rejects_collapsed_sentence_insertion_gaps_as_planning_error(self) -> None:
+        plan = SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G3", "G4"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        result = plan_check(
+            {
+                "source_paragraph": "A. B. C. D. E. F.",
+                "OriginalQuestionNumber": "8-Analysis",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "sentence_insertion",
+                "prepared_source": self.prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            self.type_spec,
+        )
+        self.assertEqual(result["status"], "planning_error")
+        self.assertTrue(any("collapse" in error for error in result["errors"]))
+
+    def test_plan_check_rejects_invalid_paragraph_ordering_coverage(self) -> None:
+        plan = ParagraphOrderingPlan(
+            intro_unit_ids=["S0"],
+            continuation_blocks=[["S1"], ["S2"], ["S4", "S5"]],
+            explanation="도입부 이후의 흐름을 세 덩어리로 나누는 것이 자연스럽습니다.",
+        )
+        result = plan_check(
+            {
+                "source_paragraph": "A. B. C. D. E. F.",
+                "OriginalQuestionNumber": "8-Analysis",
+                "BatchRowId": 0,
+                "QuestionTypeKey": "paragraph_ordering",
+                "prepared_source": self.prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_TYPES["paragraph_ordering"],
+        )
+        self.assertEqual(result["status"], "planning_error")
+        self.assertTrue(any("cover all sentence IDs" in error for error in result["errors"]))
 
     def test_final_validator_catches_plan_and_rendering_mismatches(self) -> None:
         plan = SentenceInsertionPlan(
@@ -140,6 +189,20 @@ class ValidatorTests(unittest.TestCase):
             type_spec=self.type_spec,
         )
         self.assertTrue(any("collapse into duplicate rendered positions" in error for error in errors))
+
+    def test_plan_validator_matches_sentence_insertion_constraints(self) -> None:
+        plan = SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G3", "G4"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            self.prepared,
+            plan,
+            QUESTION_TYPES["sentence_insertion"],
+        )
+        self.assertTrue(any("collapse" in error for error in errors))
 
     def test_paragraph_ordering_validator_accepts_valid_output(self) -> None:
         plan = ParagraphOrderingPlan(

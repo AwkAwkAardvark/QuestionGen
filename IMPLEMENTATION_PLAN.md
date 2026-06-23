@@ -84,7 +84,7 @@
 - [x] Reuse the same planner-renderer-validator architecture per new type.
 - [x] Introduce `qtype_incompatibility_error` for passages that are valid inputs but not suitable for a given question type.
 - [x] Ensure "all registered types" automatically expands as the registry grows.
-- [ ] Keep type-specific failure modes readable in shared exports.
+- [x] Keep type-specific failure modes readable in shared exports.
 - [x] Split source provenance from internal deterministic row identity so `OriginalQuestionNumber` can remain an opaque label and `BatchRowId` can drive internal ordering behavior.
 - [ ] Once Wave 4 formats are fully implemented and their contents have been absorbed into durable docs/specs, ask for explicit confirmation before deleting `QuestionTypeDump`.
 
@@ -96,8 +96,8 @@
 - [ ] A Colab user can run the system end-to-end using Drive-backed inputs and `api_key.txt`.
 - [x] The launcher attempts all registered question types without manual type selection.
 - [x] CSV and JSON are both produced for debugging runs.
-- [ ] Failed type/passage combinations remain visible and readable in exported results.
-- [ ] `qtype_incompatibility_error` is distinguishable from malformed-source failure and planner malfunction in exported results.
+- [x] Failed type/passage combinations remain visible and readable in exported results.
+- [x] `qtype_incompatibility_error` is distinguishable from malformed-source failure and planner malfunction in exported results.
 
 ## Stable Interface Commitments
 
@@ -109,4 +109,6 @@
 - [x] Secret acquisition remains a launcher concern, not a package concern.
 - [x] `OriginalQuestionNumber` is source provenance, not an internal numeric key.
 - [x] `BatchRowId` is the deterministic internal row identifier generated from batch row order and preserved in exports.
+- [x] `source_error` remains reserved for malformed or broken prepared sources, while valid-but-unsuitable passages surface as `qtype_incompatibility_error`.
+- [x] Invalid deterministic plans surface as `planning_error` before rendering rather than leaking into `rendering_error`.
 - [x] Future Wave 4 registry entries should keep broad `QuestionTypeKey` values and move exact first supported shapes into `format_key`.

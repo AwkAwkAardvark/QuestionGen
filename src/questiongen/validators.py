@@ -38,7 +38,16 @@ def source_check(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[str,
             "errors": ["PreparedSource is missing."],
         }
 
-    errors = validate_prepared_source(prepared_source, min_source_units=type_spec.min_source_units)
+    if type_spec.min_source_units is not None and len(prepared_source.sentence_units) < type_spec.min_source_units:
+        return {
+            "status": "qtype_incompatibility_error",
+            "errors": [
+                f"PreparedSource requires at least {type_spec.min_source_units} sentence units, "
+                f"but found {len(prepared_source.sentence_units)}."
+            ],
+        }
+
+    errors = validate_prepared_source(prepared_source, min_source_units=None)
     if errors:
         return {
             "status": "source_error",
@@ -46,6 +55,28 @@ def source_check(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[str,
         }
     return {
         "status": "source_passed",
+        "errors": [],
+    }
+
+
+def plan_check(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[str, Any]:
+    prepared_source = state["prepared_source"]
+    plan = state["plan"]
+
+    if prepared_source is None:
+        return {
+            "status": "planning_error",
+            "errors": ["PreparedSource is required before deterministic plan checks."],
+        }
+
+    errors = validate_plan_against_prepared_source(prepared_source, plan, type_spec)
+    if errors:
+        return {
+            "status": "planning_error",
+            "errors": errors,
+        }
+    return {
+        "status": "planned",
         "errors": [],
     }
 
@@ -99,6 +130,58 @@ def validate_prepared_source(
             )
 
     return errors
+
+
+def validate_plan_against_prepared_source(
+    prepared_source: PreparedSource,
+    plan: object,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if type_spec.validator_key == "sentence_insertion":
+        return _validate_sentence_insertion_plan(prepared_source, plan)
+    if type_spec.validator_key == "paragraph_ordering":
+        return _validate_paragraph_ordering_plan(prepared_source, plan)
+    return [f"No deterministic plan validator is registered for {type_spec.validator_key}."]
+
+
+def _validate_sentence_insertion_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+    if not isinstance(plan, SentenceInsertionPlan):
+        return ["SentenceInsertionPlan is missing for deterministic plan checks."]
+
+    errors: list[str] = []
+    sentence_ids = [unit.id for unit in prepared_source.sentence_units]
+    gap_ids = {gap.id for gap in prepared_source.gap_units}
+    target_id = plan.target_unit_ids[0] if plan.target_unit_ids else None
+
+    if target_id not in sentence_ids:
+        errors.append(f"Unknown target sentence ID: {target_id}")
+        return errors
+
+    unknown_gap_ids = [gap_id for gap_id in plan.selected_gap_ids if gap_id not in gap_ids]
+    if unknown_gap_ids:
+        errors.append(f"Unknown gap IDs: {', '.join(unknown_gap_ids)}")
+        return errors
+
+    rendered_positions = rendered_gap_positions(prepared_source, target_id)
+    unique_positions = {rendered_positions[gap_id] for gap_id in plan.selected_gap_ids}
+    if len(unique_positions) != len(plan.selected_gap_ids):
+        errors.append(
+            "SentenceInsertionPlan selected_gap_ids collapse into duplicate rendered positions "
+            "after removing the target sentence."
+        )
+
+    return errors
+
+
+def _validate_paragraph_ordering_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
+    if not isinstance(plan, ParagraphOrderingPlan):
+        return ["ParagraphOrderingPlan is missing for deterministic plan checks."]
+
+    sentence_ids = [unit.id for unit in prepared_source.sentence_units]
+    flattened = plan.intro_unit_ids + [unit_id for block in plan.continuation_blocks for unit_id in block]
+    if flattened != sentence_ids:
+        return ["ParagraphOrderingPlan must cover all sentence IDs exactly once in source order."]
+    return []
 
 
 def validate_generated_question(

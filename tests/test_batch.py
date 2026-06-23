@@ -63,6 +63,12 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(results[0].status, "qtype_incompatibility_error")
         self.assertTrue(any("not suitable" in error for error in results[0].errors))
 
+    def test_short_valid_passage_becomes_qtype_incompatibility(self) -> None:
+        short_rows = [BatchInputRow(OriginalQuestionNumber="8-01", BatchRowId=0, source_paragraph="A. B. C. D.")]
+        results = run_batch_rows(short_rows, ["sentence_insertion"], self.runner)
+        self.assertEqual(results[0].status, "qtype_incompatibility_error")
+        self.assertTrue(any("at least 5 sentence units" in error for error in results[0].errors))
+
     def test_file_runner_writes_csv_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             input_csv = Path(tmpdir) / "input.csv"

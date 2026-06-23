@@ -8,7 +8,7 @@ from .planners import PLANNERS, StructuredLLMFactory
 from .question_types import QUESTION_TYPES, QuestionTypeSpec
 from .renderers import RENDERERS
 from .schemas import QuestionState
-from .validators import input_check, source_check, validate_generated_question
+from .validators import input_check, plan_check, source_check, validate_generated_question
 
 NodeResult = dict[str, Any]
 
@@ -48,6 +48,10 @@ class LocalQuestionGraphRunner:
             working_state,
             planner(working_state, type_spec, self.structured_llm_factory),
         )
+        if working_state["status"] != "planned":
+            return working_state
+
+        self._apply_result(working_state, plan_check(working_state, type_spec))
         if working_state["status"] != "planned":
             return working_state
 

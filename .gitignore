@@ -5,3 +5,4 @@ __pycache__/
 context.md
 AGENTS.md
 QuestionTypeDump
+sample_data/questions.csv
