@@ -26,13 +26,13 @@ Latest gating lessons from sample review:
 
 - abbreviation-safe sentence parsing matters for sentence-based families; `U.S.` / `U.K.` style splits can otherwise create fake sentence units and malformed live items
 - a smaller residual parser/source false positive still matters: complete clauses like the row-9 `they’d ever been to` sentence should not be rejected as fragments
-- the updated `sample_data/generated_questions.json` is now quota-clean enough to act as a real live-quality baseline: 39 rows, 17 `validation_passed`, 14 `planning_error`, and 8 `qtype_incompatibility_error`
+- the updated `sample_data/generated_questions.json` is now the branch's main logic-review artifact: 78 rows, 63 `validation_passed`, 7 `planning_error`, and 8 `qtype_incompatibility_error`
+- the sample should be used as live-quality evidence, not as the authoritative export-shape baseline
 - the main current signal is live-family quality, not operations:
-  - `sentence_insertion` still leaks schema-invalid or collapse-prone target choices
-  - `paragraph_ordering` still accepts too many weak-adjacency passages into planning
-  - `underlined_phrase_meaning` still lets some weak-centrality span picks survive too long before failing
-- the next live-quality pass should therefore harden the current live families again before `fill_in_the_blank` expands the registry
-- current live families should reject weak items more aggressively before `fill_in_the_blank` expands the registry again
+  - `paragraph_ordering` is the clearest next hardening target because the sample still shows a concentrated cluster of weak-adjacency rows reaching late `planning_error`
+  - `sentence_insertion` and `underlined_phrase_meaning` still need quality work, but their current sample failures are less concentrated than the `paragraph_ordering` issue
+- the next live-quality pass should therefore harden `paragraph_ordering` adjacency strength and suitability gating first, then return to cross-family explanation quality
+- current live families should reject weak items more aggressively before any further family expansion or review-baseline regeneration
 - model-tier specialization is a later optimization problem, not part of the current MVP hardening pass
 
 ## Recommended Order
@@ -309,6 +309,10 @@ Current recommendation:
 
 - Use these ideas first to tighten planner selection and explanation standards for the existing `paragraph_ordering` type.
 - The near-term goal should be fewer mechanically valid but weak block partitions, plus clearer exported reasoning for why the correct order is forced.
+- Review the current checked-in sample with three buckets in mind:
+  - weak-adjacency passages that should fail earlier as `qtype_incompatibility_error`
+  - accepted passages that still need stronger block-start and boundary inventories
+  - structurally valid but still mechanical partitions that should remain warning examples during later audits
 - The safest structural next step is a separate post-render explanation stage that explains block-to-block adjacency in teacher-facing prose rather than reusing planner-internal inventories.
 
 ## Explanation Architecture Direction

@@ -134,11 +134,13 @@ For the current debugging phase, the launcher should write:
 Rules:
 
 - CSV and JSON must represent the same `BatchResultRow` results.
+- The checked-in `sample_data/generated_questions.json` file is a branch review artifact for logic quality, not the sole source of truth for the export contract.
 - `QuestionTypeKey` remains the broad family key, while `QuestionFormatKey` and `QuestionSubtypeKey` identify the concrete runnable subtype row.
 - Failed type/passage combinations must remain visible in the exported artifacts.
 - Expected incompatibility between a valid passage and a specific question type should surface as `qtype_incompatibility_error`, not be collapsed into generic source or planner failure.
 - `source_error` should be reserved for malformed inputs, failed source preparation, or broken deterministic prepared-source invariants.
 - Deterministic plan violations discovered after LLM planning but before rendering should surface as `planning_error`, not `rendering_error`.
+- Current next hardening target on the review artifact is `paragraph_ordering`: passages without strongly forced four-block adjacency should fail as `qtype_incompatibility_error` before planning rather than as late weak-adjacency `planning_error` rows.
 - Upstream LLM service failures, including `insufficient_quota`, should remain `planning_error`; do not introduce a separate exported quota status.
 - After the first detected `insufficient_quota` failure in a batch, later row/type combinations may short-circuit to exported `planning_error` rows without further model calls, but the exported row count must still stay complete.
 - Quota-driven `planning_error` rows are operational failures rather than live-family quality evidence and should be excluded from mixed-batch quality audits in favor of quota-clean reruns.

@@ -103,6 +103,7 @@
 - [x] Keep upstream LLM service failures, including `insufficient_quota`, under `planning_error` without adding a new exported status.
 - [x] Stop further batch-wide LLM planning attempts after the first detected `insufficient_quota` while still exporting every row/type combination.
 - [x] Treat quota-driven `planning_error` rows as operational failures rather than as live-family quality evidence during mixed-batch audits.
+- [ ] Current hardening priority: use `sample_data/generated_questions.json` as a logic-review artifact and move weak-adjacency `paragraph_ordering` rows from late `planning_error` to earlier `qtype_incompatibility_error` without loosening deterministic validation.
 
 ### Live families already shipped
 
@@ -113,7 +114,7 @@
 - [x] `paragraph_ordering`
   - status: live
   - first supported format: `abc_ordering_after_intro`
-  - remaining hardening focus: better semantic suitability gating and more edge-by-edge ordering explanations
+  - remaining hardening focus: stronger adjacency/suitability gating before planning, less mechanical block partitioning, and more edge-by-edge ordering explanations
 
 ### Remaining registry work
 
