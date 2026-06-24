@@ -57,7 +57,7 @@
 - [x] Mount Google Drive from the notebook layer only.
 - [x] Load `api_key.txt` from Drive and populate environment variables in the notebook layer only.
 - [x] Define notebook-level input and output Drive paths.
-- [x] Expose `REPO_BRANCH = "main"` under notebook Advanced Settings and clone the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+- [x] Expose temporary notebook-side `REPO_BRANCH_OPTIONS` under Advanced Settings, default `REPO_BRANCH` to `hail-mary-finish-everything`, validate the selection against the allowlist, and clone the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
 - [x] Construct the structured LLM-backed runner from the notebook layer.
 - [x] Launch the primary staff notebook directly into Gradio without pre-running batch-generation cells.
 - [x] Keep direct batch generation, preview, and artifact inspection in the separate debug notebook.

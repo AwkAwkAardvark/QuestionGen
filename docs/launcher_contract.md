@@ -9,7 +9,7 @@ The launcher is responsible for runtime setup only. Reusable generation logic st
 ## Notebook Roles
 
 - `notebooks/runner_ui.ipynb` is the primary staff-facing launcher.
-- `notebooks/runner_ui.ipynb` mounts Drive, defines standard paths, loads secrets, exposes minimal settings plus Advanced Settings, clones the selected pushed branch, and launches `questiongen.ui.gradio_app.create_app()` immediately.
+- `notebooks/runner_ui.ipynb` mounts Drive, defines standard paths, loads secrets, exposes minimal settings plus Advanced Settings, keeps temporary branch selection in a small notebook-side allowlist, clones the selected allowlisted pushed branch, and launches `questiongen.ui.gradio_app.create_app()` immediately.
 - `notebooks/runner_ui.ipynb` does not run direct batch-generation cells before launching Gradio.
 - `notebooks/runner_debug.ipynb` is the batch/debug notebook.
 - `notebooks/runner_debug.ipynb` keeps direct `run_batch_files(...)`, output preview, and artifact inspection in notebook cells, with Gradio available only as an optional debugging add-on.
@@ -73,8 +73,9 @@ Launcher responsibilities:
 - mount Drive
 - define Drive paths
 - load `api_key.txt`
-- expose notebook-level minimal settings and Advanced Settings, including `REPO_BRANCH`
-- clone and install the selected pushed repo branch
+- expose notebook-level minimal settings and Advanced Settings, including temporary notebook-side `REPO_BRANCH_OPTIONS` plus `REPO_BRANCH`
+- validate the selected branch against that allowlist before clone/install
+- clone and install the selected allowlisted pushed repo branch
 - launch the Gradio UI from `runner_ui.ipynb`
 - create the structured LLM-backed runner for batch/debug flows
 - derive the active question types
@@ -184,23 +185,26 @@ The current Colab surface is intentionally split:
 
 1. Mount Drive and define standard paths.
 2. Load secrets from `api_key.txt`.
-3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH = "main"` by default.
-4. Clone and install the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+3. Expose minimal settings plus Advanced Settings, with a temporary manual `REPO_BRANCH_OPTIONS` allowlist of `hail-mary-finish-everything`, `ui-launcher-cleanup`, and `main`, and default `REPO_BRANCH` to `hail-mary-finish-everything`.
+4. Validate `REPO_BRANCH` against that allowlist, then clone and install the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
 5. Launch `questiongen.ui.gradio_app.create_app()` immediately.
 
 `runner_debug.ipynb` should be limited to these steps:
 
 1. Mount Drive and define standard paths.
 2. Load secrets from `api_key.txt`.
-3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH = "main"` by default.
-4. Clone and install the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+3. Expose minimal settings plus Advanced Settings, with a temporary manual `REPO_BRANCH_OPTIONS` allowlist of `hail-mary-finish-everything`, `ui-launcher-cleanup`, and `main`, and default `REPO_BRANCH` to `hail-mary-finish-everything`.
+4. Validate `REPO_BRANCH` against that allowlist, then clone and install the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
 5. Build the runner and run direct batch generation.
 6. Preview artifacts and optionally launch Gradio only as a debugging add-on.
 
 Branch-selection notes:
 
-- Colab can pull any branch that has already been pushed to the remote repository.
+- Colab can pull only branches that have already been pushed to the remote repository.
 - Colab cannot automatically pull unpushed local-only workspace changes.
+- The active launcher notebooks intentionally expose only a small manually maintained `REPO_BRANCH_OPTIONS` allowlist while branch churn is still high.
+- The current temporary allowlist is `hail-mary-finish-everything`, `ui-launcher-cleanup`, and `main`.
+- Refresh that allowlist before commit/push whenever the active pushed branch set changes.
 - Broad family selection still starts from `QUESTION_TYPES`, while actual execution expands into subtype rows underneath each selected family.
 
 The notebooks should not define:
