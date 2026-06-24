@@ -15,8 +15,8 @@ from questiongen.ui.gradio_app import (
 
 
 class GradioAppHelperTests(unittest.TestCase):
-    def test_live_registry_includes_reactivated_mood_atmosphere(self) -> None:
-        self.assertIn("mood_atmosphere", QUESTION_TYPES)
+    def test_live_registry_excludes_dormant_mood_atmosphere(self) -> None:
+        self.assertNotIn("mood_atmosphere", QUESTION_TYPES)
 
     def test_normalize_question_type_keys_defaults_to_registry(self) -> None:
         normalized = normalize_question_type_keys([])
@@ -26,7 +26,7 @@ class GradioAppHelperTests(unittest.TestCase):
         self.assertIn("fill_in_the_blank", normalized)
         self.assertIn("vocab", normalized)
         self.assertIn("grammar", normalized)
-        self.assertIn("mood_atmosphere", normalized)
+        self.assertNotIn("mood_atmosphere", normalized)
 
     def test_normalize_question_type_keys_rejects_unknown(self) -> None:
         with self.assertRaises(ValueError):

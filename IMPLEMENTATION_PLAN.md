@@ -195,15 +195,16 @@
 - [x] The validator can prove there is exactly one structurally rendered corruption.
 - [ ] Real-batch outputs remain diagnostically readable in CSV/JSON when passages do not fit these families.
 
-## Wave 8: Affective Family
+## Wave 8: Dormant Affective Family
 
 - [x] `mood_atmosphere`
-  - status: reactivated in the live registry
-  - live subtype set:
+  - status: implemented but intentionally dormant outside the live registry
+  - dormant subtype set:
     - `emotion_shift_pair_choice_5`
     - `emotion_state_choice_5`
     - `atmosphere_choice_5`
-  - shipped policy: broad-family selection stays stable while execution expands into multiple mood/atmosphere subtype rows
+  - dormant policy: keep the implementation code in the repo, but keep `QUESTION_TYPES` and launcher/UI defaults focused on the other live families until their quality work stabilizes
+  - reactivation policy: revisit this family only after the active families are hardened further and the user explicitly confirms that the affective family is worth reactivating
 
 ## Acceptance Checklist
 
@@ -214,7 +215,8 @@
 - [x] The launcher attempts all registered question types without manual type selection.
 - [x] CSV and JSON are both produced for debugging runs.
 - [x] Failed type/passage combinations remain visible and readable in exported results.
-- [x] The live registry includes `mood_atmosphere`, `fill_in_the_blank`, `vocab`, and `grammar` under subtype-expanded broad families.
+- [x] The live registry includes `fill_in_the_blank`, `vocab`, and `grammar` under subtype-expanded broad families.
+- [x] `mood_atmosphere` remains implemented but excluded from the live default registry until later reactivation work is explicitly approved.
 - [x] `qtype_incompatibility_error` is distinguishable from malformed-source failure and planner malfunction in exported results.
 - [x] `planning_error` continues to cover both planner-quality defects and upstream LLM service failures; quota exhaustion does not introduce a new `PipelineStatus`.
 
@@ -233,6 +235,7 @@
 - [x] Planner rationale and exported explanation do not need to share the same generation step.
 - [x] Future Wave 4 registry entries should keep broad `QuestionTypeKey` values and move exact first supported shapes into `format_key`.
 - [x] Broad-family launcher selections may now expand into multiple subtype rows; exported results preserve both the broad family key and the concrete subtype metadata.
+- [x] `QUESTION_TYPES` remains the live default-registry surface, while dormant implemented families such as `mood_atmosphere` stay outside it until later reactivation work.
 - [x] Batch execution may short-circuit further LLM attempts after the first `insufficient_quota` failure, but exported result counts must still equal input rows times active question types.
 - [x] Future async exploration, if any, should start at the batch or row/type orchestration layer without changing current question-type semantics or exported row counts.
 - [x] After the current hardening baseline, reopen qtype-specific refinement planning with priority on `grammar` and `vocab`.

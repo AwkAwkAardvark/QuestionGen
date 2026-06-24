@@ -12,7 +12,13 @@ from .paragraph_ordering import (
     paragraph_ordering_candidates,
 )
 from .parsers import content_tokens, looks_fragmentary_sentence, normalize_text
-from .question_types import QUESTION_SUBTYPE_SPECS, QUESTION_TYPES, QuestionTypeSpec, resolve_question_type_spec
+from .question_types import (
+    QUESTION_FAMILY_SPECS,
+    QUESTION_SUBTYPE_SPECS,
+    QUESTION_TYPES,
+    QuestionTypeSpec,
+    resolve_question_type_spec,
+)
 from .renderers import (
     DISPLAY_PERMUTATIONS,
     MARKER_CHOICES,
@@ -162,13 +168,13 @@ def input_check(
     subtype_registry = question_types or QUESTION_SUBTYPE_SPECS
     question_subtype_key = state.get("QuestionSubtypeKey")
     question_format_key = state.get("QuestionFormatKey")
-    if state["QuestionTypeKey"] not in QUESTION_TYPES:
-        errors.append(f"Unknown QuestionTypeKey: {state['QuestionTypeKey']}")
     resolved_spec = resolve_question_type_spec(
         state["QuestionTypeKey"],
         question_subtype_key,
     )
-    if state["QuestionTypeKey"] in QUESTION_TYPES and resolved_spec is None:
+    if state["QuestionTypeKey"] not in QUESTION_FAMILY_SPECS:
+        errors.append(f"Unknown QuestionTypeKey: {state['QuestionTypeKey']}")
+    if state["QuestionTypeKey"] in QUESTION_FAMILY_SPECS and resolved_spec is None:
         errors.append(
             f"Unknown QuestionSubtypeKey for {state['QuestionTypeKey']}: {question_subtype_key}"
         )

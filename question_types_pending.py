@@ -229,12 +229,12 @@ LIVE_TYPE_REFINEMENTS: tuple[PendingQuestionTypeSpec, ...] = (
         label_ko="심경·분위기",
         format_key="emotion_shift_pair_choice_5",
         stem_direction_ko=(
-            "Keep the broad family key, but make the first live rollout "
+            "Keep the broad family key, but if the family is reactivated later, make the first rollout "
             "subtype-specific: use an emotion-shift stem rather than a generic "
             "심경·분위기 stem."
         ),
         expected_output_shape=(
-            "Current live shape for v1: original passage preserved unchanged, "
+            "Current dormant draft shape for a future v1: original passage preserved unchanged, "
             "five English emotion-shift pair choices, marker answer ①-⑤, and "
             "teacher-facing Korean explanation."
         ),
@@ -248,10 +248,12 @@ LIVE_TYPE_REFINEMENTS: tuple[PendingQuestionTypeSpec, ...] = (
             "Planner may still force emotion labels onto weakly affective passages unless incompatibility gating stays strict.",
             "Choice sets can collapse into near-synonym pairs unless prompt and validation keep direction and endpoint distinctions sharp.",
             "Exported explanations can become generic unless they cite concrete initial/final evidence and the turning point.",
+            "Current ROI is weak relative to the other live-family hardening work, so reactivation should stay deferred until that backlog settles.",
         ),
         notes=(
-            "Chosen first-rollout policy: broad key stays `mood_atmosphere`, live subtype is only `emotion_shift` for now.",
-            "Chosen v1 choice policy: use English adjective-pair choices such as `anxious -> relieved`.",
+            "Current product policy: the implementation stays in the repo but the family stays out of the live default registry for now.",
+            "Chosen first-reactivation policy: broad key stays `mood_atmosphere`, and the first returned subtype should still be only `emotion_shift`.",
+            "Chosen draft choice policy: use English adjective-pair choices such as `anxious -> relieved`.",
             "Chosen target policy: allow writer/narrator or one clearly identifiable character, but reject passages with ambiguous holders.",
             "Deferred subtypes: `atmosphere` and `emotion_state` stay out of the live registry until v1 suitability and explanation quality are stable.",
         ),

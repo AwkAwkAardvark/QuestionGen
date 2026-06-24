@@ -11,6 +11,13 @@ Current live registry:
 - `vocab` (`contextual_vocab_error_5` with five numbered single-word underlines, opposition-biased target selection, and one contextual corruption)
 - `grammar` (`grammar_error_5` with five numbered single-word verb-form targets and one controlled corruption)
 
+Current dormant implemented family:
+
+- `mood_atmosphere`
+  - implemented in code
+  - intentionally excluded from the live default registry
+  - deferred until the other live families and output-quality work stabilize and the user explicitly confirms a return
+
 Current product direction:
 
 - Colab-first launcher
@@ -20,7 +27,7 @@ Current product direction:
 - `gpt-5-mini` is the single default model for the current MVP
 - per-type model-tier routing is intentionally deferred until after live-pipeline stabilization
 
-Because the launcher runs every registered type, only `mood_atmosphere` remains outside the live registry. The remaining sections below are retained mainly as planning history and subtype notes rather than as a live-status checklist.
+Because the launcher runs every registered type by default, `mood_atmosphere` stays intentionally outside the live registry for ROI reasons. The remaining sections below are retained mainly as planning history and subtype notes rather than as a live-status checklist.
 
 Latest gating lessons from sample review:
 

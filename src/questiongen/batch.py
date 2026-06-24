@@ -11,7 +11,7 @@ from .planners import (
     is_quota_planning_error,
     normalize_planner_error,
 )
-from .question_types import QUESTION_TYPE_SPECS_BY_FAMILY, QUESTION_TYPES, expand_question_type_keys
+from .question_types import QUESTION_FAMILY_SPECS, QUESTION_TYPE_SPECS_BY_FAMILY, QUESTION_TYPES, expand_question_type_keys
 from .schemas import BatchInputRow, BatchResultRow, GeneratedQuestion, QuestionState, make_initial_state
 
 
@@ -143,7 +143,7 @@ def _state_to_result_row(state: QuestionState) -> BatchResultRow:
         ),
         None,
     )
-    family_spec = QUESTION_TYPES.get(question_type_key)
+    family_spec = QUESTION_TYPES.get(question_type_key) or QUESTION_FAMILY_SPECS.get(question_type_key)
     generated = state["generated"]
     generated_payload = generated if isinstance(generated, GeneratedQuestion) else None
 

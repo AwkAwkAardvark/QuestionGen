@@ -119,8 +119,9 @@ Notes:
 - Exported row counts therefore scale with `input rows x enabled subtype count`, not merely `input rows x broad family count`.
 - This preserves the current backend API while delivering the intended launcher behavior.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
-- The live registry currently includes `sentence_insertion`, `paragraph_ordering`, `mood_atmosphere`, `underlined_phrase_meaning`, `fill_in_the_blank`, `vocab`, and `grammar`.
+- The live registry currently includes `sentence_insertion`, `paragraph_ordering`, `underlined_phrase_meaning`, `fill_in_the_blank`, `vocab`, and `grammar`.
 - Launcher-derived defaults should include all of those broad families because the product direction is to run all registered families.
+- `mood_atmosphere` remains implemented in code as dormant future work, but it is intentionally excluded from `QUESTION_TYPES` and from launcher-derived default selections.
 - Subtype metadata is now part of the exported contract: `QuestionFormatKey`, `QuestionSubtypeKey`, and `QuestionSubtype`.
 
 ## Output Artifacts
@@ -149,7 +150,7 @@ Rules:
 - `fill_in_the_blank` should preserve the original passage exactly except for replacing one selected source span with the single blank marker `_____` in exported `student_paragraph`.
 - `vocab` now includes both a five-target contextual error subtype and a single-target five-choice lexical selection subtype.
 - `grammar` now fans out into multiple controlled subtype rows under the broad family key, with subtype-specific compatibility gating.
-- `mood_atmosphere` is live again and currently expands into three concrete subtype rows.
+- `mood_atmosphere` remains implemented but dormant. Its current subtype work stays out of default launcher and batch outputs until the other live families and output-quality work stabilize and it is explicitly reactivated later.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
 - For `fill_in_the_blank`, `vocab`, and `grammar`, exported explanations should also avoid malformed memo fragments such as duplicated `...의미` wording and should lead with local supporting evidence rather than generic boilerplate.
 - Teacher-facing explanation writing is now treated as a post-render concern rather than as part of structural planning for the live types.

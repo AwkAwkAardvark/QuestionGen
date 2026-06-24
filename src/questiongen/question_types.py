@@ -304,7 +304,7 @@ class QuestionTypeSpec:
         return self.family_label_ko
 
 
-QUESTION_TYPES: dict[str, QuestionFamilySpec] = {
+QUESTION_FAMILY_SPECS: dict[str, QuestionFamilySpec] = {
     "sentence_insertion": QuestionFamilySpec(label_ko="문장 삽입"),
     "paragraph_ordering": QuestionFamilySpec(label_ko="글의 순서"),
     "mood_atmosphere": QuestionFamilySpec(label_ko="심경·분위기"),
@@ -332,7 +332,7 @@ def _spec(
 ) -> QuestionTypeSpec:
     return QuestionTypeSpec(
         family_key=family_key,
-        family_label_ko=QUESTION_TYPES[family_key].label_ko,
+        family_label_ko=QUESTION_FAMILY_SPECS[family_key].label_ko,
         subtype_key=subtype_key,
         subtype_label_ko=subtype_label_ko,
         format_key=format_key,
@@ -565,8 +565,9 @@ QUESTION_TYPES = {
         choice_count=specs[0].choice_count,
     )
     for family_key, (family_spec, specs) in (
-        (family_key, (QUESTION_TYPES[family_key], specs))
+        (family_key, (QUESTION_FAMILY_SPECS[family_key], specs))
         for family_key, specs in QUESTION_TYPE_SPECS_BY_FAMILY.items()
+        if family_key != "mood_atmosphere"
     )
 }
 
