@@ -151,6 +151,7 @@ Rules:
 - `grammar` now fans out into multiple controlled subtype rows under the broad family key, with subtype-specific compatibility gating.
 - `mood_atmosphere` is live again and currently expands into three concrete subtype rows.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
+- For `fill_in_the_blank`, `vocab`, and `grammar`, exported explanations should also avoid malformed memo fragments such as duplicated `...의미` wording and should lead with local supporting evidence rather than generic boilerplate.
 - Teacher-facing explanation writing is now treated as a post-render concern rather than as part of structural planning for the live types.
 - Planner rationale may remain internal, but exported explanations for the live types are now rewritten from rendered item context and textual evidence rather than copied directly from planner-internal IDs or schema fields.
 - The launcher may write JSON directly from `result.model_dump()` payloads until a dedicated package-level JSON exporter is added.

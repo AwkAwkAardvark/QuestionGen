@@ -112,6 +112,16 @@ _INTERNAL_EXPLANATION_TERM_PATTERNS = (
     "gap id",
     "sentence id",
 )
+_AWKWARD_EXPLANATION_PATTERNS = (
+    "의 의미라는 의미",
+    "라는 의미라는 의미",
+    "이라는 의미라는 의미",
+    "함라는 의미",
+    "나타냄라는 의미",
+    "반응라는 의미",
+    "주장라는 의미",
+    "표현라는 의미",
+)
 _TRANSITION_STARTERS = {
     "accordingly",
     "as",
@@ -348,6 +358,10 @@ def validate_teacher_facing_explanation(
     if any(pattern in lowered for pattern in _INTERNAL_EXPLANATION_TERM_PATTERNS):
         errors.append(
             f"{question_type_key} explanation must not mention schema fields or renderer mechanics."
+        )
+    if any(pattern in explanation for pattern in _AWKWARD_EXPLANATION_PATTERNS):
+        errors.append(
+            f"{question_type_key} explanation contains malformed or low-signal teacher-facing phrasing."
         )
 
     return errors

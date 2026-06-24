@@ -518,6 +518,13 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("must not mention schema fields or renderer mechanics" in error for error in errors))
 
+    def test_explanation_validator_rejects_malformed_teacher_phrase(self) -> None:
+        errors = validate_teacher_facing_explanation(
+            "이 자리에는 행동의 의미라는 의미가 들어가야 합니다.",
+            question_type_key="fill_in_the_blank",
+        )
+        self.assertTrue(any("malformed or low-signal" in error for error in errors))
+
     def test_final_validator_rejects_internal_notation_in_explanation(self) -> None:
         plan = SentenceInsertionPlan(
             target_unit_ids=["S2"],

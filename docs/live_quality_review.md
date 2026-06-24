@@ -90,3 +90,18 @@ The current live branch now applies the following policy for `paragraph_ordering
 - when no such candidate exists, the row should fail as `qtype_incompatibility_error` before planning
 - the planner prompt now exposes boundary signals, ranked block starts, and ranked partition candidates so accepted passages are biased toward stronger partitions
 - deterministic plan validation remains strict after planning, so this change is an earlier gate and prompt refinement, not a validator relaxation
+
+## Explanation Quality Policy For High-Pass Families
+
+Current explanation hardening target after `paragraph_ordering`:
+
+- `fill_in_the_blank`
+- `vocab`
+- `grammar`
+
+Landed policy:
+
+- exported explanations should begin from local supporting evidence, not from generic stock phrases alone
+- planner-owned Korean notes such as `contextual_meaning_ko` and `correction_basis_ko` should be cleaned before export rather than copied as awkward memo fragments
+- malformed phrases such as duplicated `...의미` wording should fail deterministic explanation validation instead of shipping as `validation_passed`
+- when a planner-supplied note is too generic or obviously bad, the post-render explanation writer should prefer deterministic family-specific fallback phrasing

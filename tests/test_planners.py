@@ -872,8 +872,9 @@ class PlannerTests(unittest.TestCase):
         result = runner.invoke(state)
         self.assertEqual(result["status"], "validation_passed")
         explanation = result["generated"].explanation or ""
-        self.assertIn("문맥과 맞지 않습니다", explanation)
+        self.assertIn("단서를 보면", explanation)
         self.assertIn("brighter crosswalks feel safer", explanation)
+        self.assertNotIn("그 방향을 뒷받침", explanation)
         self.assertNotIn("자유서술 설명", explanation)
 
     def test_graph_rewrites_grammar_explanation_from_structural_cue(self) -> None:
@@ -889,7 +890,22 @@ class PlannerTests(unittest.TestCase):
         explanation = result["generated"].explanation or ""
         self.assertIn("동사원형", explanation)
         self.assertIn("lighting system to nearby neighborhoods", explanation)
+        self.assertNotIn("그 구조를 보여 주므로", explanation)
         self.assertNotIn("자유서술 문법 해설", explanation)
+
+    def test_graph_rewrites_fill_explanation_as_teacher_facing_note(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _FillInTheBlankPlanner())
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = runner.invoke(state)
+        self.assertEqual(result["status"], "validation_passed")
+        explanation = result["generated"].explanation or ""
+        self.assertIn("핵심 단서", explanation)
+        self.assertNotIn("라는 의미라는 의미", explanation)
 
 
 if __name__ == "__main__":

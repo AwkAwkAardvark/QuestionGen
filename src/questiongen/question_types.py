@@ -142,6 +142,7 @@ FILL_PROPOSITION_PLANNER_PROMPT = """
 - Set `correct_choice` to the one option that best restores the original passage meaning.
 - Keep distractors readable English and broadly on-topic while changing claim, scope, polarity, or relation.
 - Set `contextual_meaning_ko` to a short Korean teacher-facing note describing what idea the blank must convey.
+- Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment. Avoid endings such as `...라는 의미` or bare noun phrases that will sound awkward when inserted into a full explanation sentence.
 - Copy `supporting_evidence` as a short exact snippet from the passage that best supports the correct completion.
 - Write the explanation entirely in Korean.
 """.strip()
@@ -157,6 +158,7 @@ FILL_CONNECTIVE_PLANNER_PROMPT = """
 - Exactly one choice should preserve the original discourse relation; distractors should stay readable but shift relation, polarity, or logical direction.
 - Set `correct_choice` to the one option that restores the intended relation.
 - Set `contextual_meaning_ko` to a short Korean note naming the relation the blank must restore.
+- Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment. Avoid endings such as `...라는 의미`.
 - Copy `supporting_evidence` as a short exact snippet from the surrounding passage that reveals that relation.
 - Write the explanation entirely in Korean.
 """.strip()
@@ -172,6 +174,7 @@ FILL_SUMMARY_PLANNER_PROMPT = """
 - Exactly one choice should best complete the passage-level takeaway; distractors should stay passage-relevant but distort the main point, scope, or conclusion.
 - Set `correct_choice` to the one option that restores the intended summary/compression.
 - Set `contextual_meaning_ko` to a short Korean note describing the passage-level takeaway the blank must complete.
+- Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment. Avoid endings such as `...라는 의미`.
 - Copy `supporting_evidence` as a short exact snippet that anchors that takeaway.
 - Write the explanation entirely in Korean.
 """.strip()
@@ -187,6 +190,7 @@ VOCAB_ERROR_PLANNER_PROMPT = """
 - Do not use a near-synonym or near-paraphrase of the original word.
 - Keep the other four target words unchanged from the source.
 - Set `correction_basis_ko` to a short Korean note explaining why the corrupted word does not fit and what meaning the original word supports instead.
+- Make `correction_basis_ko` specific to the local textual evidence. Avoid generic notes such as `문맥상 맞지 않는다` without saying what passage meaning or contrast the original word preserves.
 - Copy `supporting_evidence` as a short exact snippet from the passage that helps show why the original word fits the context.
 - Write the explanation entirely in Korean.
 """.strip()
@@ -199,6 +203,7 @@ VOCAB_CHOICE_PLANNER_PROMPT = """
 - Set `correct_choice` to the one option that best preserves the original contextual meaning at that position.
 - Keep distractors readable, passage-relevant, and semantically close enough to tempt, but wrong in polarity, scope, nuance, or collocation.
 - Set `contextual_meaning_ko` to a short Korean teacher-facing note describing the meaning the target position must carry.
+- Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment or `...라는 의미` note.
 - Copy `supporting_evidence` as a short exact passage snippet that supports the correct lexical choice.
 - Write the explanation entirely in Korean.
 """.strip()
@@ -210,6 +215,7 @@ GRAMMAR_BASE_PLANNER_PROMPT = """
 - Replace only that one target with one single English word in `corrupted_word`.
 - Keep the other four target words unchanged from the source.
 - Set `correction_basis_ko` to a short Korean note explaining what structural cue makes the original form correct and the corrupted form wrong.
+- Make `correction_basis_ko` specific to the local structure, such as a governing auxiliary, infinitive marker, agreement cue, or clause pattern. Avoid generic notes such as `문맥상 맞지 않는 형태`.
 - Copy `supporting_evidence` as a short exact snippet from the passage that helps show the governing structural cue.
 - Write the explanation entirely in Korean.
 - The explanation must be teacher-facing: explain the structural mismatch, not schema fields or renderer mechanics.

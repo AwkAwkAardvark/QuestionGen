@@ -33,6 +33,9 @@ Latest gating lessons from sample review:
   - `sentence_insertion` and `underlined_phrase_meaning` still need quality work, but their current sample failures are less concentrated than the `paragraph_ordering` issue
 - the next live-quality pass should therefore harden `paragraph_ordering` adjacency strength and suitability gating first, then return to cross-family explanation quality
 - current live families should reject weak items more aggressively before any further family expansion or review-baseline regeneration
+- the current explanation-quality rule for high-pass families is:
+  - `fill_in_the_blank`, `vocab`, and `grammar` should anchor explanations in supporting evidence first
+  - planner-supplied Korean meaning/basis notes should be cleaned or replaced before export if they read like memo fragments
 - model-tier specialization is a later optimization problem, not part of the current MVP hardening pass
 
 ## Recommended Order

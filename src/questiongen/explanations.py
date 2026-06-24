@@ -295,6 +295,7 @@ def _build_vocab_context(
             "corrupted_word": plan.corrupted_word,
             "source_sentence": sentence_map.get(corrupted_span.sentence_unit_id or "", ""),
             "supporting_evidence": plan.supporting_evidence,
+            "correction_basis_ko": plan.correction_basis_ko,
             "correct_marker": correct_marker,
         }
 
@@ -331,6 +332,7 @@ def _build_grammar_context(
         "original_word": original_word,
         "corrupted_word": plan.corrupted_word,
         "grammar_cue_ko": _grammar_structure_cue(corrupted_span.text, corrupted_span.heuristic_tags),
+        "correction_basis_ko": plan.correction_basis_ko,
         "source_sentence": sentence_map.get(corrupted_span.sentence_unit_id or "", ""),
         "supporting_evidence": plan.supporting_evidence,
         "correct_marker": correct_marker,
@@ -441,39 +443,74 @@ def _write_underlined_phrase_meaning_explanation(context: dict[str, str]) -> str
 
 
 def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
+    idea = _clean_teacher_note(context["contextual_meaning_ko"]) or "글의 핵심 내용을 복원하는 설명"
     return (
-        f"빈칸은 원문에서 '{context['selected_span_text']}'에 해당하는 부분으로, "
-        f"이 자리에는 {context['contextual_meaning_ko']}라는 의미가 들어가야 합니다. "
-        f"특히 '{context['supporting_evidence']}'라는 내용이 그 방향을 뒷받침하므로 "
+        f"빈칸 앞뒤를 보면 '{context['supporting_evidence']}'라는 대목이 핵심 단서입니다. "
+        f"따라서 이 자리에는 \"{idea}\"에 해당하는 내용이 들어가야 하므로 "
         f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
     )
 
 
 def _write_vocab_explanation(context: dict[str, str]) -> str:
     if context.get("subtype") == "contextual_choice":
+        meaning = _clean_teacher_note(context["contextual_meaning_ko"]) or "앞뒤 문맥과 맞는 뜻"
         return (
-            f"빈칸 자리는 '{_sentence_snippet(context['source_sentence'])}'라는 문맥에서 "
-            f"{context['contextual_meaning_ko']}의 의미를 가져야 합니다. "
-            f"특히 '{context['supporting_evidence']}'라는 내용이 그 방향을 뒷받침하므로 "
-            f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+            f"'{context['supporting_evidence']}'라는 단서를 보면 이 자리에는 "
+            f"\"{meaning}\"에 해당하는 뜻이 와야 합니다. "
+            f"따라서 정답은 {context['correct_marker']} {context['correct_choice']}입니다."
         )
+    basis = _prefer_teacher_note(
+        context.get("correction_basis_ko"),
+        "이 자리에는 앞뒤 내용과 맞는 뜻의 낱말이 와야 합니다",
+    )
     return (
-        f"{context['correct_marker']}의 '{context['corrupted_word']}'는 "
-        f"'{_sentence_snippet(context['source_sentence'])}'라는 문맥과 맞지 않습니다. "
-        f"이 자리는 원래 '{context['original_word']}'가 가리키는 의미로 읽혀야 하고, "
-        f"특히 '{context['supporting_evidence']}'라는 내용이 그 방향을 뒷받침하므로 "
-        f"정답은 {context['correct_marker']}입니다."
+        f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
+        f"따라서 {context['correct_marker']}의 '{context['corrupted_word']}'는 문맥에 맞지 않고, "
+        f"원래 '{context['original_word']}'가 와야 합니다."
     )
 
 
 def _write_grammar_explanation(context: dict[str, str]) -> str:
-    return (
-        f"{context['correct_marker']}의 '{context['corrupted_word']}'는 "
-        f"'{_sentence_snippet(context['source_sentence'])}'라는 구조와 맞지 않습니다. "
-        f"이 자리는 원래 '{context['original_word']}'가 와야 하며, {context['grammar_cue_ko']}. "
-        f"특히 '{context['supporting_evidence']}'라는 단서가 그 구조를 보여 주므로 "
-        f"정답은 {context['correct_marker']}입니다."
+    basis = _prefer_teacher_note(
+        context.get("correction_basis_ko"),
+        context["grammar_cue_ko"],
     )
+    return (
+        f"'{context['supporting_evidence']}'라는 구조를 보면 {basis}. "
+        f"따라서 {context['correct_marker']}의 '{context['corrupted_word']}'는 맞지 않고 "
+        f"원래 '{context['original_word']}'가 와야 합니다."
+    )
+
+
+def _clean_teacher_note(note: str | None) -> str:
+    if note is None:
+        return ""
+    cleaned = " ".join(note.split()).strip()
+    cleaned = cleaned.rstrip(". ")
+    if cleaned.endswith("다는 의미"):
+        cleaned = cleaned[: -len("는 의미")].rstrip()
+    for suffix in ("라는 의미", "이라는 의미"):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)].rstrip()
+    return cleaned
+
+
+def _prefer_teacher_note(note: str | None, fallback: str) -> str:
+    cleaned = _clean_teacher_note(note)
+    if not cleaned:
+        return fallback
+
+    lowered = cleaned.lower()
+    if any(fragment in lowered for fragment in ("자유서술", "schema", "renderer", "selected_", "절대 나오면 안 되는")):
+        return fallback
+    if cleaned in {
+        "문맥상 맞지 않는 단어입니다",
+        "문맥상 맞지 않는 형태입니다",
+        "문맥상 맞지 않습니다",
+        "글의 흐름과 맞지 않습니다",
+    }:
+        return fallback
+    return cleaned
 
 
 def _sentence_snippet(text: str, *, max_words: int = 12) -> str:

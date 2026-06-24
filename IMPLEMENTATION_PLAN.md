@@ -155,6 +155,7 @@
     - `blank_connective_relation_5_choices`
     - `blank_summary_completion_5_choices`
   - shipped policy: selected broad-family runs expand to multiple blank subtypes, each with subtype-specific inventories and incompatibility gates
+  - current explanation policy: rewrite exported explanations from supporting evidence plus cleaned Korean meaning notes, and reject malformed memo-style phrasing rather than exporting awkward `...라는 의미` boilerplate
 
 ### Single-span acceptance
 
@@ -173,7 +174,7 @@
     - `contextual_vocab_error_5`
     - `contextual_vocab_choice_5`
   - shipped policy: broad-family runs now produce both the five-target corruption item and the single-target lexical choice item
-  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs, prefer opposition-capable targets through conservative planner hints, and deterministically reject obvious near-synonym corruptions
+  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs, prefer opposition-capable targets through conservative planner hints, deterministically reject obvious near-synonym corruptions, and favor evidence-led teacher explanations over generic boilerplate
 - [x] `grammar`
   - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
   - live subtype set:
@@ -186,6 +187,7 @@
     - `grammar_error_parallel_structure_5`
     - `grammar_error_conjunction_preposition_5`
   - shipped policy: the broad `grammar` family now expands into multiple controlled subtype rows instead of one generic verb-form row
+  - current explanation policy: prefer local structural-cue explanations that name the governing evidence, and reject malformed memo-style Korean notes before export
 
 ### Multi-span acceptance
 
