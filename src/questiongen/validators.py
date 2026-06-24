@@ -4,6 +4,13 @@ from collections.abc import Mapping
 import re
 from typing import Any
 
+from .paragraph_ordering import (
+    adjacency_score,
+    looks_like_parallel_blocks,
+    paragraph_candidate_from_plan,
+    paragraph_candidate_is_stable,
+    paragraph_ordering_candidates,
+)
 from .parsers import content_tokens, looks_fragmentary_sentence, normalize_text
 from .question_types import QUESTION_SUBTYPE_SPECS, QUESTION_TYPES, QuestionTypeSpec, resolve_question_type_spec
 from .renderers import (
@@ -136,14 +143,6 @@ _REFERENTIAL_CUES = {
     "this",
     "those",
 }
-_PARALLEL_BLOCK_STARTERS = {
-    "for example",
-    "for instance",
-    "in",
-    "another",
-    "similarly",
-}
-
 
 def input_check(
     state: QuestionState,
@@ -443,8 +442,8 @@ def _validate_sentence_insertion_plan(prepared_source: PreparedSource, plan: obj
 
         before_text = sentence_units[target_index - 1].text
         after_text = sentence_units[target_index + 1].text
-        left_score = _adjacency_score(before_text, target_unit.text)
-        right_score = _adjacency_score(target_unit.text, after_text)
+        left_score = adjacency_score(before_text, target_unit.text)
+        right_score = adjacency_score(target_unit.text, after_text)
         if left_score < 2 or right_score < 2:
             errors.append(
                 "SentenceInsertionPlan target sentence needs distinct left-context and right-context evidence, not one-sided linkage."
@@ -469,20 +468,19 @@ def _validate_paragraph_ordering_plan(prepared_source: PreparedSource, plan: obj
         return []
 
     sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
-    intro_text = " ".join(sentence_map[unit_id] for unit_id in plan.intro_unit_ids)
     logical_blocks = [
         " ".join(sentence_map[unit_id] for unit_id in block)
         for block in plan.continuation_blocks
     ]
-    ordered_segments = [intro_text, *logical_blocks]
-    edge_scores = [
-        _adjacency_score(ordered_segments[index], ordered_segments[index + 1])
-        for index in range(len(ordered_segments) - 1)
-    ]
-    if any(score < 2 for score in edge_scores):
+    candidate = paragraph_candidate_from_plan(
+        prepared_source,
+        plan.intro_unit_ids,
+        plan.continuation_blocks,
+    )
+    if not paragraph_candidate_is_stable(candidate):
         return ["ParagraphOrderingPlan adjacency is too weakly forced to support a stable ordering item."]
 
-    if _looks_like_parallel_blocks(logical_blocks) and max(edge_scores, default=0) <= 3:
+    if looks_like_parallel_blocks(logical_blocks) and max(candidate.edge_scores, default=0) <= 3:
         return ["ParagraphOrderingPlan continuation blocks behave like parallel examples rather than forced adjacency."]
     return []
 
@@ -556,8 +554,8 @@ def _validate_sentence_insertion_compatibility(prepared_source: PreparedSource) 
 
         before_text = sentence_units[target_unit.index - 1].text
         after_text = sentence_units[target_unit.index + 1].text
-        left_score = _adjacency_score(before_text, target_unit.text)
-        right_score = _adjacency_score(target_unit.text, after_text)
+        left_score = adjacency_score(before_text, target_unit.text)
+        right_score = adjacency_score(target_unit.text, after_text)
         if left_score < 2 or right_score < 2:
             continue
         if _looks_connector_only_sentence(target_unit.text) and left_score <= 2 and right_score <= 2:
@@ -572,29 +570,20 @@ def _validate_sentence_insertion_compatibility(prepared_source: PreparedSource) 
 
 
 def _validate_paragraph_ordering_compatibility(prepared_source: PreparedSource) -> list[str]:
-    sentence_units = prepared_source.sentence_units
-    if not _should_apply_live_quality_gates(sentence_units):
+    if not _should_apply_live_quality_gates(prepared_source.sentence_units):
         return []
 
-    sentence_texts = [unit.text for unit in sentence_units]
-    sentence_count = len(sentence_texts)
-    for first_cut in range(1, sentence_count - 2):
-        for second_cut in range(first_cut + 1, sentence_count - 1):
-            for third_cut in range(second_cut + 1, sentence_count):
-                intro_text = " ".join(sentence_texts[:first_cut])
-                block_a = " ".join(sentence_texts[first_cut:second_cut])
-                block_b = " ".join(sentence_texts[second_cut:third_cut])
-                block_c = " ".join(sentence_texts[third_cut:])
-                ordered_segments = [intro_text, block_a, block_b, block_c]
-                edge_scores = [
-                    _adjacency_score(ordered_segments[index], ordered_segments[index + 1])
-                    for index in range(len(ordered_segments) - 1)
-                ]
-                if any(score < 2 for score in edge_scores):
-                    continue
-                if _looks_like_parallel_blocks([block_a, block_b, block_c]) and max(edge_scores, default=0) <= 3:
-                    continue
-                return []
+    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
+    for candidate in paragraph_ordering_candidates(prepared_source):
+        logical_blocks = [
+            " ".join(sentence_map[unit_id] for unit_id in block)
+            for block in candidate.continuation_blocks
+        ]
+        if not paragraph_candidate_is_stable(candidate):
+            continue
+        if looks_like_parallel_blocks(logical_blocks) and max(candidate.edge_scores, default=0) <= 3:
+            continue
+        return []
 
     return ["Passage does not contain strongly forced adjacency boundaries for a stable paragraph_ordering item."]
 
@@ -1479,25 +1468,6 @@ def _should_apply_live_quality_gates(sentence_units: list[object]) -> bool:
     return long_sentences >= 3
 
 
-def _adjacency_score(left_text: str, right_text: str) -> int:
-    score = 0
-    shared = content_tokens(left_text) & content_tokens(right_text)
-    if shared:
-        score += min(3, len(shared) + 1)
-
-    right_lower = normalize_text(right_text).lower()
-    left_lower = normalize_text(left_text).lower()
-    if left_text.rstrip().endswith("?"):
-        score += 2
-    if _starts_with_any(right_lower, _TRANSITION_STARTERS):
-        score += 1
-    if _contains_any(right_lower, _REFERENTIAL_CUES):
-        score += 1
-    if any(token in right_lower for token in ("this", "these", "such", "therefore", "however")) and left_lower:
-        score += 1
-    return score
-
-
 def _looks_connector_only_sentence(text: str) -> bool:
     normalized = normalize_text(text).lower()
     if not normalized:
@@ -1505,16 +1475,6 @@ def _looks_connector_only_sentence(text: str) -> bool:
     starts_with_connector = _starts_with_any(normalized, _TRANSITION_STARTERS)
     content = content_tokens(text)
     return starts_with_connector and len(content) <= 3
-
-
-def _looks_like_parallel_blocks(blocks: list[str]) -> bool:
-    parallel_count = 0
-    for block in blocks:
-        normalized = normalize_text(block).lower()
-        if _starts_with_any(normalized, _PARALLEL_BLOCK_STARTERS):
-            parallel_count += 1
-    return parallel_count >= 2
-
 
 def _starts_with_any(text: str, phrases: set[str]) -> bool:
     return any(text.startswith(f"{phrase} ") or text == phrase for phrase in phrases)

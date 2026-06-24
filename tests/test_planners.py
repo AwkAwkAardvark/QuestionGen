@@ -529,8 +529,11 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertIn("Boundary hints", prompt)
         self.assertIn("Candidate continuation-block starts", prompt)
+        self.assertIn("Ranked partition candidates", prompt)
+        self.assertIn("viability=stable", prompt)
+        self.assertIn("boundary_signal=", prompt)
         self.assertIn("right_stage_cue=next", prompt.lower())
-        self.assertIn("block_start_priority=high", prompt)
+        self.assertIn("block_start_priority=medium", prompt)
 
     def test_graph_reclassifies_collapsed_gap_plan_as_planning_error(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _CollapsedGapPlanner())

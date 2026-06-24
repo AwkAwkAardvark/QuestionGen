@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import re
 
+from .paragraph_ordering import (
+    paragraph_block_start_hints,
+    paragraph_boundary_hints,
+    paragraph_candidate_is_stable,
+    paragraph_ordering_candidates,
+)
 from .parsers import content_tokens, normalize_text
 from .question_types import QuestionTypeSpec
 from .schemas import PreparedSource
@@ -50,14 +56,6 @@ _REFERENTIAL_CUES = {
     "this",
     "those",
 }
-_PARALLEL_STARTERS = {
-    "another",
-    "for example",
-    "for instance",
-    "in",
-    "similarly",
-}
-
 
 def build_sentence_insertion_prompt(
     *,
@@ -159,6 +157,7 @@ def build_paragraph_ordering_prompt(
     )
     boundary_hints = _build_paragraph_boundary_hints(prepared_source)
     block_start_hints = _build_paragraph_block_start_hints(prepared_source)
+    partition_candidates = _build_paragraph_partition_candidates(prepared_source)
     return f"""
 You are planning an English exam paragraph ordering question.
 
@@ -184,9 +183,13 @@ Boundary hints:
 Candidate continuation-block starts (best first):
 {block_start_hints}
 
+Ranked partition candidates (best first):
+{partition_candidates}
+
 Selection reminders:
 - Choose a partition only if every block boundary is supported by real adjacency evidence, not just by a generic topic outline.
-- Avoid block starts marked as weak or dominated by parallel-example risk when a stronger boundary exists.
+- Prefer partitions marked `viability=stable` and rebuild the split if the best-looking candidate is still marked `watch`.
+- Avoid block starts marked as `priority=watch` or `priority=weak` when a stronger start signal exists.
 """.strip()
 
 
@@ -673,57 +676,45 @@ def _build_sentence_insertion_candidate_hints(prepared_source: PreparedSource) -
 
 
 def _build_paragraph_boundary_hints(prepared_source: PreparedSource) -> str:
-    units = prepared_source.sentence_units
-    lines: list[str] = []
-    for left_unit, right_unit in zip(units, units[1:]):
-        shared = _shared_content_preview(left_unit.text, right_unit.text)
-        stage_cue = _stage_cue(right_unit.text)
-        right_reference = _contains_reference(right_unit.text)
-        split_score = 3 if stage_cue else 0
-        keep_score = len(shared) + (1 if right_reference else 0)
-        if _starts_with_any(right_unit.text, _PARALLEL_STARTERS):
-            split_score += 1
-        lines.append(
-            (
-                f"- {left_unit.id} -> {right_unit.id}: split_hint={_hint_level(split_score)}; "
-                f"keep_together_hint={_hint_level(keep_score)}; "
-                f"shared_tokens={_csv_or_none(shared)}; "
-                f"right_stage_cue={stage_cue or 'none'}; "
-                f"right_opens_with_reference={_yes_no(right_reference)}"
-            )
+    return "\n".join(
+        (
+            f"- {hint.left_unit_id} -> {hint.right_unit_id}: "
+            f"boundary_signal={_hint_level(max(hint.boundary_support_score, 0))}; "
+            f"split_hint={_hint_level(hint.start_signal_score)}; "
+            f"keep_together_hint={_hint_level(hint.local_keep_score)}; "
+            f"shared_tokens={_csv_or_none(list(hint.shared_tokens))}; "
+            f"cut_reasons={'; '.join(hint.reasons) or 'none'}; "
+            f"right_stage_cue={hint.right_stage_cue or 'none'}; "
+            f"right_opens_with_reference={_yes_no(hint.right_opens_with_reference)}"
         )
-    return "\n".join(lines)
+        for hint in paragraph_boundary_hints(prepared_source)
+    )
 
 
 def _build_paragraph_block_start_hints(prepared_source: PreparedSource) -> str:
-    units = prepared_source.sentence_units
-    candidates: list[tuple[int, str]] = []
-    for unit in units[1:]:
-        previous = units[unit.index - 1]
-        stage_cue = _stage_cue(unit.text)
-        shared = _shared_content_preview(previous.text, unit.text)
-        right_reference = _contains_reference(unit.text)
-        score = 0
-        reasons: list[str] = []
-        if stage_cue:
-            score += 6
-            reasons.append(f"explicit_stage={stage_cue}")
-        if _starts_with_any(unit.text, _PARALLEL_STARTERS):
-            score -= 2
-            reasons.append("parallel_example_risk")
-        if shared:
-            score -= 1
-            reasons.append(f"shared_with_previous={_csv_or_none(shared)}")
-        if right_reference:
-            score -= 1
-            reasons.append("opens_by_referring_back")
-        candidates.append(
+    return "\n".join(
+        (
+            f"- {hint.unit_id}: block_start_priority={_hint_level(hint.start_signal_score)}; "
+            f"boundary_support={_hint_level(max(hint.boundary_support_score, 0))}; "
+            f"reason={'; '.join(hint.reasons) or 'fallback boundary'}; text={hint.text!r}"
+        )
+        for hint in paragraph_block_start_hints(prepared_source)
+    )
+
+
+def _build_paragraph_partition_candidates(prepared_source: PreparedSource) -> str:
+    lines: list[str] = []
+    for candidate in paragraph_ordering_candidates(prepared_source)[:5]:
+        block_starts = ",".join(block[0] for block in candidate.continuation_blocks)
+        lines.append(
             (
-                score,
-                f"- {unit.id}: block_start_priority={_hint_level(max(score, 0))}; reason={'; '.join(reasons) or 'fallback boundary'}; text={unit.text!r}",
+                f"- cuts={candidate.cut_positions}; viability={'stable' if paragraph_candidate_is_stable(candidate) else 'watch'}; "
+                f"block_starts={block_starts}; edge_scores={candidate.edge_scores}; "
+                f"start_signal_total={candidate.block_start_signal_total}; "
+                f"negative_boundaries={candidate.negative_boundary_count}"
             )
         )
-    return "\n".join(line for _, line in sorted(candidates, key=lambda item: item[0], reverse=True))
+    return "\n".join(lines)
 
 
 def _shared_content_preview(left_text: str, right_text: str, *, limit: int = 3) -> list[str]:

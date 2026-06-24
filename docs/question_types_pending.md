@@ -309,6 +309,9 @@ Current recommendation:
 
 - Use these ideas first to tighten planner selection and explanation standards for the existing `paragraph_ordering` type.
 - The near-term goal should be fewer mechanically valid but weak block partitions, plus clearer exported reasoning for why the correct order is forced.
+- Landed runtime policy:
+  - reject passages before planning when no candidate partition shows both stable adjacency and enough continuation-start signal
+  - expose ranked partition candidates to the planner rather than only flat boundary notes
 - Review the current checked-in sample with three buckets in mind:
   - weak-adjacency passages that should fail earlier as `qtype_incompatibility_error`
   - accepted passages that still need stronger block-start and boundary inventories

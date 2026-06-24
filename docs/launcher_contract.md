@@ -140,7 +140,7 @@ Rules:
 - Expected incompatibility between a valid passage and a specific question type should surface as `qtype_incompatibility_error`, not be collapsed into generic source or planner failure.
 - `source_error` should be reserved for malformed inputs, failed source preparation, or broken deterministic prepared-source invariants.
 - Deterministic plan violations discovered after LLM planning but before rendering should surface as `planning_error`, not `rendering_error`.
-- Current next hardening target on the review artifact is `paragraph_ordering`: passages without strongly forced four-block adjacency should fail as `qtype_incompatibility_error` before planning rather than as late weak-adjacency `planning_error` rows.
+- Current `paragraph_ordering` policy is to reject passages before planning when no candidate four-block partition shows both strong adjacency and strong continuation-start signals; the planner prompt now receives ranked partition candidates rather than only raw boundary notes.
 - Upstream LLM service failures, including `insufficient_quota`, should remain `planning_error`; do not introduce a separate exported quota status.
 - After the first detected `insufficient_quota` failure in a batch, later row/type combinations may short-circuit to exported `planning_error` rows without further model calls, but the exported row count must still stay complete.
 - Quota-driven `planning_error` rows are operational failures rather than live-family quality evidence and should be excluded from mixed-batch quality audits in favor of quota-clean reruns.

@@ -78,3 +78,15 @@ Next hardening target for the live branch:
 - keep deterministic plan validation strict rather than rescuing weak passages by loosening the validator
 - improve planner-facing boundary and block-start inventories so accepted passages surface stronger edge-by-edge adjacency evidence
 - treat mechanically partitioned but still schema-valid passes as ongoing review warnings, not as proof that the family is fully hardened
+
+## Landed `paragraph_ordering` Policy
+
+The current live branch now applies the following policy for `paragraph_ordering`:
+
+- pre-planning compatibility now searches ranked contiguous four-block candidates rather than allowing any adjacency-valid split
+- a passage must expose at least one stable candidate partition with both:
+  - edge-by-edge adjacency support
+  - enough continuation-start signal to distinguish real block turns from generic narration or advice flow
+- when no such candidate exists, the row should fail as `qtype_incompatibility_error` before planning
+- the planner prompt now exposes boundary signals, ranked block starts, and ranked partition candidates so accepted passages are biased toward stronger partitions
+- deterministic plan validation remains strict after planning, so this change is an earlier gate and prompt refinement, not a validator relaxation

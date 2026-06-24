@@ -234,7 +234,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(len(results), 17)
         by_subtype = {result.QuestionSubtypeKey: result for result in results}
         self.assertEqual(by_subtype["sentence_insertion_5_gaps"].status, "validation_passed")
-        self.assertEqual(by_subtype["abc_ordering_after_intro"].status, "planning_error")
+        self.assertEqual(by_subtype["abc_ordering_after_intro"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["underlined_phrase_meaning_5_ko"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["blank_inference_proposition_5_choices"].status, "validation_passed")
         self.assertEqual(by_subtype["blank_connective_relation_5_choices"].status, "validation_passed")
@@ -295,6 +295,23 @@ class BatchTests(unittest.TestCase):
         results = run_batch_rows(short_rows, ["sentence_insertion"], self.runner)
         self.assertEqual(results[0].status, "qtype_incompatibility_error")
         self.assertTrue(any("at least 5 sentence units" in error for error in results[0].errors))
+
+    def test_weak_paragraph_ordering_row_is_rejected_before_planning(self) -> None:
+        weak_row = BatchInputRow(
+            OriginalQuestionNumber="8",
+            BatchRowId=0,
+            source_paragraph=(
+                "It has been said that most people listen with the intention to reply rather than to understand. "
+                "Facilitating your mentee’s thinking, rather than trying to do it for them, is your primary responsibility as a mentor, however tempting that may be. "
+                "If during a mentoring session, you realize you're doing most of the talking, then just stop, sit back and listen with a patient mind. "
+                "A good part of the mentee’s learning process, which involves dealing with complex ideas, happens when he/she thinks out loud. "
+                "Therefore, your mentee should be doing most of the talking. "
+                "Listening actively and empathically helps a mentee to have a sense of having their thoughts valued and acknowledged; it is essential that you listen well."
+            ),
+        )
+        results = run_batch_rows([weak_row], ["paragraph_ordering"], self.runner)
+        self.assertEqual(results[0].status, "qtype_incompatibility_error")
+        self.assertTrue(any("strongly forced adjacency boundaries" in error for error in results[0].errors))
 
     def test_file_runner_writes_csv_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
