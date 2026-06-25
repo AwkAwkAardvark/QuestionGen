@@ -159,6 +159,16 @@ class ParagraphOrderingPlan(BaseModel):
 _CHOICE_PAIR_RE = re.compile(r"^[A-Za-z][A-Za-z '\-/]*(?:\s*->\s*)[A-Za-z][A-Za-z '\-/]*$")
 _ENGLISH_CHOICE_RE = re.compile(r"^[A-Za-z][A-Za-z '\-/,;:()]*[A-Za-z.]$")
 _ENGLISH_WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*$")
+_ENGLISH_LEXICAL_CHOICE_RE = re.compile(
+    r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*(?: [A-Za-z]+(?:[-'’][A-Za-z]+)*){0,3}$"
+)
+
+
+def _is_short_english_lexical_choice(value: str) -> bool:
+    normalized = " ".join(value.split())
+    if not normalized or _ENGLISH_LEXICAL_CHOICE_RE.fullmatch(normalized) is None:
+        return False
+    return 1 <= len(normalized.split()) <= 4
 
 
 def _normalize_choice_pair(value: str) -> str:
@@ -361,7 +371,7 @@ class VocabPlan(BaseModel):
 
 
 class VocabChoicePlan(BaseModel):
-    subtype: Literal["contextual_choice"] = "contextual_choice"
+    subtype: Literal["contextual_choice", "contextual_correct_among_4_corrupted"] = "contextual_choice"
     selected_span_id: str
     selected_span_text: str
     choice_words: list[str] = Field(default_factory=list)
@@ -378,13 +388,17 @@ class VocabChoicePlan(BaseModel):
             raise ValueError("VocabChoicePlan selected_span_text is required.")
         if len(self.choice_words) != 5:
             raise ValueError("VocabChoicePlan requires exactly five choice_words.")
-        normalized_choices = [text.strip().lower() for text in self.choice_words]
+        normalized_choices = [" ".join(text.split()).lower() for text in self.choice_words]
         if len(set(normalized_choices)) != 5:
             raise ValueError("VocabChoicePlan choice_words must be unique.")
-        if any(_ENGLISH_WORD_RE.fullmatch(choice.strip()) is None for choice in self.choice_words):
-            raise ValueError("VocabChoicePlan choice_words must all be single English words.")
-        if self.correct_choice.strip().lower() not in normalized_choices:
+        if any(not _is_short_english_lexical_choice(choice) for choice in self.choice_words):
+            raise ValueError("VocabChoicePlan choice_words must be short readable English lexical choices.")
+        normalized_selected = " ".join(self.selected_span_text.split()).lower()
+        normalized_correct = " ".join(self.correct_choice.split()).lower()
+        if normalized_correct not in normalized_choices:
             raise ValueError("VocabChoicePlan correct_choice must be included in choice_words.")
+        if normalized_correct != normalized_selected:
+            raise ValueError("VocabChoicePlan correct_choice must match selected_span_text exactly.")
         if not self.contextual_meaning_ko or not self.contextual_meaning_ko.strip():
             raise ValueError("VocabChoicePlan contextual_meaning_ko is required.")
         if not _HANGUL_RE.search(self.contextual_meaning_ko):

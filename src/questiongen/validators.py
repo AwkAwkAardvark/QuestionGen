@@ -52,8 +52,10 @@ from .targeting import (
     grammar_subtype_inventory,
     grammar_target_inventory,
     is_auxiliary_like,
+    is_near_synonym_choice,
     is_near_synonym_corruption,
     is_single_english_word,
+    is_short_english_lexical_choice,
     malformed_verb_form_reason,
     normalize_english_choice,
     normalize_english_word,
@@ -62,6 +64,8 @@ from .targeting import (
     underlined_phrase_inventory,
     underlined_span_quality_error,
     vocab_choice_inventory,
+    vocab_choice_target_cue_count,
+    vocab_choice_target_quality_error,
     vocab_target_inventory,
 )
 
@@ -739,17 +743,26 @@ def _validate_vocab_plan(
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
     if isinstance(plan, VocabChoicePlan):
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
         selected_span = inventory.get(plan.selected_span_id)
         if selected_span is None:
             return [f"Unknown selected span ID: {plan.selected_span_id}"]
         errors: list[str] = []
+        expected_plan_subtype = (
+            "contextual_correct_among_4_corrupted"
+            if type_spec.subtype_key == "contextual_vocab_correct_among_4_corrupted_5"
+            else "contextual_choice"
+        )
+        if plan.subtype != expected_plan_subtype:
+            errors.append(f"VocabChoicePlan subtype must be {expected_plan_subtype} for {type_spec.subtype_key}.")
         if plan.selected_span_text != selected_span.text:
             errors.append("VocabChoicePlan selected_span_text must exactly match the selected span text.")
         if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
             errors.append("VocabChoicePlan supporting_evidence must be copied from the source passage.")
-        if is_auxiliary_like(selected_span.text):
-            errors.append("Vocab choice target must not collapse into an auxiliary-like grammar target.")
+        target_error = vocab_choice_target_quality_error(selected_span, subtype_key=type_spec.subtype_key)
+        if target_error is not None:
+            errors.append(target_error)
+        errors.extend(_validate_vocab_choice_options(selected_span.text, plan.choice_words, plan.correct_choice))
         return errors
     if not isinstance(plan, VocabPlan):
         return ["VocabPlan is missing for deterministic plan checks."]
@@ -771,13 +784,42 @@ def _validate_vocab_compatibility(
     prepared_source: PreparedSource,
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
-    if type_spec.subtype_key == "contextual_vocab_choice_5":
-        if len(vocab_choice_inventory(prepared_source)) < 1:
-            return ["Passage does not contain a workable single-word vocab target for contextual_vocab_choice_5."]
+    if type_spec.plan_schema is VocabChoicePlan:
+        if len(vocab_choice_inventory(prepared_source, type_spec.subtype_key)) < 1:
+            return [f"Passage does not contain a workable lexical-slot vocab target for {type_spec.subtype_key}."]
         return []
     if len(vocab_target_inventory(prepared_source)) < 5:
         return ["Passage does not contain five workable single-word vocab targets."]
     return []
+
+
+def _validate_vocab_choice_options(
+    selected_span_text: str,
+    choice_words: list[str],
+    correct_choice: str,
+) -> list[str]:
+    errors: list[str] = []
+    normalized_selected = normalize_english_choice(selected_span_text)
+    normalized_correct = normalize_english_choice(correct_choice)
+    if normalized_correct != normalized_selected:
+        errors.append("VocabChoicePlan correct_choice must exactly match selected_span_text.")
+    selected_token_count = len(" ".join(selected_span_text.split()).split())
+    if not is_short_english_lexical_choice(selected_span_text):
+        errors.append("VocabChoicePlan selected_span_text must be a short readable English lexical choice.")
+    for choice in choice_words:
+        if not is_short_english_lexical_choice(choice):
+            errors.append(f"VocabChoicePlan choice '{choice}' is not a short readable English lexical choice.")
+            continue
+        choice_token_count = len(choice.split())
+        if selected_token_count == 1 and choice_token_count != 1:
+            errors.append("VocabChoicePlan options must preserve a single-word slot when the target is one word.")
+        if selected_token_count > 1 and abs(choice_token_count - selected_token_count) > 1:
+            errors.append("VocabChoicePlan options must preserve the same short lexical slot width.")
+        if normalize_english_choice(choice) != normalized_selected and is_auxiliary_like(choice):
+            errors.append("VocabChoicePlan distractors must not collapse into auxiliary-only grammar choices.")
+        if normalize_english_choice(choice) != normalized_selected and is_near_synonym_choice(selected_span_text, choice):
+            errors.append("VocabChoicePlan distractors must not be near-synonyms of the correct choice.")
+    return errors
 
 
 def _validate_grammar_plan(
@@ -1416,12 +1458,13 @@ def validate_vocab_output(
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
     if isinstance(plan, VocabChoicePlan):
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
         selected_span = inventory.get(plan.selected_span_id)
         if selected_span is None:
             return [f"Unknown selected span ID: {plan.selected_span_id}"]
         errors: list[str] = []
         expected_choices = [normalize_english_choice(choice) for choice in plan.choice_words]
+        errors.extend(_validate_vocab_choice_options(selected_span.text, plan.choice_words, plan.correct_choice))
         if generated.question_stem != type_spec.question_stem:
             errors.append("question_stem does not match the question type metadata.")
         if generated.given_sentence is not None:

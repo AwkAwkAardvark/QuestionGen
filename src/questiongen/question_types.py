@@ -21,7 +21,7 @@ ATMOSPHERE_STEM = "다음 글의 분위기로 가장 적절한 것은?"
 UNDERLINED_PHRASE_MEANING_STEM = "다음 글의 밑줄 친 부분의 의미로 가장 적절한 것은?"
 FILL_IN_THE_BLANK_STEM = "다음 빈칸에 들어갈 말로 가장 적절한 것은?"
 VOCAB_ERROR_STEM = "다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 적절하지 않은 것은?"
-VOCAB_CHOICE_STEM = "다음 글의 빈칸에 들어갈 낱말로 가장 적절한 것은?"
+VOCAB_CHOICE_STEM = "다음 글의 빈칸에 들어갈 표현으로 가장 적절한 것은?"
 GRAMMAR_STEM = "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?"
 
 SENTENCE_INSERTION_PLANNER_PROMPT = """
@@ -197,11 +197,36 @@ VOCAB_ERROR_PLANNER_PROMPT = """
 
 VOCAB_CHOICE_PLANNER_PROMPT = """
 - Set `subtype` to `contextual_choice`.
-- Select exactly one single-word target ID from the provided vocab-target inventory.
-- Treat `selected_span_id` as the authoritative source-owned contract and set `selected_span_text` to the exact source word.
+- Select exactly one target ID from the provided lexical-slot vocab inventory.
+- The target may be one English word or one short lexical phrase, but it must stay within a single lexical slot rather than a clause.
+- Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
+- Prefer targets that are abstract, evaluative, stance-bearing, contrastive, causal, or central to passage interpretation.
+- Choose a target only when at least two independent contextual cues make the correct answer recoverable.
+- Treat `selected_span_id` as the authoritative source-owned contract and set `selected_span_text` to the exact source wording.
 - Create exactly five unique English lexical choices in `choice_words`.
-- Set `correct_choice` to the one option that best preserves the original contextual meaning at that position.
-- Keep distractors readable, passage-relevant, and semantically close enough to tempt, but wrong in polarity, scope, nuance, or collocation.
+- Every option must fit the same local slot and remain readable in context.
+- Set `correct_choice` to the exact source wording from `selected_span_text`.
+- Keep distractors readable, passage-relevant, and clearly wrong for a semantic reason such as polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, or evaluative drift.
+- Do not use near-synonyms, loose paraphrases, or multiple defensible answers.
+- Set `contextual_meaning_ko` to a short Korean teacher-facing note describing the meaning the target position must carry.
+- Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment or `...라는 의미` note.
+- Copy `supporting_evidence` as a short exact passage snippet that supports the correct lexical choice.
+- Write the explanation entirely in Korean.
+""".strip()
+
+VOCAB_CORRECT_AMONG_4_CORRUPTED_PLANNER_PROMPT = """
+- Set `subtype` to `contextual_correct_among_4_corrupted`.
+- Select exactly one target ID from the provided lexical-slot vocab inventory.
+- The target may be one English word or one short lexical phrase, but it must stay within a single lexical slot rather than a clause.
+- Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
+- Prefer high-centrality targets whose meaning is recoverable from at least two independent contextual cues.
+- Treat `selected_span_id` as the authoritative source-owned contract and set `selected_span_text` to the exact source wording.
+- Create exactly five unique English lexical choices in `choice_words`.
+- Set `correct_choice` to the exact source wording from `selected_span_text`.
+- The other four options must be locally readable and slot-compatible, but contextually corrupted.
+- Make the four wrong options fail for clear semantic reasons such as polarity reversal, degree or scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
+- Do not use near-synonyms, loose paraphrases, rare-word difficulty alone, or options that become ungrammatical instead of semantically wrong.
+- Do not allow multiple defensible answers under mild paraphrase.
 - Set `contextual_meaning_ko` to a short Korean teacher-facing note describing the meaning the target position must carry.
 - Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment or `...라는 의미` note.
 - Copy `supporting_evidence` as a short exact passage snippet that supports the correct lexical choice.
@@ -347,6 +372,22 @@ def _spec(
     )
 
 
+CONTEXTUAL_VOCAB_ERROR_SPEC = _spec(
+    family_key="vocab",
+    subtype_key="contextual_vocab_error_5",
+    subtype_label_ko="어휘 오류 찾기",
+    format_key="contextual_vocab_error_5",
+    planner_prompt=VOCAB_ERROR_PLANNER_PROMPT,
+    question_stem=VOCAB_ERROR_STEM,
+    unit_level="span",
+    renderer_key="vocab",
+    validator_key="vocab",
+    plan_schema=VocabPlan,
+    min_source_units=2,
+    choice_count=5,
+)
+
+
 QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
     "sentence_insertion": (
         _spec(
@@ -487,24 +528,24 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
     "vocab": (
         _spec(
             family_key="vocab",
-            subtype_key="contextual_vocab_error_5",
-            subtype_label_ko="어휘 오류 찾기",
-            format_key="contextual_vocab_error_5",
-            planner_prompt=VOCAB_ERROR_PLANNER_PROMPT,
-            question_stem=VOCAB_ERROR_STEM,
+            subtype_key="contextual_vocab_choice_5",
+            subtype_label_ko="문맥상 어휘 선택",
+            format_key="contextual_vocab_choice_5",
+            planner_prompt=VOCAB_CHOICE_PLANNER_PROMPT,
+            question_stem=VOCAB_CHOICE_STEM,
             unit_level="span",
             renderer_key="vocab",
             validator_key="vocab",
-            plan_schema=VocabPlan,
+            plan_schema=VocabChoicePlan,
             min_source_units=2,
             choice_count=5,
         ),
         _spec(
             family_key="vocab",
-            subtype_key="contextual_vocab_choice_5",
-            subtype_label_ko="문맥상 어휘 선택",
-            format_key="contextual_vocab_choice_5",
-            planner_prompt=VOCAB_CHOICE_PLANNER_PROMPT,
+            subtype_key="contextual_vocab_correct_among_4_corrupted_5",
+            subtype_label_ko="문맥상 옳은 어휘 선택",
+            format_key="contextual_vocab_correct_among_4_corrupted_5",
+            planner_prompt=VOCAB_CORRECT_AMONG_4_CORRUPTED_PLANNER_PROMPT,
             question_stem=VOCAB_CHOICE_STEM,
             unit_level="span",
             renderer_key="vocab",
@@ -547,6 +588,7 @@ QUESTION_SUBTYPE_SPECS: dict[str, QuestionTypeSpec] = {
     for specs in QUESTION_TYPE_SPECS_BY_FAMILY.values()
     for spec in specs
 }
+QUESTION_SUBTYPE_SPECS[CONTEXTUAL_VOCAB_ERROR_SPEC.subtype_key] = CONTEXTUAL_VOCAB_ERROR_SPEC
 
 QUESTION_TYPES = {
     family_key: QuestionFamilySpec(
@@ -580,7 +622,13 @@ def resolve_question_type_spec(question_type_key: str, question_subtype_key: str
         return None
     if question_subtype_key is None:
         return specs[0]
-    return next((spec for spec in specs if spec.subtype_key == question_subtype_key), None)
+    live_spec = next((spec for spec in specs if spec.subtype_key == question_subtype_key), None)
+    if live_spec is not None:
+        return live_spec
+    dormant_spec = QUESTION_SUBTYPE_SPECS.get(question_subtype_key)
+    if dormant_spec is not None and dormant_spec.family_key == question_type_key:
+        return dormant_spec
+    return None
 
 
 def expand_question_type_keys(question_type_keys: list[str] | tuple[str, ...]) -> list[QuestionTypeSpec]:

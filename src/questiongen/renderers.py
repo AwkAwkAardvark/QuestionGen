@@ -577,7 +577,7 @@ def _build_vocab_question(
     if type_spec.choice_count != len(MARKER_CHOICES):
         raise ValueError("Vocab renderer expects exactly five targets.")
 
-    inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
+    inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
     selected_spans = _ordered_target_spans(
         inventory=inventory,
         target_span_ids=plan.target_span_ids,
@@ -622,7 +622,7 @@ def _build_vocab_choice_question(
     if type_spec.choice_count != len(MARKER_CHOICES):
         raise ValueError("Vocab choice renderer expects exactly five choices.")
 
-    inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
+    inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
     selected_span = inventory.get(plan.selected_span_id)
     if selected_span is None:
         raise ValueError(f"Unknown selected span ID: {plan.selected_span_id}")

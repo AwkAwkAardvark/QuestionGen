@@ -10,7 +10,7 @@ from .paragraph_ordering import (
 )
 from .parsers import content_tokens, normalize_text
 from .question_types import QuestionTypeSpec
-from .schemas import PreparedSource
+from .schemas import PreparedSource, VocabPlan
 from .targeting import (
     allowed_verb_form_variants,
     fill_blank_connective_inventory,
@@ -22,6 +22,7 @@ from .targeting import (
     span_shape_label,
     underlined_phrase_inventory,
     vocab_choice_inventory,
+    vocab_choice_target_cue_count,
     vocab_target_inventory,
     vocab_target_is_antonym_invertible,
 )
@@ -434,21 +435,17 @@ def build_vocab_prompt(
         f"- {unit.id}: {unit.text}"
         for unit in prepared_source.sentence_units
     )
-    inventory_source = (
-        vocab_choice_inventory(prepared_source)
-        if type_spec.subtype_key == "contextual_vocab_choice_5"
-        else vocab_target_inventory(prepared_source)
-    )
-    target_inventory = "\n".join(
-        (
-            f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
-            f"antonym_invertible={'YES' if vocab_target_is_antonym_invertible(span) else 'no'}; "
-            f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
-            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
+    if type_spec.plan_schema is VocabPlan:
+        target_inventory = "\n".join(
+            (
+                f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
+                f"antonym_invertible={'YES' if vocab_target_is_antonym_invertible(span) else 'no'}; "
+                f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
+                f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
+            )
+            for rank, span in enumerate(vocab_target_inventory(prepared_source), start=1)
         )
-        for rank, span in enumerate(inventory_source, start=1)
-    )
-    return f"""
+        return f"""
 You are planning an English exam contextual vocabulary question.
 
 Return only structured data matching the required schema.
@@ -456,6 +453,7 @@ Return only structured data matching the required schema.
 Question type:
 - Key: vocab
 - Label: {type_spec.family_label_ko}
+- Active subtype: {type_spec.subtype_key}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -475,6 +473,46 @@ Selection reminders:
 - Prefer targets marked `antonym_invertible=YES` when the subtype is the contextual error format.
 - Source-owned IDs remain the authoritative contract; exact source words will be resolved deterministically from those IDs.
 """.strip()
+    target_inventory = "\n".join(
+        (
+            f"- rank {rank}: {span.id}; score={span.priority_score}; cues={vocab_choice_target_cue_count(span)}; "
+            f"shape={span_shape_label(span)}; punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
+            f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
+            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
+        )
+        for rank, span in enumerate(vocab_choice_inventory(prepared_source, type_spec.subtype_key), start=1)
+    )
+    return f"""
+You are planning an English exam contextual vocabulary question.
+
+Return only structured data matching the required schema.
+
+Question type:
+- Key: vocab
+- Label: {type_spec.family_label_ko}
+- Active subtype: {type_spec.subtype_key}
+- Student-facing stem: {type_spec.question_stem}
+
+Planning rules:
+{type_spec.planner_prompt}
+
+Source paragraph:
+{source_paragraph}
+
+Sentence units:
+{sentence_inventory}
+
+Lexical-slot vocab targets:
+{target_inventory}
+
+Selection reminders:
+- Follow the active subtype exactly and keep subtype identity explicit in the returned schema.
+- Choose a clean lexical slot, not a clause fragment, technical label, proper noun, or grammar-only function word.
+- Prefer `shape=claim`, `shape=phrase`, or strong single-word targets with higher `cues=` counts.
+- Every option must stay readable in the same local slot.
+- `correct_choice` must exactly match `selected_span_text`; the other four options must be contextually wrong, not near-synonymous.
+- Source-owned IDs remain the authoritative contract; exact source wording will be resolved deterministically from those IDs.
+""".strip()
 
 
 
@@ -493,11 +531,12 @@ Previous validation error:
 
 Repair rules:
 - Return a fully corrected answer.
-- Re-check that `target_span_ids` contains exactly five unique IDs from the provided inventory.
-- `target_span_ids` are authoritative; copy matching source words into `target_span_texts`, but resolve your final selection by ID first.
-- Re-check that `corrupted_span_id` is one of `target_span_ids`.
-- Re-check that `corrupted_word` is a single English word and differs from the original target word.
-- CRITICAL: The corrupted word must clearly reverse or distort the passage meaning. A near-synonym (e.g. stick → adhere, help → aid, big → large) is NOT valid. Use an antonym or a clearly context-wrong word instead.
+- Re-check the active subtype and return a plan that matches that subtype's schema exactly.
+- If the active subtype is a choice-based vocab item, `correct_choice` must exactly match `selected_span_text`.
+- Re-check that every option stays in the same local slot and remains readable in context.
+- Re-check that the wrong options are semantically wrong, not merely rare, ungrammatical, or near-synonymous.
+- If the previous error mentions ambiguity or multiple defensible answers, rebuild all distractors from scratch around clearer polarity, scope, collocation, or discourse-role mismatches.
+- If the active subtype is the legacy error format, re-check that `target_span_ids` contains exactly five unique IDs, that `corrupted_span_id` is one of them, and that `corrupted_word` clearly reverses or distorts the passage meaning.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose about contextual mismatch, without schema fields or mechanics.

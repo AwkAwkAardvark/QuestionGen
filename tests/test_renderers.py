@@ -20,13 +20,13 @@ from questiongen.schemas import (
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabPlan,
+    VocabChoicePlan,
 )
 from questiongen.targeting import (
     allowed_verb_form_variants,
     fill_blank_target_inventory,
     grammar_target_inventory,
-    vocab_target_inventory,
+    vocab_choice_inventory,
 )
 from questiongen.validators import validate_sentence_insertion_output
 
@@ -298,7 +298,7 @@ class RendererTests(unittest.TestCase):
         self.assertNotIn(selected_span.text, generated.student_paragraph)
         self.assertEqual(generated.answer, "①")
 
-    def test_vocab_renderer_marks_five_targets_and_one_corruption(self) -> None:
+    def test_vocab_renderer_blanks_one_target_and_renders_choices(self) -> None:
         source = (
             "City planners recently tested brighter LED lights on several downtown blocks. "
             "The new lights make crosswalks easier to see after sunset. "
@@ -308,15 +308,21 @@ class RendererTests(unittest.TestCase):
             "Officials now plan to expand the same lighting system to nearby neighborhoods."
         )
         prepared = prepare_source(source)
-        targets = sorted(vocab_target_inventory(prepared)[:5], key=lambda span: span.char_start)
-        plan = VocabPlan(
-            target_span_ids=[span.id for span in targets],
-            target_span_texts=[span.text for span in targets],
-            corrupted_span_id=targets[1].id,
-            corrupted_word="heavier",
-            correction_basis_ko="이 문맥에서는 원래 단어가 글의 설명 흐름과 더 잘 맞습니다",
+        target = vocab_choice_inventory(prepared, QUESTION_TYPES["vocab"].subtype_key)[0]
+        plan = VocabChoicePlan(
+            selected_span_id=target.id,
+            selected_span_text=target.text,
+            choice_words=[
+                target.text,
+                "weaken",
+                "ignore",
+                "delay",
+                "worsen",
+            ],
+            correct_choice=target.text,
+            contextual_meaning_ko="이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 한다는 의미",
             supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-            explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
+            explanation="문맥상 이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 합니다.",
         )
         result = render_vocab(
             {
@@ -334,12 +340,12 @@ class RendererTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "rendered")
         generated = result["generated"]
-        self.assertEqual(generated.choices, ["①", "②", "③", "④", "⑤"])
-        self.assertIn("[밑줄①]", generated.student_paragraph)
-        self.assertIn("heavier", generated.student_paragraph)
-        self.assertEqual(generated.answer, "②")
+        self.assertEqual(generated.choices, [target.text, "weaken", "ignore", "delay", "worsen"])
+        self.assertIn("_____", generated.student_paragraph)
+        self.assertNotIn(target.text, generated.student_paragraph)
+        self.assertEqual(generated.answer, "①")
 
-    def test_vocab_renderer_uses_target_ids_as_source_owned_contract(self) -> None:
+    def test_vocab_renderer_uses_selected_id_as_source_owned_contract(self) -> None:
         source = (
             "City planners recently tested brighter LED lights on several downtown blocks. "
             "The new lights make crosswalks easier to see after sunset. "
@@ -349,15 +355,21 @@ class RendererTests(unittest.TestCase):
             "Officials now plan to expand the same lighting system to nearby neighborhoods."
         )
         prepared = prepare_source(source)
-        targets = sorted(vocab_target_inventory(prepared)[:5], key=lambda span: span.char_start)
-        plan = VocabPlan(
-            target_span_ids=[span.id for span in targets],
-            target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
-            corrupted_span_id=targets[1].id,
-            corrupted_word="heavier",
-            correction_basis_ko="이 문맥에서는 원래 단어가 글의 설명 흐름과 더 잘 맞습니다",
+        target = vocab_choice_inventory(prepared, QUESTION_TYPES["vocab"].subtype_key)[0]
+        plan = VocabChoicePlan(
+            selected_span_id=target.id,
+            selected_span_text=target.text,
+            choice_words=[
+                target.text,
+                "weaken",
+                "ignore",
+                "delay",
+                "worsen",
+            ],
+            correct_choice=target.text,
+            contextual_meaning_ko="이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 한다는 의미",
             supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-            explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
+            explanation="문맥상 이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 합니다.",
         )
         result = render_vocab(
             {
@@ -374,8 +386,8 @@ class RendererTests(unittest.TestCase):
             QUESTION_TYPES["vocab"],
         )
         self.assertEqual(result["status"], "rendered")
-        self.assertIn("[밑줄②]", result["generated"].student_paragraph)
-        self.assertIn("heavier", result["generated"].student_paragraph)
+        self.assertEqual(result["generated"].choices[0], target.text)
+        self.assertEqual(result["generated"].answer, "①")
 
     def test_grammar_renderer_marks_five_targets_and_one_corruption(self) -> None:
         source = (

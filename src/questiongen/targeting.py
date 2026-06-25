@@ -12,8 +12,11 @@ NUMBERED_UNDERLINE_CLOSE_TEMPLATE = "[/밑줄{marker}]"
 
 _SINGLE_WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*$")
 _ENGLISH_WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*$")
+_LEXICAL_CHOICE_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*(?: [A-Za-z]+(?:[-'’][A-Za-z]+)*){0,3}$")
 _TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'’][A-Za-z]+)*")
 _CROSS_PUNCTUATION_RE = re.compile(r"[,;:()]|(?:\s[-–—]\s)")
+_INNER_PROPER_NOUN_RE = re.compile(r"(?<!^)\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b")
+_TECHNICAL_LABEL_RE = re.compile(r"\b(?:[A-Z]{2,}|\w*\d\w*)\b")
 
 _FINITE_AUXILIARIES = {
     "am",
@@ -101,6 +104,24 @@ _EVALUATIVE_CUE_WORDS = {
     "only",
     "still",
 }
+_DISCOURSE_CUE_WORDS = {
+    "although",
+    "because",
+    "but",
+    "despite",
+    "even",
+    "however",
+    "instead",
+    "only",
+    "rather",
+    "so",
+    "still",
+    "therefore",
+    "though",
+    "while",
+    "without",
+    "yet",
+}
 _INCOMPLETE_EDGE_WORDS = {
     "a",
     "an",
@@ -132,6 +153,47 @@ _INCOMPLETE_EDGE_WORDS = {
     "which",
     "whose",
     "your",
+}
+_LOW_VALUE_FACTUAL_WORDS = {
+    "area",
+    "blocks",
+    "book",
+    "books",
+    "boy",
+    "boys",
+    "city",
+    "days",
+    "field",
+    "girl",
+    "girls",
+    "man",
+    "men",
+    "month",
+    "months",
+    "people",
+    "report",
+    "reports",
+    "road",
+    "roads",
+    "room",
+    "rooms",
+    "station",
+    "street",
+    "streets",
+    "system",
+    "systems",
+    "teacher",
+    "teachers",
+    "thing",
+    "things",
+    "time",
+    "times",
+    "week",
+    "weeks",
+    "woman",
+    "women",
+    "year",
+    "years",
 }
 _IRREGULAR_VARIANTS = {
     "be": {"am", "are", "be", "been", "being", "is", "was", "were"},
@@ -221,13 +283,18 @@ def vocab_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
     )
 
 
-def vocab_choice_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
-    candidates = [
-        span
-        for span in vocab_target_inventory(prepared_source)
-        if not is_auxiliary_like(span.text)
-    ]
-    return sorted(candidates, key=lambda span: (-span.priority_score, span.char_start, span.char_end))
+def vocab_choice_inventory(
+    prepared_source: PreparedSource,
+    subtype_key: str = "contextual_vocab_choice_5",
+) -> list[SpanUnit]:
+    return sorted(
+        _dedupe_by_text(
+            span
+            for span in prepared_source.span_units
+            if vocab_choice_target_quality_error(span, subtype_key=subtype_key) is None
+        ),
+        key=_vocab_choice_sort_key,
+    )
 
 
 def grammar_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
@@ -425,6 +492,87 @@ def fill_blank_summary_quality_error(span: SpanUnit) -> str | None:
     return None
 
 
+def is_short_english_lexical_choice(value: str) -> bool:
+    normalized = " ".join(value.split())
+    if not normalized or _LEXICAL_CHOICE_RE.fullmatch(normalized) is None:
+        return False
+    return 1 <= len(normalized.split()) <= 4
+
+
+def vocab_choice_target_cue_count(span: SpanUnit) -> int:
+    tags = set(span.heuristic_tags)
+    score = 0
+    if {"abstract_term", "claim_bearing", "phrase_frame"} & tags:
+        score += 1
+    if {"contextual_cue", "antonym_invertible"} & tags:
+        score += 1
+    if _context_has_semantic_anchor(span.context_before) and _context_has_semantic_anchor(span.context_after):
+        score += 1
+    elif _context_has_semantic_anchor(span.context_before) or _context_has_semantic_anchor(span.context_after):
+        score += 1
+    if span.priority_score >= 6:
+        score += 1
+    return score
+
+
+def vocab_choice_target_quality_error(
+    span: SpanUnit,
+    *,
+    subtype_key: str = "contextual_vocab_choice_5",
+) -> str | None:
+    tags = set(span.heuristic_tags)
+    tokens = _span_tokens(span.text)
+    token_count = len(tokens)
+    content_count = _content_word_count(tokens)
+
+    if not tokens:
+        return "Selected span is empty for vocab."
+    if span_crosses_punctuation(span.text):
+        return "Selected span crosses punctuation and is not a clean lexical slot."
+    if not is_short_english_lexical_choice(span.text):
+        return "Selected span is not a short lexical word or phrase target."
+    if _TECHNICAL_LABEL_RE.search(span.text) is not None:
+        return "Selected span looks like a technical label rather than a contextual vocab target."
+    if _looks_proper_nounish_span(span):
+        return "Selected span looks like a proper noun rather than a contextual vocab target."
+    if token_count == 1:
+        token = tokens[0]
+        if token in _FUNCTION_WORDS or is_auxiliary_like(token):
+            return "Selected span collapses into a function-word or auxiliary target."
+        if token in _PROPOSITION_CUE_WORDS or (
+            token in _DISCOURSE_CUE_WORDS and not ({"abstract_term", "antonym_invertible"} & tags)
+        ):
+            return "Selected span is a discourse or grammar-only function target rather than a lexical-fit target."
+        if (
+            token in _LOW_VALUE_FACTUAL_WORDS
+            and span.priority_score < 6
+            and not ({"abstract_term", "contextual_cue", "antonym_invertible"} & tags)
+        ):
+            return "Selected span is a low-value factual term for vocab."
+    else:
+        if content_count < 2:
+            return "Selected span is too function-word heavy for vocab."
+        if _has_incomplete_edge(tokens, span):
+            return "Selected span is a fragmentary phrase rather than a clean lexical slot."
+        if _has_clause_signal(span.text, tags) or _has_proposition_signal(span.text, tags):
+            return "Selected span is clause-like rather than a short lexical phrase."
+        if "embedded_phrase" in tags and not ({"abstract_term", "phrase_frame", "claim_bearing"} & tags):
+            return "Selected span is too local to serve as a contextual vocab phrase target."
+
+    if vocab_choice_target_cue_count(span) < 2:
+        return "Selected span does not provide two independent contextual cues."
+    if (
+        not ({"abstract_term", "claim_bearing", "contextual_cue", "phrase_frame", "antonym_invertible"} & tags)
+        and span.priority_score < 5
+    ):
+        return "Selected span is not central enough to passage interpretation for vocab."
+    if subtype_key == "contextual_vocab_correct_among_4_corrupted_5" and (
+        span.priority_score < 6 or vocab_choice_target_cue_count(span) < 3
+    ):
+        return "Selected span is not strong enough for contextual_vocab_correct_among_4_corrupted_5."
+    return None
+
+
 def _dedupe_by_text(spans: Iterable[SpanUnit]) -> list[SpanUnit]:
     ordered = sorted(
         spans,
@@ -567,6 +715,19 @@ def _fill_blank_summary_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
     return (-(span.priority_score + bonus), sentence_bias, span.char_start, span.char_end)
 
 
+def _vocab_choice_sort_key(span: SpanUnit) -> tuple[int, int, int, int, int]:
+    tags = set(span.heuristic_tags)
+    token_count = len(_span_tokens(span.text))
+    bonus = vocab_choice_target_cue_count(span)
+    if {"abstract_term", "claim_bearing", "phrase_frame"} & tags:
+        bonus += 2
+    if {"contextual_cue", "antonym_invertible"} & tags:
+        bonus += 1
+    if token_count in {2, 3}:
+        bonus += 1
+    return (-(span.priority_score + bonus), abs(token_count - 2), span.char_start, span.char_end - span.char_start, span.char_end)
+
+
 def _span_tokens(text: str) -> list[str]:
     return [normalize_english_word(match.group(0)) for match in _TOKEN_RE.finditer(text)]
 
@@ -627,6 +788,32 @@ def _neighbor_first_token(text: str | None) -> str:
     if match is None:
         return ""
     return normalize_english_word(match.group(0))
+
+
+def _context_has_semantic_anchor(text: str | None) -> bool:
+    if not text:
+        return False
+    tokens = _span_tokens(text)
+    content_tokens = [token for token in tokens if token not in _FUNCTION_WORDS]
+    if len(content_tokens) >= 2:
+        return True
+    return any(token in _DISCOURSE_CUE_WORDS for token in tokens)
+
+
+def _looks_proper_nounish_span(span: SpanUnit) -> bool:
+    text = span.text.strip()
+    if not text:
+        return False
+    if _INNER_PROPER_NOUN_RE.search(text) is not None:
+        return True
+    tokens = text.split()
+    if len(tokens) >= 2 and all(token[:1].isupper() for token in tokens if token):
+        return True
+    if len(tokens) == 1 and tokens[0][:1].isupper():
+        context_before = span.context_before or ""
+        if context_before and not re.search(r"[.!?]\s*$", context_before):
+            return True
+    return False
 
 
 def malformed_verb_form_reason(original_word: str, corrupted_word: str) -> str | None:
@@ -751,6 +938,25 @@ def is_near_synonym_corruption(original_word: str, corrupted_word: str) -> bool:
     corr = normalize_english_word(corrupted_word)
     denial_set = _NEAR_SYNONYM_DENIAL.get(orig, set())
     return corr in denial_set
+
+
+def is_near_synonym_choice(original_text: str, candidate_text: str) -> bool:
+    original_tokens = _span_tokens(original_text)
+    candidate_tokens = _span_tokens(candidate_text)
+    if not original_tokens or not candidate_tokens:
+        return False
+    if len(original_tokens) == len(candidate_tokens) == 1:
+        return is_near_synonym_corruption(original_tokens[0], candidate_tokens[0])
+    if len(original_tokens) != len(candidate_tokens):
+        return False
+    differing_pairs = [
+        (original_token, candidate_token)
+        for original_token, candidate_token in zip(original_tokens, candidate_tokens)
+        if original_token != candidate_token
+    ]
+    if len(differing_pairs) != 1:
+        return False
+    return is_near_synonym_corruption(*differing_pairs[0])
 
 
 def vocab_target_is_antonym_invertible(span: SpanUnit) -> bool:

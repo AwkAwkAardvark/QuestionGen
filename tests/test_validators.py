@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from questiongen.parsers import prepare_source
-from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
+from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_SUBTYPE_SPECS, QUESTION_TYPES, expand_question_type_keys
 from questiongen.schemas import (
     FillInTheBlankPlan,
     GapUnit,
@@ -12,6 +12,8 @@ from questiongen.schemas import (
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
     PreparedSource,
+    SpanUnit,
+    VocabChoicePlan,
     VocabPlan,
     SentenceInsertionPlan,
     SourceUnit,
@@ -25,6 +27,7 @@ from questiongen.targeting import (
     phrase_span_inventory,
     render_numbered_span_edits,
     underlined_span_quality_error,
+    vocab_choice_target_quality_error,
     vocab_target_inventory,
 )
 from questiongen.validators import (
@@ -1051,6 +1054,141 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(vocab_result["status"], "source_passed")
         self.assertEqual(grammar_result["status"], "source_passed")
 
+    def test_vocab_family_expands_to_choice_then_hard_subtype(self) -> None:
+        self.assertEqual(
+            [spec.subtype_key for spec in expand_question_type_keys(["vocab"])],
+            [
+                "contextual_vocab_choice_5",
+                "contextual_vocab_correct_among_4_corrupted_5",
+            ],
+        )
+
+    def test_vocab_quality_gate_accepts_short_phrase_target(self) -> None:
+        source = "The report carries moral force in this debate. Repeated exceptions weaken the rule for everyone."
+        span_text = "moral force"
+        span_start = source.index(span_text)
+        span = SpanUnit(
+            id="P0",
+            text=span_text,
+            normalized_text=span_text,
+            char_start=span_start,
+            char_end=span_start + len(span_text),
+            sentence_unit_id="S0",
+            sentence_index=0,
+            context_before="The report carries ",
+            context_after=" in this debate.",
+            heuristic_tags=["abstract_term", "phrase_frame"],
+            priority_score=7,
+        )
+        self.assertIsNone(vocab_choice_target_quality_error(span))
+
+    def test_vocab_quality_gate_rejects_punctuation_crossing_phrase_target(self) -> None:
+        source = "The committee, after a long delay, announced a new policy. Reactions stayed divided afterward."
+        span_text = "delay, announced"
+        span_start = source.index(span_text)
+        span = SpanUnit(
+            id="P0",
+            text=span_text,
+            normalized_text=span_text,
+            char_start=span_start,
+            char_end=span_start + len(span_text),
+            sentence_unit_id="S0",
+            sentence_index=0,
+            context_before="The committee, after a long ",
+            context_after=" a new policy.",
+            heuristic_tags=["phrase_frame"],
+            priority_score=7,
+        )
+        self.assertIn("crosses punctuation", vocab_choice_target_quality_error(span) or "")
+
+    def test_vocab_quality_gate_rejects_clause_like_phrase_target(self) -> None:
+        source = "The report does more than summarize the delay. It sharply limits a broader claim."
+        span_text = "does more than summarize"
+        span_start = source.index(span_text)
+        span = SpanUnit(
+            id="P0",
+            text=span_text,
+            normalized_text=span_text,
+            char_start=span_start,
+            char_end=span_start + len(span_text),
+            sentence_unit_id="S0",
+            sentence_index=0,
+            context_before="The report ",
+            context_after=" the delay.",
+            heuristic_tags=["contextual_cue", "phrase_frame"],
+            priority_score=7,
+        )
+        self.assertIn("clause-like", vocab_choice_target_quality_error(span) or "")
+
+    def test_vocab_quality_gate_rejects_technical_and_function_targets(self) -> None:
+        technical_source = "The new LED system reduced costs for the district."
+        technical_span = SpanUnit(
+            id="P0",
+            text="LED",
+            normalized_text="LED",
+            char_start=technical_source.index("LED"),
+            char_end=technical_source.index("LED") + 3,
+            sentence_unit_id="S0",
+            sentence_index=0,
+            context_before="The new ",
+            context_after=" system reduced costs for the district.",
+            heuristic_tags=["single_word", "vocab_candidate"],
+            priority_score=8,
+        )
+        function_source = "Because the rule weakened, support faded quickly."
+        function_span = SpanUnit(
+            id="P1",
+            text="Because",
+            normalized_text="Because",
+            char_start=0,
+            char_end=len("Because"),
+            sentence_unit_id="S0",
+            sentence_index=0,
+            context_before=None,
+            context_after=" the rule weakened, support faded quickly.",
+            heuristic_tags=["single_word", "contextual_cue", "vocab_candidate"],
+            priority_score=8,
+        )
+        self.assertIn("technical label", vocab_choice_target_quality_error(technical_span) or "")
+        self.assertIn("function target", vocab_choice_target_quality_error(function_span) or "")
+
+    def test_vocab_hard_subtype_compatibility_rejects_weak_single_cue_target(self) -> None:
+        source = "The plan offered support to nearby residents. People discussed the idea again the next day."
+        support_start = source.index("support")
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The plan offered support to nearby residents.", index=0),
+                SourceUnit(id="S1", text="People discussed the idea again the next day.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text="support",
+                    normalized_text="support",
+                    char_start=support_start,
+                    char_end=support_start + len("support"),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="The plan offered ",
+                    context_after=" to nearby residents.",
+                    heuristic_tags=["single_word", "vocab_candidate"],
+                    priority_score=5,
+                )
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+        )
+        self.assertTrue(any("workable lexical-slot vocab target" in error for error in errors))
+
     def test_fill_in_the_blank_validator_accepts_valid_output(self) -> None:
         source = (
             "City planners recently tested brighter LED lights on several downtown blocks. "
@@ -1229,6 +1367,91 @@ class ValidatorTests(unittest.TestCase):
             validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"]),
             [],
         )
+
+    def test_vocab_choice_validator_rejects_near_synonym_distractor(self) -> None:
+        source = "Residents show strong support during the winter drive. Teachers discuss the safety map every week."
+        support_start = source.index("support")
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="Residents show strong support during the winter drive.", index=0),
+                SourceUnit(id="S1", text="Teachers discuss the safety map every week.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text="support",
+                    normalized_text="support",
+                    char_start=support_start,
+                    char_end=support_start + len("support"),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="Residents show strong ",
+                    context_after=" during the winter drive.",
+                    heuristic_tags=["single_word", "abstract_term", "vocab_candidate"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = VocabChoicePlan(
+            selected_span_id="P0",
+            selected_span_text="support",
+            choice_words=["support", "assist", "delay", "ignore", "weaken"],
+            correct_choice="support",
+            contextual_meaning_ko="이 자리는 실제로 뒷받침하는 의미를 가리키는 표현이 와야 한다는 의미",
+            supporting_evidence="Residents show strong support during the winter drive.",
+            explanation="문맥상 실제로 뒷받침하는 의미를 가리키는 표현이 와야 합니다.",
+        )
+        errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"])
+        self.assertTrue(any("near-synonyms" in error for error in errors))
+
+    def test_vocab_choice_validator_rejects_slot_width_mismatch(self) -> None:
+        source = "The report carries moral force in this debate. Repeated exceptions weaken the rule for everyone."
+        span_text = "moral force"
+        span_start = source.index(span_text)
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The report carries moral force in this debate.", index=0),
+                SourceUnit(id="S1", text="Repeated exceptions weaken the rule for everyone.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text=span_text,
+                    normalized_text=span_text,
+                    char_start=span_start,
+                    char_end=span_start + len(span_text),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="The report carries ",
+                    context_after=" in this debate.",
+                    heuristic_tags=["abstract_term", "phrase_frame"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = VocabChoicePlan(
+            selected_span_id="P0",
+            selected_span_text=span_text,
+            choice_words=["moral force", "deeply misunderstood factual evidence", "delay", "ignore", "weaken"],
+            correct_choice="moral force",
+            contextual_meaning_ko="이 자리는 주장에 실리는 규범적 무게를 가리키는 표현이 와야 한다는 의미",
+            supporting_evidence="The report carries moral force in this debate.",
+            explanation="문맥상 주장에 실리는 규범적 무게를 가리키는 표현이 와야 합니다.",
+        )
+        errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"])
+        self.assertTrue(any("slot width" in error for error in errors))
 
     def test_grammar_validator_accepts_valid_output(self) -> None:
         source = (

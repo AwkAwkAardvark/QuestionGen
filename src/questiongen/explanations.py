@@ -304,7 +304,8 @@ def _build_vocab_context(
     choice_index = MARKER_CHOICES.index(generated.answer)
     correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
     return {
-        "subtype": "contextual_choice",
+        "subtype": plan.subtype,
+        "selected_span_text": selected_span.text,
         "original_word": selected_span.text,
         "correct_choice": correct_choice,
         "source_sentence": sentence_map.get(selected_span.sentence_unit_id or "", ""),
@@ -452,11 +453,16 @@ def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
 
 
 def _write_vocab_explanation(context: dict[str, str]) -> str:
-    if context.get("subtype") == "contextual_choice":
-        meaning = _clean_teacher_note(context["contextual_meaning_ko"]) or "앞뒤 문맥과 맞는 뜻"
+    if context.get("subtype") in {"contextual_choice", "contextual_correct_among_4_corrupted"}:
+        meaning = _prefer_teacher_note(
+            context.get("contextual_meaning_ko"),
+            "앞뒤 문맥과 맞는 뜻",
+        )
         return (
             f"'{context['supporting_evidence']}'라는 단서를 보면 이 자리에는 "
-            f"\"{meaning}\"에 해당하는 뜻이 와야 합니다. "
+            f"\"{meaning}\"에 해당하는 표현이 와야 합니다. "
+            f"원문의 자리에는 '{context['selected_span_text']}'가 가장 정확하게 들어가고, "
+            "다른 선택지들은 문맥의 방향이나 범위, 평가를 어긋나게 만듭니다. "
             f"따라서 정답은 {context['correct_marker']} {context['correct_choice']}입니다."
         )
     basis = _prefer_teacher_note(

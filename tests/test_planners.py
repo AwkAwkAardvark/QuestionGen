@@ -31,9 +31,9 @@ from questiongen.schemas import (
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabPlan,
+    VocabChoicePlan,
 )
-from questiongen.targeting import allowed_verb_form_variants, grammar_target_inventory, vocab_target_inventory
+from questiongen.targeting import allowed_verb_form_variants, grammar_target_inventory, vocab_choice_inventory
 
 
 class _ValidPlanner:
@@ -324,33 +324,53 @@ class _FillInTheBlankPlanner:
 
 
 class _VocabPlanner:
-    def invoke(self, prompt: str) -> VocabPlan:
-        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
-        target_ids, target_texts = zip(*targets)
-        return VocabPlan(
-            target_span_ids=list(target_ids),
-            target_span_texts=list(target_texts),
-            corrupted_span_id=target_ids[1],
-            corrupted_word="heavier",
-            correction_basis_ko="이 문맥에서는 원래 단어가 설명하는 기능이 유지되어야 합니다",
+    def invoke(self, prompt: str) -> VocabChoicePlan:
+        match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+        selected_span_id = match.group(1) if match else "P0"
+        selected_span_text = match.group(2) if match else "improve"
+        plan_subtype = (
+            "contextual_correct_among_4_corrupted"
+            if "contextual_vocab_correct_among_4_corrupted_5" in prompt
+            else "contextual_choice"
+        )
+        return VocabChoicePlan(
+            subtype=plan_subtype,
+            selected_span_id=selected_span_id,
+            selected_span_text=selected_span_text,
+            choice_words=[
+                selected_span_text,
+                "weaken",
+                "ignore",
+                "delay",
+                "worsen",
+            ],
+            correct_choice=selected_span_text,
+            contextual_meaning_ko="이 자리에는 원문의 핵심 기능을 유지하는 표현이 와야 한다는 의미",
             supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-            explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
+            explanation="문맥상 이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 합니다.",
         )
 
 
 class _VocabDriftPlanner:
-    def invoke(self, prompt: str) -> VocabPlan:
-        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
-        target_ids, target_texts = zip(*targets)
-        return VocabPlan(
-            target_span_ids=list(target_ids),
-            target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
-            corrupted_span_id=target_ids[1],
-            corrupted_word="heavier",
-            correction_basis_ko="이 문장은 절대 나오면 안 되는 자유서술 설명입니다",
-            supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-            explanation="문맥상 해당 단어의 쓰임이 맞지 않습니다.",
-        )
+    def invoke(self, prompt: str) -> dict[str, object]:
+        match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+        selected_span_id = match.group(1) if match else "P0"
+        selected_span_text = match.group(2) if match else "improve"
+        return {
+            "selected_span_id": selected_span_id,
+            "selected_span_text": "alpha",
+            "choice_words": [
+                "alpha",
+                "weaken",
+                "ignore",
+                "delay",
+                "worsen",
+            ],
+            "correct_choice": "alpha",
+            "contextual_meaning_ko": "이 문장은 절대 나오면 안 되는 자유서술 설명입니다",
+            "supporting_evidence": "Residents say the brighter crosswalks feel safer at night.",
+            "explanation": "문맥상 해당 표현의 쓰임이 맞지 않습니다.",
+        }
 
 
 class _GrammarPlanner:
@@ -782,7 +802,7 @@ class PlannerTests(unittest.TestCase):
             structured_llm_factory=lambda schema: _VocabPlanner(),
         )
         self.assertEqual(result["status"], "planned")
-        self.assertIsInstance(result["plan"], VocabPlan)
+        self.assertIsInstance(result["plan"], VocabChoicePlan)
 
     def test_vocab_planner_canonicalizes_target_texts_from_ids(self) -> None:
         state = {
@@ -797,8 +817,8 @@ class PlannerTests(unittest.TestCase):
             structured_llm_factory=lambda schema: _VocabDriftPlanner(),
         )
         self.assertEqual(result["status"], "planned")
-        expected_texts = [span.text for span in vocab_target_inventory(state["prepared_source"])[:5]]
-        self.assertEqual(result["plan"].target_span_texts, expected_texts)
+        expected_text = vocab_choice_inventory(state["prepared_source"], QUESTION_TYPES["vocab"].subtype_key)[0].text
+        self.assertEqual(result["plan"].selected_span_text, expected_text)
 
     def test_grammar_planner_output_validates(self) -> None:
         state = {
@@ -850,10 +870,10 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertIn("Phrase-span candidates", blank_prompt)
         self.assertIn("shape=proposition", blank_prompt)
-        self.assertIn("Single-word vocab targets", vocab_prompt)
-        self.assertIn("antonym_invertible=", vocab_prompt)
-        self.assertIn("authoritative contract", vocab_prompt)
-        self.assertIn("near-synonym", vocab_prompt)
+        self.assertIn("Lexical-slot vocab targets", vocab_prompt)
+        self.assertIn("Active subtype: contextual_vocab_choice_5", vocab_prompt)
+        self.assertIn("same local slot", vocab_prompt)
+        self.assertIn("correct_choice` must exactly match `selected_span_text`", vocab_prompt)
         self.assertIn("Single-word grammar targets", grammar_prompt)
         self.assertIn("allowed_variants=", grammar_prompt)
         self.assertIn("real, standard English word", grammar_prompt)
@@ -874,6 +894,7 @@ class PlannerTests(unittest.TestCase):
         explanation = result["generated"].explanation or ""
         self.assertIn("단서를 보면", explanation)
         self.assertIn("brighter crosswalks feel safer", explanation)
+        self.assertIn("다른 선택지들은", explanation)
         self.assertNotIn("그 방향을 뒷받침", explanation)
         self.assertNotIn("자유서술 설명", explanation)
 

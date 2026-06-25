@@ -20,7 +20,13 @@ from .prompts import (
 )
 from .question_types import QuestionTypeSpec
 from .schemas import BaseModel, GrammarPlan, PreparedSource, QuestionState, VocabChoicePlan, VocabPlan, coerce_model
-from .targeting import grammar_subtype_inventory, grammar_target_inventory, vocab_choice_inventory, vocab_target_inventory
+from .targeting import (
+    grammar_subtype_inventory,
+    grammar_target_inventory,
+    normalize_english_choice,
+    vocab_choice_inventory,
+    vocab_target_inventory,
+)
 from .validators import validate_plan_against_prepared_source
 
 StructuredLLMFactory = Callable[[type[BaseModel]], Any]
@@ -158,10 +164,26 @@ def _canonicalize_source_owned_plan(
         return plan
 
     if isinstance(plan, VocabChoicePlan):
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
         selected_span = inventory.get(plan.selected_span_id)
         if selected_span is not None:
-            return plan.model_copy(update={"selected_span_text": selected_span.text})
+            old_correct_choice = plan.correct_choice
+            old_selected_text = plan.selected_span_text
+            return plan.model_copy(
+                update={
+                    "selected_span_text": selected_span.text,
+                    "correct_choice": selected_span.text,
+                    "choice_words": [
+                        selected_span.text
+                        if normalize_english_choice(choice) in {
+                            normalize_english_choice(old_correct_choice),
+                            normalize_english_choice(old_selected_text),
+                        }
+                        else choice
+                        for choice in plan.choice_words
+                    ],
+                }
+            )
         return plan
 
     return plan

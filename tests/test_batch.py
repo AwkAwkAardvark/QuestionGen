@@ -16,6 +16,7 @@ from questiongen.schemas import (
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabChoicePlan,
     VocabPlan,
 )
 from questiongen.targeting import allowed_verb_form_variants
@@ -29,6 +30,7 @@ class _StubPlanner:
             | ParagraphOrderingPlan
             | UnderlinedPhraseMeaningPlan
             | FillInTheBlankPlan
+            | VocabChoicePlan
             | VocabPlan
             | GrammarPlan
         ],
@@ -42,6 +44,7 @@ class _StubPlanner:
         | ParagraphOrderingPlan
         | UnderlinedPhraseMeaningPlan
         | FillInTheBlankPlan
+        | VocabChoicePlan
         | VocabPlan
         | GrammarPlan
     ):
@@ -82,17 +85,29 @@ class _StubPlanner:
                 supporting_evidence=selected_span_text,
                 explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
             )
-        if self.output_schema is VocabPlan:
-            targets = _extract_ranked_single_word_targets(prompt)
-            target_ids, target_texts = zip(*targets[:5])
+        if self.output_schema is VocabChoicePlan:
+            match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+            selected_span_id = match.group(1) if match else "P0"
+            selected_span_text = match.group(2) if match else "improve"
             return self.output_schema(
-                target_span_ids=list(target_ids),
-                target_span_texts=list(target_texts),
-                corrupted_span_id=target_ids[1],
-                corrupted_word="heavier",
-                correction_basis_ko="이 문맥에서는 밝기와 안전 효과를 설명하는 흐름이라 원래 단어가 더 자연스럽습니다",
+                subtype=(
+                    "contextual_correct_among_4_corrupted"
+                    if "contextual_vocab_correct_among_4_corrupted_5" in prompt
+                    else "contextual_choice"
+                ),
+                selected_span_id=selected_span_id,
+                selected_span_text=selected_span_text,
+                choice_words=[
+                    selected_span_text,
+                    "weaken",
+                    "ignore",
+                    "delay",
+                    "worsen",
+                ],
+                correct_choice=selected_span_text,
+                contextual_meaning_ko="이 자리에는 원문의 핵심 기능을 유지하는 표현이 와야 한다는 의미",
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-                explanation="문맥상 해당 단어의 뜻이 글의 흐름과 맞지 않습니다.",
+                explanation="문맥상 이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 합니다.",
             )
         if self.output_schema is GrammarPlan:
             targets = _extract_ranked_single_word_targets(prompt)
@@ -239,8 +254,8 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(by_subtype["blank_inference_proposition_5_choices"].status, "validation_passed")
         self.assertEqual(by_subtype["blank_connective_relation_5_choices"].status, "validation_passed")
         self.assertEqual(by_subtype["blank_summary_completion_5_choices"].status, "qtype_incompatibility_error")
-        self.assertEqual(by_subtype["contextual_vocab_error_5"].status, "validation_passed")
-        self.assertEqual(by_subtype["contextual_vocab_choice_5"].status, "planning_error")
+        self.assertEqual(by_subtype["contextual_vocab_choice_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_correct_among_4_corrupted_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_verb_form_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_subject_verb_agreement_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["grammar_error_finite_nonfinite_5"].status, "validation_passed")
