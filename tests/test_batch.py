@@ -92,6 +92,42 @@ class _StubPlanner:
             match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
             selected_span_id = match.group(1) if match else "P0"
             selected_span_text = match.group(2) if match else "improve"
+            subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
+            active_subtype = subtype_match.group(1) if subtype_match else ""
+            if active_subtype == "contextual_vocab_best_paraphrase_choice_5":
+                return self.output_schema(
+                    subtype="contextual_best_paraphrase_choice",
+                    selected_span_id=selected_span_id,
+                    selected_span_text=selected_span_text,
+                    choice_words=[
+                        "stronger",
+                        "weaker",
+                        "narrower",
+                        "riskier",
+                        "costlier",
+                    ],
+                    correct_choice="stronger",
+                    contextual_meaning_ko="이 자리는 원문의 표현을 그대로 복원하는 것이 아니라 더 강한 긍정 방향의 바꿔쓰기가 와야 합니다",
+                    supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+                    explanation="문맥상 안전을 더 높이는 방향의 바꿔쓰기가 와야 합니다.",
+                )
+            if active_subtype == "contextual_vocab_phrase_choice_5":
+                return self.output_schema(
+                    subtype="contextual_phrase_choice",
+                    selected_span_id=selected_span_id,
+                    selected_span_text=selected_span_text,
+                    choice_words=[
+                        selected_span_text,
+                        "higher safety risks",
+                        "slower repair cycles",
+                        "narrow budget pressure",
+                        "weaker public trust",
+                    ],
+                    correct_choice=selected_span_text,
+                    contextual_meaning_ko="이 자리는 안전 향상과 비용 유지라는 핵심 효과를 함께 담는 어구가 와야 합니다",
+                    supporting_evidence="Because the lights use less electricity, the city can improve safety without raising its energy budget.",
+                    explanation="문맥상 안전 향상과 비용 유지라는 핵심 효과를 함께 담는 어구가 와야 합니다.",
+                )
             return self.output_schema(
                 selected_span_id=selected_span_id,
                 selected_span_text=selected_span_text,
@@ -110,11 +146,17 @@ class _StubPlanner:
         if self.output_schema is UnderlinedVocabPlan:
             targets = _extract_ranked_lexical_targets(prompt)
             target_ids, target_texts = zip(*targets[:5])
+            subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
+            active_subtype = subtype_match.group(1) if subtype_match else ""
             subtype = (
                 "contextual_correct_among_4_corrupted"
-                if "contextual_vocab_correct_among_4_corrupted_5" in prompt
+                if active_subtype == "contextual_vocab_correct_among_4_corrupted_5"
                 else "contextual_error_1_among_5"
-                if "contextual_vocab_error_1_among_5_5" in prompt
+                if active_subtype == "contextual_vocab_error_1_among_5_5"
+                else "contextual_error_1_among_5_polarity_scope"
+                if active_subtype == "contextual_vocab_error_1_among_5_polarity_scope_5"
+                else "contextual_error_1_among_5_collocation"
+                if active_subtype == "contextual_vocab_error_1_among_5_collocation_5"
                 else "contextual_correct_among_3_corrupted"
             )
             if subtype == "contextual_correct_among_4_corrupted":
@@ -128,6 +170,13 @@ class _StubPlanner:
             elif subtype == "contextual_error_1_among_5":
                 replacements = {target_ids[2]: "ignore"}
                 answer_span_id = target_ids[2]
+            elif subtype == "contextual_error_1_among_5_polarity_scope":
+                replacements = {target_ids[0]: "continue"}
+                answer_span_id = target_ids[0]
+            elif subtype == "contextual_error_1_among_5_collocation":
+                collocation_index = target_texts.index("ignore") if "ignore" in target_texts else len(target_ids) - 1
+                replacements = {target_ids[collocation_index]: "collect"}
+                answer_span_id = target_ids[collocation_index]
             else:
                 replacements = {
                     target_ids[0]: "weaken",
@@ -286,7 +335,7 @@ class BatchTests(unittest.TestCase):
             ],
             self.runner,
         )
-        self.assertEqual(len(results), 19)
+        self.assertEqual(len(results), 23)
         by_subtype = {result.QuestionSubtypeKey: result for result in results}
         self.assertEqual(by_subtype["sentence_insertion_5_gaps"].status, "validation_passed")
         self.assertEqual(by_subtype["abc_ordering_after_intro"].status, "qtype_incompatibility_error")
@@ -295,8 +344,12 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(by_subtype["blank_connective_relation_5_choices"].status, "validation_passed")
         self.assertEqual(by_subtype["blank_summary_completion_5_choices"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["contextual_vocab_choice_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_best_paraphrase_choice_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_phrase_choice_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["contextual_vocab_correct_among_4_corrupted_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_5"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_polarity_scope_5"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_collocation_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["contextual_vocab_correct_among_3_corrupted_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["grammar_error_verb_form_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_subject_verb_agreement_5"].status, "qtype_incompatibility_error")

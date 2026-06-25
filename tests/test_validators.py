@@ -1061,8 +1061,12 @@ class ValidatorTests(unittest.TestCase):
             [spec.subtype_key for spec in expand_question_type_keys(["vocab"])],
             [
                 "contextual_vocab_choice_5",
+                "contextual_vocab_best_paraphrase_choice_5",
+                "contextual_vocab_phrase_choice_5",
                 "contextual_vocab_correct_among_4_corrupted_5",
                 "contextual_vocab_error_1_among_5_5",
+                "contextual_vocab_error_1_among_5_polarity_scope_5",
+                "contextual_vocab_error_1_among_5_collocation_5",
                 "contextual_vocab_correct_among_3_corrupted_5",
             ],
         )
@@ -1085,6 +1089,29 @@ class ValidatorTests(unittest.TestCase):
             priority_score=7,
         )
         self.assertIsNone(vocab_choice_target_quality_error(span))
+        self.assertIsNone(vocab_choice_target_quality_error(span, subtype_key="contextual_vocab_phrase_choice_5"))
+
+    def test_vocab_phrase_choice_quality_gate_rejects_single_word_target(self) -> None:
+        source = "Residents show strong support during the winter drive. Teachers discuss the safety map every week."
+        span_text = "support"
+        span_start = source.index(span_text)
+        span = SpanUnit(
+            id="P0",
+            text=span_text,
+            normalized_text=span_text,
+            char_start=span_start,
+            char_end=span_start + len(span_text),
+            sentence_unit_id="S0",
+            sentence_index=0,
+            context_before="Residents show strong ",
+            context_after=" during the winter drive.",
+            heuristic_tags=["single_word", "abstract_term", "contextual_cue", "vocab_candidate"],
+            priority_score=7,
+        )
+        self.assertIn(
+            "multiword phrase",
+            vocab_choice_target_quality_error(span, subtype_key="contextual_vocab_phrase_choice_5") or "",
+        )
 
     def test_vocab_quality_gate_rejects_punctuation_crossing_phrase_target(self) -> None:
         source = "The committee, after a long delay, announced a new policy. Reactions stayed divided afterward."
@@ -1583,6 +1610,103 @@ class ValidatorTests(unittest.TestCase):
         errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"])
         self.assertTrue(any("slot width" in error for error in errors))
 
+    def test_best_paraphrase_validator_rejects_identical_correct_choice_and_source_wording(self) -> None:
+        source = "Residents show strong support during the winter drive. Teachers discuss the safety map every week."
+        support_start = source.index("support")
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="Residents show strong support during the winter drive.", index=0),
+                SourceUnit(id="S1", text="Teachers discuss the safety map every week.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text="support",
+                    normalized_text="support",
+                    char_start=support_start,
+                    char_end=support_start + len("support"),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="Residents show strong ",
+                    context_after=" during the winter drive.",
+                    heuristic_tags=["single_word", "abstract_term", "contextual_cue", "vocab_candidate"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = ContextualVocabChoicePlan(
+            subtype="contextual_best_paraphrase_choice",
+            selected_span_id="P0",
+            selected_span_text="support",
+            choice_words=["support", "backing", "delay", "ignore", "weaken"],
+            correct_choice="support",
+            contextual_meaning_ko="이 자리는 뒷받침의 의미를 다른 표현으로 바꿔 말해야 합니다",
+            supporting_evidence="Residents show strong support during the winter drive.",
+            explanation="문맥상 같은 뜻을 다른 표현으로 바꿔 말해야 합니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_best_paraphrase_choice_5"],
+        )
+        self.assertTrue(any("non-identical correct_choice" in error for error in errors))
+        self.assertTrue(any("must not include the unchanged source wording" in error for error in errors))
+
+    def test_phrase_choice_validator_rejects_non_phrase_options_and_slot_drift(self) -> None:
+        source = "The report carries moral force in this debate. Repeated exceptions weaken the rule for everyone."
+        span_text = "moral force"
+        span_start = source.index(span_text)
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The report carries moral force in this debate.", index=0),
+                SourceUnit(id="S1", text="Repeated exceptions weaken the rule for everyone.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text=span_text,
+                    normalized_text=span_text,
+                    char_start=span_start,
+                    char_end=span_start + len(span_text),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="The report carries ",
+                    context_after=" in this debate.",
+                    heuristic_tags=["abstract_term", "phrase_frame"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = ContextualVocabChoicePlan(
+            subtype="contextual_phrase_choice",
+            selected_span_id="P0",
+            selected_span_text=span_text,
+            choice_words=["moral force", "ethical weight now", "delay", "ignore", "weaken the rule"],
+            correct_choice="moral force",
+            contextual_meaning_ko="이 자리는 주장에 실리는 규범적 무게를 가리키는 어구가 와야 합니다",
+            supporting_evidence="The report carries moral force in this debate.",
+            explanation="문맥상 주장에 실리는 규범적 무게를 가리키는 어구가 와야 합니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_phrase_choice_5"],
+        )
+        self.assertTrue(any("phrase-level options" in error for error in errors))
+        self.assertTrue(any("preserve phrase-slot width exactly" in error for error in errors))
+
     def test_vocab_choice_validator_allows_contextual_replacement_answer(self) -> None:
         source = (
             "City planners recently tested brighter LED lights on several downtown blocks. "
@@ -1638,6 +1762,62 @@ class ValidatorTests(unittest.TestCase):
             [],
         )
 
+    def test_phrase_choice_validator_accepts_multiword_phrase_options(self) -> None:
+        source = "The report carries moral force in this debate. Repeated exceptions weaken the rule for everyone."
+        span_text = "moral force"
+        span_start = source.index(span_text)
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The report carries moral force in this debate.", index=0),
+                SourceUnit(id="S1", text="Repeated exceptions weaken the rule for everyone.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text=span_text,
+                    normalized_text=span_text,
+                    char_start=span_start,
+                    char_end=span_start + len(span_text),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="The report carries ",
+                    context_after=" in this debate.",
+                    heuristic_tags=["abstract_term", "phrase_frame"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = ContextualVocabChoicePlan(
+            subtype="contextual_phrase_choice",
+            selected_span_id="P0",
+            selected_span_text=span_text,
+            choice_words=[
+                "moral force",
+                "ethical weight",
+                "factual burden",
+                "narrow logic",
+                "surface detail",
+            ],
+            correct_choice="moral force",
+            contextual_meaning_ko="이 자리는 주장에 실리는 규범적 무게를 가리키는 어구가 와야 합니다",
+            supporting_evidence="The report carries moral force in this debate.",
+            explanation="문맥상 주장에 실리는 규범적 무게를 가리키는 어구가 와야 합니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["contextual_vocab_phrase_choice_5"],
+            ),
+            [],
+        )
+
     def test_vocab_choice_validator_rejects_original_wording_as_second_defensible_option(self) -> None:
         source = "Residents show strong support during the winter drive. Teachers discuss the safety map every week."
         support_start = source.index("support")
@@ -1679,6 +1859,91 @@ class ValidatorTests(unittest.TestCase):
         )
         errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"])
         self.assertTrue(any("second defensible option" in error for error in errors))
+
+    def test_underlined_vocab_polarity_scope_validator_accepts_direction_drift_and_rejects_collocation_only(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(
+            vocab_choice_inventory(prepared, "contextual_vocab_error_1_among_5_polarity_scope_5")[:5],
+            key=lambda span: span.char_start,
+        )
+        valid_plan = UnderlinedVocabPlan(
+            subtype="contextual_error_1_among_5_polarity_scope",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_replacements_by_span_id={targets[0].id: "continue"},
+            answer_span_id=targets[0].id,
+            selection_basis_ko="이 자리는 멈춤이나 축소처럼 방향과 범위가 분명히 제한되어야 합니다",
+            supporting_evidence="Leaders cease wasteful spending during droughts.",
+            explanation="문맥상 방향과 범위를 어긋나게 만든 표현을 골라야 합니다.",
+        )
+        invalid_plan = valid_plan.model_copy(
+            update={"corrupted_replacements_by_span_id": {targets[0].id: "fragile"}}
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                valid_plan,
+                QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_polarity_scope_5"],
+            ),
+            [],
+        )
+        invalid_errors = validate_plan_against_prepared_source(
+            prepared,
+            invalid_plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_polarity_scope_5"],
+        )
+        self.assertTrue(any("direction, degree, or scope" in error for error in invalid_errors))
+
+    def test_underlined_vocab_collocation_validator_accepts_collocation_mismatch_and_rejects_pure_opposite(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(
+            vocab_choice_inventory(prepared, "contextual_vocab_error_1_among_5_collocation_5")[:5],
+            key=lambda span: span.char_start,
+        )
+        collocation_target = next(span for span in targets if span.text == "ignore")
+        valid_plan = UnderlinedVocabPlan(
+            subtype="contextual_error_1_among_5_collocation",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_replacements_by_span_id={collocation_target.id: "collect"},
+            answer_span_id=collocation_target.id,
+            selection_basis_ko="이 자리는 문맥상 자연스러운 어휘 결합과 선택 제약이 유지되어야 합니다",
+            supporting_evidence="Families ignore rumors during emergencies.",
+            explanation="문맥상 자연스러운 어휘 결합을 깨뜨린 표현을 골라야 합니다.",
+        )
+        invalid_plan = valid_plan.model_copy(
+            update={"corrupted_replacements_by_span_id": {collocation_target.id: "notice"}}
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                valid_plan,
+                QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
+            ),
+            [],
+        )
+        invalid_errors = validate_plan_against_prepared_source(
+            prepared,
+            invalid_plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
+        )
+        self.assertTrue(any("collocation or selectional mismatch" in error for error in invalid_errors))
 
     def test_grammar_validator_accepts_valid_output(self) -> None:
         source = (

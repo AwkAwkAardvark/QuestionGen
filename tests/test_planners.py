@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unittest
 
+from questiongen.explanations import build_explanation_context, write_teacher_facing_explanation
 from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
 from questiongen.planners import (
@@ -23,14 +24,19 @@ from questiongen.prompts import (
     build_underlined_phrase_meaning_prompt,
     build_vocab_prompt,
 )
-from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
+from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_SUBTYPE_SPECS, QUESTION_TYPES
+from questiongen.renderers import render_vocab
 from questiongen.schemas import (
     ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
+    PreparedSource,
+    GapUnit,
     SentenceInsertionPlan,
+    SourceUnit,
+    SpanUnit,
     UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
 )
@@ -327,7 +333,35 @@ class _FillInTheBlankPlanner:
 class _VocabPlanner:
     def invoke(self, prompt: str) -> ContextualVocabChoicePlan | UnderlinedVocabPlan:
         targets = re.findall(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
-        if "contextual_vocab_correct_among_4_corrupted_5" in prompt:
+        subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
+        active_subtype = subtype_match.group(1) if subtype_match else ""
+        if active_subtype == "contextual_vocab_error_1_among_5_polarity_scope_5":
+            target_ids, target_texts = zip(*targets[:5])
+            polarity_index = target_texts.index("cease") if "cease" in target_texts else 0
+            return UnderlinedVocabPlan(
+                subtype="contextual_error_1_among_5_polarity_scope",
+                target_span_ids=list(target_ids),
+                target_span_texts=list(target_texts),
+                corrupted_replacements_by_span_id={target_ids[polarity_index]: "continue"},
+                answer_span_id=target_ids[polarity_index],
+                selection_basis_ko="이 자리는 멈춤이나 축소처럼 방향과 범위가 분명히 제한되어야 합니다",
+                supporting_evidence="Leaders cease wasteful spending during droughts.",
+                explanation="문맥상 방향과 범위를 어긋나게 만든 하나의 표현을 골라야 합니다.",
+            )
+        if active_subtype == "contextual_vocab_error_1_among_5_collocation_5":
+            target_ids, target_texts = zip(*targets[:5])
+            collocation_index = target_texts.index("ignore") if "ignore" in target_texts else len(target_ids) - 1
+            return UnderlinedVocabPlan(
+                subtype="contextual_error_1_among_5_collocation",
+                target_span_ids=list(target_ids),
+                target_span_texts=list(target_texts),
+                corrupted_replacements_by_span_id={target_ids[collocation_index]: "collect"},
+                answer_span_id=target_ids[collocation_index],
+                selection_basis_ko="이 자리는 문맥상 자연스러운 어휘 결합과 선택 제약이 유지되어야 합니다",
+                supporting_evidence="Families ignore rumors during emergencies.",
+                explanation="문맥상 자연스러운 어휘 결합을 깨뜨린 표현을 골라야 합니다.",
+            )
+        if active_subtype == "contextual_vocab_correct_among_4_corrupted_5":
             target_ids, target_texts = zip(*targets[:5])
             return UnderlinedVocabPlan(
                 subtype="contextual_correct_among_4_corrupted",
@@ -343,6 +377,44 @@ class _VocabPlanner:
                 selection_basis_ko="이 자리는 원문이 유지한 효과를 가장 자연스럽게 이어 주는 표현이어야 합니다",
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
                 explanation="문맥상 하나만 원래 의미를 유지하고 나머지는 의미를 비틀고 있습니다.",
+            )
+        if active_subtype == "contextual_vocab_best_paraphrase_choice_5":
+            selected_span_id = targets[0][0] if targets else "P0"
+            selected_span_text = targets[0][1] if targets else "brighter"
+            return ContextualVocabChoicePlan(
+                subtype="contextual_best_paraphrase_choice",
+                selected_span_id=selected_span_id,
+                selected_span_text=selected_span_text,
+                choice_words=[
+                    "stronger",
+                    "weaker",
+                    "narrower",
+                    "riskier",
+                    "costlier",
+                ],
+                correct_choice="stronger",
+                contextual_meaning_ko="이 자리는 원문의 표현을 그대로 복원하는 것이 아니라 더 강한 긍정 방향의 바꿔쓰기가 와야 합니다",
+                supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+                explanation="문맥상 더 강한 긍정 방향의 바꿔쓰기가 와야 합니다.",
+            )
+        if active_subtype == "contextual_vocab_phrase_choice_5":
+            selected_span_id = targets[0][0] if targets else "P0"
+            selected_span_text = targets[0][1] if targets else "improve safety"
+            return ContextualVocabChoicePlan(
+                subtype="contextual_phrase_choice",
+                selected_span_id=selected_span_id,
+                selected_span_text=selected_span_text,
+                choice_words=[
+                    selected_span_text,
+                    "ethical weight",
+                    "factual burden",
+                    "narrow logic",
+                    "surface detail",
+                ],
+                correct_choice=selected_span_text,
+                contextual_meaning_ko="이 자리는 주장에 실리는 규범적 무게를 가리키는 어구가 와야 합니다",
+                supporting_evidence=selected_span_text,
+                explanation="문맥상 주장에 실리는 규범적 무게를 가리키는 어구가 와야 합니다.",
             )
         selected_span_id = targets[0][0] if targets else "P0"
         selected_span_text = targets[0][1] if targets else "improve"
@@ -465,6 +537,10 @@ class PlannerTests(unittest.TestCase):
             "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
             "Residents say the brighter crosswalks feel safer at night. "
             "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        self.phrase_choice_source = (
+            "The report carries moral force in this debate. "
+            "Repeated exceptions weaken the rule for everyone."
         )
 
     def test_planner_output_validates(self) -> None:
@@ -875,6 +951,26 @@ class PlannerTests(unittest.TestCase):
             prepared_source=prepared,
             type_spec=QUESTION_TYPES["vocab"],
         )
+        best_paraphrase_prompt = build_vocab_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_best_paraphrase_choice_5"],
+        )
+        phrase_prompt = build_vocab_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_phrase_choice_5"],
+        )
+        polarity_prompt = build_vocab_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_polarity_scope_5"],
+        )
+        collocation_prompt = build_vocab_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
+        )
         grammar_prompt = build_grammar_prompt(
             source_paragraph=self.mvp_source,
             prepared_source=prepared,
@@ -886,12 +982,158 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Active subtype: contextual_vocab_choice_5", vocab_prompt)
         self.assertIn("same local slot", vocab_prompt)
         self.assertIn("correct_choice` should be the best contextual fit", vocab_prompt)
+        self.assertIn("must be a non-identical best paraphrase", best_paraphrase_prompt)
+        self.assertIn("must not appear in `choice_words`", best_paraphrase_prompt)
+        self.assertIn("phrase-level, never single-word", phrase_prompt)
+        self.assertIn("preserve phrase-slot width tightly", phrase_prompt)
+        self.assertIn("polarity, degree, or scope drift", polarity_prompt)
+        self.assertIn("collocation or selectional mismatch", collocation_prompt)
         self.assertIn("Single-word grammar targets", grammar_prompt)
         self.assertIn("allowed_variants=", grammar_prompt)
         self.assertIn("real, standard English word", grammar_prompt)
         self.assertNotIn("role=", grammar_prompt)
         self.assertNotIn("preposition[", grammar_prompt)
         self.assertNotIn("conjunction[", grammar_prompt)
+
+    def test_graph_rewrites_best_paraphrase_explanation_as_non_restoration(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "vocab",
+            "QuestionSubtypeKey": "contextual_vocab_best_paraphrase_choice_5",
+            "QuestionFormatKey": "contextual_vocab_best_paraphrase_choice_5",
+            "prepared_source": prepare_source(self.mvp_source),
+        }
+        result = runner.invoke(state)
+        self.assertEqual(result["status"], "validation_passed")
+        explanation = result["generated"].explanation or ""
+        self.assertIn("바꿔 말한 표현", explanation)
+        self.assertIn("그대로 복원하는 문제가 아니라", explanation)
+        self.assertNotIn("selected_span_id", explanation)
+
+    def test_graph_rewrites_phrase_choice_explanation_as_phrase_level_fit(self) -> None:
+        source = "The report carries moral force in this debate. Repeated exceptions weaken the rule for everyone."
+        span_text = "moral force"
+        span_start = source.index(span_text)
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The report carries moral force in this debate.", index=0),
+                SourceUnit(id="S1", text="Repeated exceptions weaken the rule for everyone.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text=span_text,
+                    normalized_text=span_text,
+                    char_start=span_start,
+                    char_end=span_start + len(span_text),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="The report carries ",
+                    context_after=" in this debate.",
+                    heuristic_tags=["abstract_term", "phrase_frame"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = ContextualVocabChoicePlan(
+            subtype="contextual_phrase_choice",
+            selected_span_id="P0",
+            selected_span_text=span_text,
+            choice_words=[
+                "moral force",
+                "ethical weight",
+                "factual burden",
+                "narrow logic",
+                "surface detail",
+            ],
+            correct_choice="moral force",
+            contextual_meaning_ko="이 자리는 주장에 실리는 규범적 무게를 가리키는 어구가 와야 합니다",
+            supporting_evidence="The report carries moral force in this debate.",
+            explanation="초안입니다.",
+        )
+        rendered = render_vocab(
+            {
+                **self.state,
+                "source_paragraph": source,
+                "QuestionTypeKey": "vocab",
+                "QuestionSubtypeKey": "contextual_vocab_phrase_choice_5",
+                "QuestionFormatKey": "contextual_vocab_phrase_choice_5",
+                "prepared_source": prepared,
+                "plan": plan,
+            },
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_phrase_choice_5"],
+        )
+        context_result = build_explanation_context({**self.state, **rendered, "prepared_source": prepared, "plan": plan, "QuestionTypeKey": "vocab"})
+        rewrite_result = write_teacher_facing_explanation({**self.state, **rendered, **context_result, "prepared_source": prepared, "plan": plan, "QuestionTypeKey": "vocab"})
+        explanation = rewrite_result["generated"].explanation or ""
+        self.assertIn("어구 단위", explanation)
+        self.assertIn("어구 결합", explanation)
+
+    def test_graph_rewrites_polarity_scope_explanation_with_direction_language(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
+        state = {
+            **self.state,
+            "source_paragraph": (
+                "Leaders cease wasteful spending during droughts. "
+                "Engineers expand storage when demand rises. "
+                "Families ignore rumors during emergencies. "
+                "Stronger pumps reduce pressure loss across the valley. "
+                "Volunteers protect the main channel from damage. "
+                "Teachers discuss the results every Friday."
+            ),
+            "QuestionTypeKey": "vocab",
+            "QuestionSubtypeKey": "contextual_vocab_error_1_among_5_polarity_scope_5",
+            "QuestionFormatKey": "contextual_vocab_error_1_among_5_polarity_scope_5",
+            "prepared_source": prepare_source(
+                "Leaders cease wasteful spending during droughts. "
+                "Engineers expand storage when demand rises. "
+                "Families ignore rumors during emergencies. "
+                "Stronger pumps reduce pressure loss across the valley. "
+                "Volunteers protect the main channel from damage. "
+                "Teachers discuss the results every Friday."
+            ),
+        }
+        result = runner.invoke(state)
+        self.assertEqual(result["status"], "validation_passed")
+        explanation = result["generated"].explanation or ""
+        self.assertIn("방향, 정도, 또는 적용 범위", explanation)
+
+    def test_graph_rewrites_collocation_explanation_with_natural_combination_language(self) -> None:
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
+        state = {
+            **self.state,
+            "source_paragraph": (
+                "Leaders cease wasteful spending during droughts. "
+                "Engineers expand storage when demand rises. "
+                "Families ignore rumors during emergencies. "
+                "Stronger pumps reduce pressure loss across the valley. "
+                "Volunteers protect the main channel from damage. "
+                "Teachers discuss the results every Friday."
+            ),
+            "QuestionTypeKey": "vocab",
+            "QuestionSubtypeKey": "contextual_vocab_error_1_among_5_collocation_5",
+            "QuestionFormatKey": "contextual_vocab_error_1_among_5_collocation_5",
+            "prepared_source": prepare_source(
+                "Leaders cease wasteful spending during droughts. "
+                "Engineers expand storage when demand rises. "
+                "Families ignore rumors during emergencies. "
+                "Stronger pumps reduce pressure loss across the valley. "
+                "Volunteers protect the main channel from damage. "
+                "Teachers discuss the results every Friday."
+            ),
+        }
+        result = runner.invoke(state)
+        self.assertEqual(result["status"], "validation_passed")
+        explanation = result["generated"].explanation or ""
+        self.assertIn("자연스럽게 결합", explanation)
 
     def test_graph_rewrites_vocab_explanation_from_source_evidence(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabDriftPlanner())

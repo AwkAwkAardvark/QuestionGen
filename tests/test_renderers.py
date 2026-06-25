@@ -441,6 +441,97 @@ class RendererTests(unittest.TestCase):
         self.assertIn("weaken", generated.student_paragraph)
         self.assertEqual(generated.answer, "②")
 
+    def test_vocab_renderer_marks_five_targets_for_polarity_scope_subtype(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(
+            vocab_choice_inventory(prepared, "contextual_vocab_error_1_among_5_polarity_scope_5")[:5],
+            key=lambda span: span.char_start,
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_error_1_among_5_polarity_scope",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_replacements_by_span_id={targets[0].id: "continue"},
+            answer_span_id=targets[0].id,
+            selection_basis_ko="이 자리는 멈춤이나 축소처럼 방향과 범위가 분명히 제한되어야 합니다",
+            supporting_evidence="Leaders cease wasteful spending during droughts.",
+            explanation="문맥상 방향과 범위를 어긋나게 만든 표현을 골라야 합니다.",
+        )
+        result = render_vocab(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "MVP-04",
+                "BatchRowId": 3,
+                "QuestionTypeKey": "vocab",
+                "prepared_source": prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_polarity_scope_5"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        generated = result["generated"]
+        self.assertEqual(generated.choices, ["①", "②", "③", "④", "⑤"])
+        self.assertEqual(generated.student_paragraph.count("[밑줄"), 5)
+        self.assertIn("continue", generated.student_paragraph)
+        self.assertEqual(generated.answer, "①")
+
+    def test_vocab_renderer_marks_five_targets_for_collocation_subtype(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(
+            vocab_choice_inventory(prepared, "contextual_vocab_error_1_among_5_collocation_5")[:5],
+            key=lambda span: span.char_start,
+        )
+        collocation_target = next(span for span in targets if span.text == "ignore")
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_error_1_among_5_collocation",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_replacements_by_span_id={collocation_target.id: "collect"},
+            answer_span_id=collocation_target.id,
+            selection_basis_ko="이 자리는 문맥상 자연스러운 어휘 결합과 선택 제약이 유지되어야 합니다",
+            supporting_evidence="Families ignore rumors during emergencies.",
+            explanation="문맥상 자연스러운 어휘 결합을 깨뜨린 표현을 골라야 합니다.",
+        )
+        result = render_vocab(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "MVP-05",
+                "BatchRowId": 4,
+                "QuestionTypeKey": "vocab",
+                "prepared_source": prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        generated = result["generated"]
+        self.assertEqual(generated.choices, ["①", "②", "③", "④", "⑤"])
+        self.assertEqual(generated.student_paragraph.count("[밑줄"), 5)
+        self.assertIn("collect", generated.student_paragraph)
+        self.assertEqual(generated.answer, "④")
+
     def test_grammar_renderer_marks_five_targets_and_one_corruption(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "

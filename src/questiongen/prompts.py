@@ -510,6 +510,8 @@ Selection reminders:
 - Follow the active subtype exactly and keep subtype identity explicit in the returned schema.
 - Select five distinct source-owned target IDs and preserve them in source order when you reason about the underlined passage.
 - Every corrupted replacement must stay readable in the same local slot, while becoming semantically wrong.
+- If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must fail specifically by polarity, degree, or scope drift.
+- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must fail by collocation or selectional mismatch, not by broad opposite meaning.
 - If the subtype asks for the correct remaining item, make sure only one answer is defensible from the passage evidence.
 - Source-owned IDs remain the authoritative contract; exact source wording will be resolved deterministically from those IDs.
 """.strip()
@@ -551,7 +553,9 @@ Selection reminders:
 - Prefer `shape=claim`, `shape=phrase`, or strong single-word targets with higher `cues=` counts.
 - Every option must stay readable in the same local slot.
 - `selected_span_text` is the original source wording, but `correct_choice` should be the best contextual fit and may differ from the source wording.
-- Prefer a strong non-identical contextual replacement when one exists; exact source wording is allowed but not required.
+- If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, `correct_choice` must be a non-identical best paraphrase and the original wording must not appear in `choice_words`.
+- If the active subtype is `contextual_vocab_phrase_choice_5`, the selected target and every choice must stay phrase-level, never single-word, and should preserve phrase-slot width tightly.
+- Otherwise prefer a strong non-identical contextual replacement when one exists; exact source wording is allowed but not required.
 - The other four options must be contextually wrong, not near-synonymous or jointly defensible.
 - Source-owned IDs remain the authoritative contract; exact source wording will be resolved deterministically from those IDs.
 """.strip()
@@ -575,7 +579,11 @@ Repair rules:
 - Return a fully corrected answer.
 - Re-check the active subtype and return a plan that matches that subtype's schema exactly.
 - If the active subtype is a blank-choice vocab item, keep `selected_span_text` as the original source wording but set `correct_choice` to the best contextual lexical fit from `choice_words`.
+- If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, `correct_choice` must differ from `selected_span_text` and the unchanged source wording must not appear anywhere in `choice_words`.
+- If the active subtype is `contextual_vocab_phrase_choice_5`, re-check that `selected_span_text` and every option are multiword phrases with tight slot-width preservation.
 - If the active subtype is an underlined vocab item, re-check the number of selected targets, the corruption count, and whether `answer_span_id` matches the stem direction.
+- If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, re-check that the one corruption is specifically a polarity, degree, or scope distortion.
+- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, re-check that the one corruption is a collocation or selectional mismatch rather than a broad opposite.
 - Re-check that every option stays in the same local slot and remains readable in context.
 - Re-check that the wrong options are semantically wrong, not merely rare, ungrammatical, or near-synonymous.
 - If the previous error mentions ambiguity or multiple defensible answers, rebuild all distractors from scratch around clearer polarity, scope, collocation, or discourse-role mismatches.

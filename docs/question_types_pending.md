@@ -10,8 +10,12 @@ Current live registry:
 - `fill_in_the_blank` (`blank_inference_proposition_5_choices` with the `_____` blank marker)
 - `vocab`
   - `contextual_vocab_choice_5`
+  - `contextual_vocab_best_paraphrase_choice_5`
+  - `contextual_vocab_phrase_choice_5`
   - `contextual_vocab_correct_among_4_corrupted_5`
   - `contextual_vocab_error_1_among_5_5`
+  - `contextual_vocab_error_1_among_5_polarity_scope_5`
+  - `contextual_vocab_error_1_among_5_collocation_5`
   - `contextual_vocab_correct_among_3_corrupted_5`
 - `grammar` (`grammar_error_5` with five numbered single-word verb-form targets and one controlled corruption)
 
@@ -158,20 +162,30 @@ Current recommendation on registry shape:
 - Current live family shape:
   - broad key remains `vocab`
   - baseline blank-choice subtype: `contextual_vocab_choice_5`
+  - strict blank-choice paraphrase subtype: `contextual_vocab_best_paraphrase_choice_5`
+  - phrase-only blank-choice subtype: `contextual_vocab_phrase_choice_5`
   - hard underlined subtypes:
     - `contextual_vocab_correct_among_4_corrupted_5`
     - `contextual_vocab_error_1_among_5_5`
+    - `contextual_vocab_error_1_among_5_polarity_scope_5`
+    - `contextual_vocab_error_1_among_5_collocation_5`
     - `contextual_vocab_correct_among_3_corrupted_5`
 - Current live policy:
   - treat the baseline subtype as contextual lexical substitution, not source restoration
-  - allow the correct answer to differ from the original source wording when a stronger contextual replacement exists
+  - use the best-paraphrase subtype when the correct answer must be a non-identical closest paraphrase and the unchanged source wording must disappear from the options entirely
+  - use the phrase-choice subtype when the target and all options must remain phrase-level rather than mixing word and phrase slots
+  - allow the baseline and phrase-choice answers to differ from the original source wording when a stronger contextual replacement exists
   - keep the hard family as five numbered underlined targets rendered in source order
+  - use the polarity/scope subtype only when the one corruption is specifically a direction, degree, or scope distortion
+  - use the collocation subtype only when the one corruption is specifically a natural-combination or selectional mismatch
   - keep all live subtypes single-answer exports under the broad family key
 - Current deterministic contract:
   - blank-choice vocab stores both original source wording and best-fit answer wording
+  - best-paraphrase vocab forbids `correct_choice == selected_span_text` and also forbids the unchanged source wording anywhere in `choice_words`
+  - phrase-choice vocab requires multiword targets, multiword options, and tight phrase-slot width preservation
   - blank-choice option order is deterministically shuffled from `BatchRowId` plus subtype key
   - hard-family plans carry explicit target IDs, source texts, corruption maps, subtype direction, and answer span ID
-  - validators reject punctuation-crossing, clause-like, proper-noun, technical-label, function-word, near-synonym, and multiple-defensible-answer failures
+  - validators reject punctuation-crossing, clause-like, proper-noun, technical-label, function-word, near-synonym, wrong-corruption-class, and multiple-defensible-answer failures
 - Current incompatibility patterns:
   - fewer than 5 strong lexical-slot targets for hard subtypes
   - fewer than 1 strong lexical-slot target for the blank-choice subtype

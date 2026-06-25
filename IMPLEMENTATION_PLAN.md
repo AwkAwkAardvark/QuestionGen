@@ -178,11 +178,15 @@
   - rollout policy: live now with broad-key preservation and subtype fan-out
   - live subtype set:
     - `contextual_vocab_choice_5`
+    - `contextual_vocab_best_paraphrase_choice_5`
+    - `contextual_vocab_phrase_choice_5`
     - `contextual_vocab_correct_among_4_corrupted_5`
     - `contextual_vocab_error_1_among_5_5`
+    - `contextual_vocab_error_1_among_5_polarity_scope_5`
+    - `contextual_vocab_error_1_among_5_collocation_5`
     - `contextual_vocab_correct_among_3_corrupted_5`
-  - shipped policy: broad-family runs now produce one blank-choice contextual substitution subtype plus three underlined multi-target corruption/diagnosis subtypes
-  - current hardening policy: the baseline blank-choice subtype stores both the original source wording and the best contextual answer, renderer choice order is deterministically shuffled from `BatchRowId` and subtype key, the hard family keeps explicit corruption maps and stem directions, and validators reject weak targets, near-synonym drift, and non-unique remaining answers
+  - shipped policy: broad-family runs now produce three blank-choice contextual substitution subtypes plus five underlined multi-target corruption/diagnosis subtypes
+  - current hardening policy: the blank-choice branch now distinguishes baseline contextual substitution, strict non-restoration best-paraphrase selection, and phrase-only lexical substitution; renderer choice order remains deterministically shuffled from `BatchRowId` and subtype key; the hard family keeps explicit corruption maps and stem directions; validators reject weak targets, unchanged-source best-paraphrase answers, phrase-width drift, wrong corruption class, near-synonym drift, and non-unique remaining answers
 - [x] `grammar`
   - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
   - live subtype set:

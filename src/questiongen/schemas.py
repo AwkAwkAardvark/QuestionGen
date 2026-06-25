@@ -371,7 +371,11 @@ class VocabPlan(BaseModel):
 
 
 class ContextualVocabChoicePlan(BaseModel):
-    subtype: Literal["contextual_choice"] = "contextual_choice"
+    subtype: Literal[
+        "contextual_choice",
+        "contextual_best_paraphrase_choice",
+        "contextual_phrase_choice",
+    ] = "contextual_choice"
     selected_span_id: str
     selected_span_text: str
     choice_words: list[str] = Field(default_factory=list)
@@ -413,6 +417,8 @@ class UnderlinedVocabPlan(BaseModel):
     subtype: Literal[
         "contextual_correct_among_4_corrupted",
         "contextual_error_1_among_5",
+        "contextual_error_1_among_5_polarity_scope",
+        "contextual_error_1_among_5_collocation",
         "contextual_correct_among_3_corrupted",
     ]
     target_span_ids: list[str] = Field(default_factory=list)
@@ -450,15 +456,32 @@ class UnderlinedVocabPlan(BaseModel):
         expected_corruption_count = {
             "contextual_correct_among_4_corrupted": 4,
             "contextual_error_1_among_5": 1,
+            "contextual_error_1_among_5_polarity_scope": 1,
+            "contextual_error_1_among_5_collocation": 1,
             "contextual_correct_among_3_corrupted": 3,
         }[self.subtype]
         if len(self.corrupted_replacements_by_span_id) != expected_corruption_count:
             raise ValueError(
                 f"UnderlinedVocabPlan requires exactly {expected_corruption_count} corrupted replacements for {self.subtype}."
             )
-        if self.subtype == "contextual_error_1_among_5" and self.answer_span_id not in self.corrupted_replacements_by_span_id:
+        if (
+            self.subtype in {
+                "contextual_error_1_among_5",
+                "contextual_error_1_among_5_polarity_scope",
+                "contextual_error_1_among_5_collocation",
+            }
+            and self.answer_span_id not in self.corrupted_replacements_by_span_id
+        ):
             raise ValueError("UnderlinedVocabPlan answer_span_id must be the corrupted item for contextual_error_1_among_5.")
-        if self.subtype != "contextual_error_1_among_5" and self.answer_span_id in self.corrupted_replacements_by_span_id:
+        if (
+            self.subtype
+            not in {
+                "contextual_error_1_among_5",
+                "contextual_error_1_among_5_polarity_scope",
+                "contextual_error_1_among_5_collocation",
+            }
+            and self.answer_span_id in self.corrupted_replacements_by_span_id
+        ):
             raise ValueError("UnderlinedVocabPlan answer_span_id must remain uncorrupted for pick-the-correct vocab subtypes.")
 
         if not self.selection_basis_ko or not self.selection_basis_ko.strip():

@@ -179,13 +179,21 @@ Rules:
 - `validation_passed` rows are expected to be structurally intact, including abbreviation-safe sentence preparation and fragment-safe rendered text, not just schema-valid fields.
 - `underlined_phrase_meaning` should preserve the original passage exactly except for wrapping the chosen source span as `[밑줄]...[/밑줄]` in exported `student_paragraph`.
 - `fill_in_the_blank` should preserve the original passage exactly except for replacing one selected source span with the single blank marker `_____` in exported `student_paragraph`.
-- `vocab` now fans out into four concrete live subtype rows under the broad family key:
+- `vocab` now fans out into eight concrete live subtype rows under the broad family key:
   - `contextual_vocab_choice_5`
+  - `contextual_vocab_best_paraphrase_choice_5`
+  - `contextual_vocab_phrase_choice_5`
   - `contextual_vocab_correct_among_4_corrupted_5`
   - `contextual_vocab_error_1_among_5_5`
+  - `contextual_vocab_error_1_among_5_polarity_scope_5`
+  - `contextual_vocab_error_1_among_5_collocation_5`
   - `contextual_vocab_correct_among_3_corrupted_5`
-- `contextual_vocab_choice_5` should preserve the passage except for one `_____` blank, and its choices should be exported in deterministic shuffled order keyed by `BatchRowId` plus subtype key.
-- The three hard vocab subtypes should preserve source-order numbered underlines in passage text and export marker answers `①`-`⑤` that point to the underlined target, not to a choice-list lexical option.
+- The three blank-choice vocab subtypes should preserve the passage except for one `_____` blank, and their choices should be exported in deterministic shuffled order keyed by `BatchRowId` plus subtype key.
+- `contextual_vocab_best_paraphrase_choice_5` should forbid the unchanged source wording as both the correct answer and as a distractor, because the task is closest contextual paraphrase rather than source restoration.
+- `contextual_vocab_phrase_choice_5` should use only multiword phrase-level targets and phrase-level options with tight slot-width preservation.
+- The five hard vocab subtypes should preserve source-order numbered underlines in passage text and export marker answers `①`-`⑤` that point to the underlined target, not to a choice-list lexical option.
+- `contextual_vocab_error_1_among_5_polarity_scope_5` should restrict its one corruption to polarity, degree, or scope drift.
+- `contextual_vocab_error_1_among_5_collocation_5` should restrict its one corruption to collocation or selectional-restriction mismatch rather than broad opposite meaning.
 - `grammar` now fans out into multiple controlled subtype rows under the broad family key, with subtype-specific compatibility gating.
 - `mood_atmosphere` remains implemented but dormant. Its current subtype work stays out of default launcher and batch outputs until the other live families and output-quality work stabilize and it is explicitly reactivated later.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.

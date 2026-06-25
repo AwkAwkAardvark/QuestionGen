@@ -99,7 +99,12 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
                 "errors": ["A vocab plan is required before explanation generation."],
             }
         return {
-            "explanation_context": _build_vocab_context(prepared_source, plan, generated),
+            "explanation_context": _build_vocab_context(
+                prepared_source,
+                plan,
+                generated,
+                question_subtype_key=generated.QuestionSubtypeKey or state.get("QuestionSubtypeKey"),
+            ),
             "status": "rendered",
             "errors": [],
         }
@@ -279,6 +284,8 @@ def _build_vocab_context(
     prepared_source: PreparedSource,
     plan: VocabPlan | ContextualVocabChoicePlan | UnderlinedVocabPlan,
     generated: GeneratedQuestion,
+    *,
+    question_subtype_key: str | None = None,
 ) -> dict[str, str]:
     sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
     if isinstance(plan, VocabPlan):
@@ -301,12 +308,14 @@ def _build_vocab_context(
         }
 
     if isinstance(plan, ContextualVocabChoicePlan):
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, "contextual_vocab_choice_5")}
+        subtype_key = question_subtype_key or "contextual_vocab_choice_5"
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, subtype_key)}
         selected_span = inventory[plan.selected_span_id]
         choice_index = MARKER_CHOICES.index(generated.answer)
         correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
         return {
             "subtype": plan.subtype,
+            "question_subtype_key": subtype_key,
             "selected_span_text": selected_span.text,
             "original_word": selected_span.text,
             "correct_choice": correct_choice,
@@ -331,6 +340,7 @@ def _build_vocab_context(
     ]
     return {
         "subtype": plan.subtype,
+        "question_subtype_key": question_subtype_key or generated.QuestionSubtypeKey or "",
         "answer_span_text": answer_span.text,
         "supporting_evidence": plan.supporting_evidence,
         "correct_marker": answer_marker,
@@ -477,13 +487,35 @@ def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
 
 
 def _write_vocab_explanation(context: dict[str, str]) -> str:
-    if context.get("subtype") == "contextual_choice":
+    if context.get("subtype") in {
+        "contextual_choice",
+        "contextual_best_paraphrase_choice",
+        "contextual_phrase_choice",
+    }:
         meaning = _prefer_teacher_note(
             context.get("contextual_meaning_ko"),
             "앞뒤 문맥과 맞는 뜻",
         )
         source_wording = context["selected_span_text"]
         correct_choice = context["correct_choice"]
+        subtype = context.get("subtype")
+        if subtype == "contextual_best_paraphrase_choice":
+            return (
+                f"'{context['supporting_evidence']}'라는 단서를 보면 이 자리에는 "
+                f"\"{meaning}\"을 가장 가깝게 바꿔 말한 표현이 와야 합니다. "
+                f"원문의 '{source_wording}'를 그대로 복원하는 문제가 아니라, "
+                f"정답인 '{correct_choice}'가 그 의미를 가장 정확한 문맥상 바꿔쓰기로 살립니다. "
+                "다른 선택지들은 의미 방향이나 범위가 어긋나므로 "
+                f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+            )
+        if subtype == "contextual_phrase_choice":
+            return (
+                f"'{context['supporting_evidence']}'라는 단서를 보면 이 자리는 한 단어가 아니라 "
+                f"\"{meaning}\"에 해당하는 어구 단위가 들어가야 합니다. "
+                f"정답인 '{correct_choice}'가 그 의미와 어구 단위를 함께 가장 자연스럽게 맞추고, "
+                "다른 선택지들은 의미나 어구 결합이 어긋납니다. "
+                f"따라서 정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+            )
         source_note = (
             f"원문의 '{source_wording}'도 같은 자리에 놓일 수 있는 표현이지만, "
             if correct_choice != source_wording
@@ -499,12 +531,24 @@ def _write_vocab_explanation(context: dict[str, str]) -> str:
     if context.get("subtype") in {
         "contextual_correct_among_4_corrupted",
         "contextual_error_1_among_5",
+        "contextual_error_1_among_5_polarity_scope",
+        "contextual_error_1_among_5_collocation",
         "contextual_correct_among_3_corrupted",
     }:
         basis = _prefer_teacher_note(
             context.get("selection_basis_ko"),
             "이 자리의 문맥을 가장 자연스럽게 유지하는 표현",
         )
+        if context["subtype"] == "contextual_error_1_among_5_polarity_scope":
+            return (
+                f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
+                f"따라서 {context['correct_marker']}의 표현은 방향, 정도, 또는 적용 범위를 어긋나게 만들어 문맥상 틀립니다."
+            )
+        if context["subtype"] == "contextual_error_1_among_5_collocation":
+            return (
+                f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
+                f"따라서 {context['correct_marker']}의 표현은 문법만 그럴듯할 뿐, 이 자리에서 자연스럽게 결합하는 어휘 선택이 아닙니다."
+            )
         if context["subtype"] == "contextual_error_1_among_5":
             return (
                 f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "

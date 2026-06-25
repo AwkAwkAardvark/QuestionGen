@@ -122,6 +122,67 @@ _DISCOURSE_CUE_WORDS = {
     "without",
     "yet",
 }
+_POLARITY_SCOPE_CUE_WORDS = {
+    "all",
+    "always",
+    "any",
+    "barely",
+    "broad",
+    "broader",
+    "broadly",
+    "each",
+    "entire",
+    "entirely",
+    "every",
+    "few",
+    "fewer",
+    "fully",
+    "hardly",
+    "higher",
+    "largely",
+    "less",
+    "little",
+    "lower",
+    "mainly",
+    "many",
+    "more",
+    "most",
+    "much",
+    "narrow",
+    "narrower",
+    "narrowly",
+    "never",
+    "no",
+    "none",
+    "not",
+    "nothing",
+    "only",
+    "partly",
+    "rarely",
+    "scarcely",
+    "several",
+    "slightly",
+    "some",
+    "too",
+    "under",
+    "very",
+    "without",
+}
+_BROAD_OPPOSITE_HINTS = {
+    "accept": {"reject", "refuse"},
+    "allow": {"block", "deny", "prevent"},
+    "benefit": {"harm", "hurt"},
+    "cease": {"continue", "maintain"},
+    "expand": {"contract", "limit", "reduce", "shrink"},
+    "fail": {"succeed"},
+    "ignore": {"heed", "notice"},
+    "increase": {"decrease", "lower", "reduce"},
+    "lead": {"follow"},
+    "protect": {"damage", "expose", "harm"},
+    "reduce": {"increase", "raise"},
+    "support": {"oppose", "undermine"},
+    "weaken": {"strengthen"},
+}
 _INCOMPLETE_EDGE_WORDS = {
     "a",
     "an",
@@ -499,6 +560,11 @@ def is_short_english_lexical_choice(value: str) -> bool:
     return 1 <= len(normalized.split()) <= 4
 
 
+def is_phrase_level_lexical_choice(value: str) -> bool:
+    normalized = " ".join(value.split())
+    return is_short_english_lexical_choice(normalized) and len(normalized.split()) >= 2
+
+
 def vocab_choice_target_cue_count(span: SpanUnit) -> int:
     tags = set(span.heuristic_tags)
     score = 0
@@ -529,6 +595,8 @@ def vocab_choice_target_quality_error(
         return "Selected span is empty for vocab."
     if span_crosses_punctuation(span.text):
         return "Selected span crosses punctuation and is not a clean lexical slot."
+    if subtype_key == "contextual_vocab_phrase_choice_5" and token_count < 2:
+        return "Selected span must be a multiword phrase for contextual_vocab_phrase_choice_5."
     if not is_short_english_lexical_choice(span.text):
         return "Selected span is not a short lexical word or phrase target."
     if _TECHNICAL_LABEL_RE.search(span.text) is not None:
@@ -569,6 +637,8 @@ def vocab_choice_target_quality_error(
     if subtype_key in {
         "contextual_vocab_correct_among_4_corrupted_5",
         "contextual_vocab_error_1_among_5_5",
+        "contextual_vocab_error_1_among_5_polarity_scope_5",
+        "contextual_vocab_error_1_among_5_collocation_5",
         "contextual_vocab_correct_among_3_corrupted_5",
     } and (span.priority_score < 6 or vocab_choice_target_cue_count(span) < 3):
         return f"Selected span is not strong enough for {subtype_key}."
@@ -959,6 +1029,43 @@ def is_near_synonym_choice(original_text: str, candidate_text: str) -> bool:
     if len(differing_pairs) != 1:
         return False
     return is_near_synonym_corruption(*differing_pairs[0])
+
+
+def vocab_corruption_is_polarity_scope_like(original_text: str, replacement_text: str) -> bool:
+    original_tokens = _span_tokens(original_text)
+    replacement_tokens = _span_tokens(replacement_text)
+    if not original_tokens or not replacement_tokens:
+        return False
+
+    original_scope = {token for token in original_tokens if token in _POLARITY_SCOPE_CUE_WORDS}
+    replacement_scope = {token for token in replacement_tokens if token in _POLARITY_SCOPE_CUE_WORDS}
+    if original_scope != replacement_scope:
+        return True
+
+    if len(original_tokens) == len(replacement_tokens) == 1:
+        original = original_tokens[0]
+        replacement = replacement_tokens[0]
+        if replacement in _BROAD_OPPOSITE_HINTS.get(original, set()):
+            return True
+        if original in _BROAD_OPPOSITE_HINTS.get(replacement, set()):
+            return True
+        if {original, replacement} & {"more", "less", "most", "least", "always", "never", "all", "some"}:
+            return True
+    return False
+
+
+def vocab_corruption_is_collocation_like(original_text: str, replacement_text: str) -> bool:
+    if vocab_corruption_is_polarity_scope_like(original_text, replacement_text):
+        return False
+    original_tokens = _span_tokens(original_text)
+    replacement_tokens = _span_tokens(replacement_text)
+    if not original_tokens or not replacement_tokens:
+        return False
+    if len(original_tokens) != len(replacement_tokens):
+        return False
+    if len(original_tokens) == 1 and normalize_english_word(original_tokens[0]) == normalize_english_word(replacement_tokens[0]):
+        return False
+    return True
 
 
 def vocab_target_is_antonym_invertible(span: SpanUnit) -> bool:

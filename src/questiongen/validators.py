@@ -57,6 +57,7 @@ from .targeting import (
     is_auxiliary_like,
     is_near_synonym_choice,
     is_near_synonym_corruption,
+    is_phrase_level_lexical_choice,
     is_single_english_word,
     is_short_english_lexical_choice,
     malformed_verb_form_reason,
@@ -66,6 +67,8 @@ from .targeting import (
     render_numbered_span_edits,
     underlined_phrase_inventory,
     underlined_span_quality_error,
+    vocab_corruption_is_collocation_like,
+    vocab_corruption_is_polarity_scope_like,
     vocab_choice_inventory,
     vocab_choice_target_cue_count,
     vocab_choice_target_quality_error,
@@ -751,8 +754,13 @@ def _validate_vocab_plan(
         if selected_span is None:
             return [f"Unknown selected span ID: {plan.selected_span_id}"]
         errors: list[str] = []
-        if plan.subtype != "contextual_choice":
-            errors.append("ContextualVocabChoicePlan subtype must be contextual_choice.")
+        expected_plan_subtype = {
+            "contextual_vocab_choice_5": "contextual_choice",
+            "contextual_vocab_best_paraphrase_choice_5": "contextual_best_paraphrase_choice",
+            "contextual_vocab_phrase_choice_5": "contextual_phrase_choice",
+        }[type_spec.subtype_key]
+        if plan.subtype != expected_plan_subtype:
+            errors.append(f"ContextualVocabChoicePlan subtype must be {expected_plan_subtype}.")
         if plan.selected_span_text != selected_span.text:
             errors.append("ContextualVocabChoicePlan selected_span_text must exactly match the selected span text.")
         if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
@@ -760,7 +768,14 @@ def _validate_vocab_plan(
         target_error = vocab_choice_target_quality_error(selected_span, subtype_key=type_spec.subtype_key)
         if target_error is not None:
             errors.append(target_error)
-        errors.extend(_validate_vocab_choice_options(selected_span.text, plan.choice_words, plan.correct_choice))
+        errors.extend(
+            _validate_vocab_choice_options(
+                selected_span.text,
+                plan.choice_words,
+                plan.correct_choice,
+                subtype_key=type_spec.subtype_key,
+            )
+        )
         return errors
     if isinstance(plan, UnderlinedVocabPlan):
         inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
@@ -791,6 +806,8 @@ def _validate_vocab_compatibility(
 ) -> list[str]:
     if type_spec.plan_schema is ContextualVocabChoicePlan:
         if len(vocab_choice_inventory(prepared_source, type_spec.subtype_key)) < 1:
+            if type_spec.subtype_key == "contextual_vocab_phrase_choice_5":
+                return ["Passage does not contain a workable phrase-only lexical-slot vocab target for contextual_vocab_phrase_choice_5."]
             return [f"Passage does not contain a workable lexical-slot vocab target for {type_spec.subtype_key}."]
         return []
     if type_spec.plan_schema is UnderlinedVocabPlan:
@@ -806,6 +823,8 @@ def _validate_vocab_choice_options(
     selected_span_text: str,
     choice_words: list[str],
     correct_choice: str,
+    *,
+    subtype_key: str = "contextual_vocab_choice_5",
 ) -> list[str]:
     errors: list[str] = []
     normalized_correct = normalize_english_choice(correct_choice)
@@ -818,13 +837,30 @@ def _validate_vocab_choice_options(
             "ContextualVocabChoicePlan must not keep the unchanged original wording as a second defensible option when correct_choice differs."
         )
     selected_token_count = len(" ".join(selected_span_text.split()).split())
+    if subtype_key == "contextual_vocab_best_paraphrase_choice_5":
+        if normalized_correct == normalized_selected:
+            errors.append("ContextualVocabChoicePlan best-paraphrase subtype must use a non-identical correct_choice.")
+        if normalized_selected in normalized_choices:
+            errors.append("ContextualVocabChoicePlan best-paraphrase subtype must not include the unchanged source wording in choice_words.")
+    if subtype_key == "contextual_vocab_phrase_choice_5" and selected_token_count < 2:
+        errors.append("ContextualVocabChoicePlan phrase-choice subtype requires a multiword selected_span_text.")
     if not is_short_english_lexical_choice(selected_span_text):
         errors.append("ContextualVocabChoicePlan selected_span_text must be a short readable English lexical choice.")
     for choice in choice_words:
         if not is_short_english_lexical_choice(choice):
             errors.append(f"ContextualVocabChoicePlan choice '{choice}' is not a short readable English lexical choice.")
             continue
-        errors.extend(_validate_vocab_slot_compatibility(selected_span_text, choice, field_prefix="ContextualVocabChoicePlan"))
+        if subtype_key == "contextual_vocab_phrase_choice_5" and not is_phrase_level_lexical_choice(choice):
+            errors.append(f"ContextualVocabChoicePlan phrase-choice subtype requires phrase-level options; '{choice}' is not multiword.")
+            continue
+        errors.extend(
+            _validate_vocab_slot_compatibility(
+                selected_span_text,
+                choice,
+                field_prefix="ContextualVocabChoicePlan",
+                subtype_key=subtype_key,
+            )
+        )
         normalized_choice = normalize_english_choice(choice)
         if normalized_choice == normalized_correct:
             continue
@@ -845,6 +881,8 @@ def _validate_underlined_vocab_plan(
     expected_plan_subtype = {
         "contextual_vocab_correct_among_4_corrupted_5": "contextual_correct_among_4_corrupted",
         "contextual_vocab_error_1_among_5_5": "contextual_error_1_among_5",
+        "contextual_vocab_error_1_among_5_polarity_scope_5": "contextual_error_1_among_5_polarity_scope",
+        "contextual_vocab_error_1_among_5_collocation_5": "contextual_error_1_among_5_collocation",
         "contextual_vocab_correct_among_3_corrupted_5": "contextual_correct_among_3_corrupted",
     }[type_spec.subtype_key]
     if plan.subtype != expected_plan_subtype:
@@ -865,6 +903,8 @@ def _validate_underlined_vocab_plan(
     expected_corruption_count = {
         "contextual_correct_among_4_corrupted": 4,
         "contextual_error_1_among_5": 1,
+        "contextual_error_1_among_5_polarity_scope": 1,
+        "contextual_error_1_among_5_collocation": 1,
         "contextual_correct_among_3_corrupted": 3,
     }[plan.subtype]
     if len(corrupted_ids) != expected_corruption_count:
@@ -884,14 +924,33 @@ def _validate_underlined_vocab_plan(
             continue
         if normalize_english_choice(replacement) == normalize_english_choice(span.text):
             errors.append(f"UnderlinedVocabPlan replacement for {span.id} must differ from the source text.")
-        errors.extend(_validate_vocab_slot_compatibility(span.text, replacement, field_prefix="UnderlinedVocabPlan"))
+        errors.extend(
+            _validate_vocab_slot_compatibility(
+                span.text,
+                replacement,
+                field_prefix="UnderlinedVocabPlan",
+                subtype_key=type_spec.subtype_key,
+            )
+        )
         if is_near_synonym_choice(span.text, replacement):
             errors.append("UnderlinedVocabPlan corrupted replacements must not be near-synonyms of the source wording.")
+        if plan.subtype == "contextual_error_1_among_5_polarity_scope" and not vocab_corruption_is_polarity_scope_like(span.text, replacement):
+            errors.append(
+                "UnderlinedVocabPlan polarity/scope subtype requires a corruption that changes direction, degree, or scope."
+            )
+        if plan.subtype == "contextual_error_1_among_5_collocation" and not vocab_corruption_is_collocation_like(span.text, replacement):
+            errors.append(
+                "UnderlinedVocabPlan collocation subtype requires a natural-looking collocation or selectional mismatch, not a polarity reversal."
+            )
 
     if len(set(rendered_texts)) != len(rendered_texts):
         errors.append("UnderlinedVocabPlan rendered underlined items must remain unique after corruption.")
 
-    if plan.subtype == "contextual_error_1_among_5":
+    if plan.subtype in {
+        "contextual_error_1_among_5",
+        "contextual_error_1_among_5_polarity_scope",
+        "contextual_error_1_among_5_collocation",
+    }:
         if plan.answer_span_id not in corrupted_ids:
             errors.append("UnderlinedVocabPlan answer_span_id must be the one corrupted item for contextual_error_1_among_5.")
     else:
@@ -918,13 +977,16 @@ def _validate_vocab_slot_compatibility(
     candidate_text: str,
     *,
     field_prefix: str,
+    subtype_key: str = "contextual_vocab_choice_5",
 ) -> list[str]:
     errors: list[str] = []
     source_token_count = len(" ".join(source_text.split()).split())
     candidate_token_count = len(candidate_text.split())
     if source_token_count == 1 and candidate_token_count != 1:
         errors.append(f"{field_prefix} options must preserve a single-word slot when the target is one word.")
-    if source_token_count > 1 and abs(candidate_token_count - source_token_count) > 1:
+    if subtype_key == "contextual_vocab_phrase_choice_5" and source_token_count > 1 and candidate_token_count != source_token_count:
+        errors.append(f"{field_prefix} phrase-choice options must preserve phrase-slot width exactly.")
+    elif source_token_count > 1 and abs(candidate_token_count - source_token_count) > 1:
         errors.append(f"{field_prefix} options must preserve the same short lexical slot width.")
     if normalize_english_choice(candidate_text) != normalize_english_choice(source_text) and is_auxiliary_like(candidate_text):
         errors.append(f"{field_prefix} distractors must not collapse into auxiliary-only grammar choices.")
@@ -1590,7 +1652,14 @@ def validate_vocab_output(
             batch_row_id=generated.BatchRowId,
             subtype_key=type_spec.subtype_key,
         )
-        errors.extend(_validate_vocab_choice_options(selected_span.text, plan.choice_words, plan.correct_choice))
+        errors.extend(
+            _validate_vocab_choice_options(
+                selected_span.text,
+                plan.choice_words,
+                plan.correct_choice,
+                subtype_key=type_spec.subtype_key,
+            )
+        )
         if generated.question_stem != type_spec.question_stem:
             errors.append("question_stem does not match the question type metadata.")
         if generated.given_sentence is not None:
