@@ -5,6 +5,7 @@ import unittest
 from questiongen.parsers import prepare_source
 from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_SUBTYPE_SPECS, QUESTION_TYPES, expand_question_type_keys
 from questiongen.schemas import (
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GapUnit,
     GeneratedQuestion,
@@ -13,7 +14,7 @@ from questiongen.schemas import (
     ParagraphOrderingPlan,
     PreparedSource,
     SpanUnit,
-    VocabChoicePlan,
+    UnderlinedVocabPlan,
     VocabPlan,
     SentenceInsertionPlan,
     SourceUnit,
@@ -27,6 +28,7 @@ from questiongen.targeting import (
     phrase_span_inventory,
     render_numbered_span_edits,
     underlined_span_quality_error,
+    vocab_choice_inventory,
     vocab_choice_target_quality_error,
     vocab_target_inventory,
 )
@@ -1054,12 +1056,14 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(vocab_result["status"], "source_passed")
         self.assertEqual(grammar_result["status"], "source_passed")
 
-    def test_vocab_family_expands_to_choice_then_hard_subtype(self) -> None:
+    def test_vocab_family_expands_to_four_live_subtypes_in_order(self) -> None:
         self.assertEqual(
             [spec.subtype_key for spec in expand_question_type_keys(["vocab"])],
             [
                 "contextual_vocab_choice_5",
                 "contextual_vocab_correct_among_4_corrupted_5",
+                "contextual_vocab_error_1_among_5_5",
+                "contextual_vocab_correct_among_3_corrupted_5",
             ],
         )
 
@@ -1313,6 +1317,132 @@ class ValidatorTests(unittest.TestCase):
             [],
         )
 
+    def test_vocab_choice_output_validator_uses_deterministic_shuffle(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "Residents say the brighter crosswalks feel safer at night."
+        )
+        prepared = prepare_source(source)
+        target = vocab_choice_inventory(prepared, QUESTION_TYPES["vocab"].subtype_key)[0]
+        plan = ContextualVocabChoicePlan(
+            selected_span_id=target.id,
+            selected_span_text=target.text,
+            choice_words=["strengthen", "weaken", "ignore", "delay", "worsen"],
+            correct_choice="strengthen",
+            contextual_meaning_ko="이 자리는 안전을 더 높이는 방향의 표현이 와야 합니다",
+            supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+            explanation="문맥상 이 자리는 안전을 더 높이는 방향의 표현이 와야 합니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="MVP-02",
+            BatchRowId=7,
+            QuestionType=QUESTION_TYPES["vocab"].label_ko,
+            student_paragraph=source.replace(target.text, "_____", 1),
+            question_stem=QUESTION_TYPES["vocab"].question_stem,
+            choices=["strengthen", "ignore", "weaken", "delay", "worsen"],
+            answer="①",
+            explanation="단서를 보면 이 자리에는 안전을 더 높이는 방향의 표현이 와야 하므로 정답은 ① strengthen입니다.",
+        )
+        self.assertEqual(
+            validate_vocab_output(
+                prepared_source=prepared,
+                plan=plan,
+                generated=generated,
+                type_spec=QUESTION_TYPES["vocab"],
+            ),
+            [],
+        )
+
+    def test_underlined_vocab_output_validator_accepts_four_corrupted_subtype(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(
+            vocab_choice_inventory(prepared, "contextual_vocab_correct_among_4_corrupted_5")[:5],
+            key=lambda span: span.char_start,
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_correct_among_4_corrupted",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_replacements_by_span_id={
+                targets[0].id: "weaken",
+                targets[2].id: "ignore",
+                targets[3].id: "delay",
+                targets[4].id: "worsen",
+            },
+            answer_span_id=targets[1].id,
+            selection_basis_ko="이 자리만 원래 맥락의 의미를 자연스럽게 유지합니다",
+            supporting_evidence="Stronger pumps reduce pressure loss across the valley.",
+            explanation="단서를 보면 ②만 원래 의미를 유지하고 다른 밑줄 표현들은 의미를 비틉니다.",
+        )
+        generated = GeneratedQuestion(
+            OriginalQuestionNumber="MVP-02",
+            BatchRowId=7,
+            QuestionType=QUESTION_TYPES["vocab"].label_ko,
+            student_paragraph=render_numbered_span_edits(
+                source_text=source,
+                selected_spans=targets,
+                replacement_by_span_id=plan.corrupted_replacements_by_span_id,
+                markers=["①", "②", "③", "④", "⑤"],
+            ),
+            question_stem=QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"].question_stem,
+            choices=["①", "②", "③", "④", "⑤"],
+            answer="②",
+            explanation="단서를 보면 ②만 원래 의미를 유지하고 다른 밑줄 표현들은 의미를 비틉니다.",
+        )
+        self.assertEqual(
+            validate_vocab_output(
+                prepared_source=prepared,
+                plan=plan,
+                generated=generated,
+                type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+            ),
+            [],
+        )
+
+    def test_underlined_vocab_plan_rejects_non_unique_remaining_item_for_three_corrupted_subtype(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(
+            vocab_choice_inventory(prepared, "contextual_vocab_correct_among_3_corrupted_5")[:5],
+            key=lambda span: span.char_start,
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_correct_among_3_corrupted",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_replacements_by_span_id={
+                targets[0].id: "weaken",
+                targets[3].id: "delay",
+                targets[4].id: "worsen",
+            },
+            answer_span_id=targets[2].id,
+            selection_basis_ko="이 자리만 가장 강하게 passage의 핵심 효과를 유지합니다",
+            supporting_evidence="Stronger pumps reduce pressure loss across the valley.",
+            explanation="문맥상 정답만 가장 강하게 원래 의미를 유지합니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
+        )
+        self.assertTrue(any("uniquely stronger correct item" in error for error in errors))
+
     def test_vocab_validator_rejects_near_synonym_corruption(self) -> None:
         source = (
             "Residents stick to the marked route during storms. "
@@ -1398,7 +1528,7 @@ class ValidatorTests(unittest.TestCase):
                 )
             ],
         )
-        plan = VocabChoicePlan(
+        plan = ContextualVocabChoicePlan(
             selected_span_id="P0",
             selected_span_text="support",
             choice_words=["support", "assist", "delay", "ignore", "weaken"],
@@ -1441,7 +1571,7 @@ class ValidatorTests(unittest.TestCase):
                 )
             ],
         )
-        plan = VocabChoicePlan(
+        plan = ContextualVocabChoicePlan(
             selected_span_id="P0",
             selected_span_text=span_text,
             choice_words=["moral force", "deeply misunderstood factual evidence", "delay", "ignore", "weaken"],
@@ -1452,6 +1582,103 @@ class ValidatorTests(unittest.TestCase):
         )
         errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"])
         self.assertTrue(any("slot width" in error for error in errors))
+
+    def test_vocab_choice_validator_allows_contextual_replacement_answer(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "Residents say the brighter crosswalks feel safer at night."
+        )
+        improve_start = source.index("brighter")
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(
+                    id="S0",
+                    text="City planners recently tested brighter LED lights on several downtown blocks.",
+                    index=0,
+                ),
+                SourceUnit(
+                    id="S1",
+                    text="Residents say the brighter crosswalks feel safer at night.",
+                    index=1,
+                ),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text="brighter",
+                    normalized_text="brighter",
+                    char_start=improve_start,
+                    char_end=improve_start + len("brighter"),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="City planners recently tested ",
+                    context_after=" LED lights on several downtown blocks.",
+                    heuristic_tags=["single_word", "abstract_term", "contextual_cue", "vocab_candidate"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = ContextualVocabChoicePlan(
+            selected_span_id="P0",
+            selected_span_text="brighter",
+            choice_words=["stronger", "weaker", "dimmer", "rarer", "heavier"],
+            correct_choice="stronger",
+            contextual_meaning_ko="이 자리는 가시성과 안전감을 더 높이는 방향의 표현이 와야 합니다",
+            supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+            explanation="문맥상 이 자리는 가시성과 안전감을 더 높이는 방향의 표현이 와야 합니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"]),
+            [],
+        )
+
+    def test_vocab_choice_validator_rejects_original_wording_as_second_defensible_option(self) -> None:
+        source = "Residents show strong support during the winter drive. Teachers discuss the safety map every week."
+        support_start = source.index("support")
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="Residents show strong support during the winter drive.", index=0),
+                SourceUnit(id="S1", text="Teachers discuss the safety map every week.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text="support",
+                    normalized_text="support",
+                    char_start=support_start,
+                    char_end=support_start + len("support"),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="Residents show strong ",
+                    context_after=" during the winter drive.",
+                    heuristic_tags=["single_word", "abstract_term", "contextual_cue", "vocab_candidate"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = ContextualVocabChoicePlan(
+            selected_span_id="P0",
+            selected_span_text="support",
+            choice_words=["support", "backing", "delay", "ignore", "weaken"],
+            correct_choice="backing",
+            contextual_meaning_ko="이 자리는 실제로 뒷받침하는 의미를 가리키는 표현이 와야 합니다",
+            supporting_evidence="Residents show strong support during the winter drive.",
+            explanation="문맥상 실제로 뒷받침하는 의미를 가리키는 표현이 와야 합니다.",
+        )
+        errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["vocab"])
+        self.assertTrue(any("second defensible option" in error for error in errors))
 
     def test_grammar_validator_accepts_valid_output(self) -> None:
         source = (

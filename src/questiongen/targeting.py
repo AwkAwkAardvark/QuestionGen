@@ -566,10 +566,12 @@ def vocab_choice_target_quality_error(
         and span.priority_score < 5
     ):
         return "Selected span is not central enough to passage interpretation for vocab."
-    if subtype_key == "contextual_vocab_correct_among_4_corrupted_5" and (
-        span.priority_score < 6 or vocab_choice_target_cue_count(span) < 3
-    ):
-        return "Selected span is not strong enough for contextual_vocab_correct_among_4_corrupted_5."
+    if subtype_key in {
+        "contextual_vocab_correct_among_4_corrupted_5",
+        "contextual_vocab_error_1_among_5_5",
+        "contextual_vocab_correct_among_3_corrupted_5",
+    } and (span.priority_score < 6 or vocab_choice_target_cue_count(span) < 3):
+        return f"Selected span is not strong enough for {subtype_key}."
     return None
 
 

@@ -25,13 +25,14 @@ from questiongen.prompts import (
 )
 from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
 from questiongen.schemas import (
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
+    UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabChoicePlan,
 )
 from questiongen.targeting import allowed_verb_form_variants, grammar_target_inventory, vocab_choice_inventory
 
@@ -324,30 +325,41 @@ class _FillInTheBlankPlanner:
 
 
 class _VocabPlanner:
-    def invoke(self, prompt: str) -> VocabChoicePlan:
-        match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
-        selected_span_id = match.group(1) if match else "P0"
-        selected_span_text = match.group(2) if match else "improve"
-        plan_subtype = (
-            "contextual_correct_among_4_corrupted"
-            if "contextual_vocab_correct_among_4_corrupted_5" in prompt
-            else "contextual_choice"
-        )
-        return VocabChoicePlan(
-            subtype=plan_subtype,
+    def invoke(self, prompt: str) -> ContextualVocabChoicePlan | UnderlinedVocabPlan:
+        targets = re.findall(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+        if "contextual_vocab_correct_among_4_corrupted_5" in prompt:
+            target_ids, target_texts = zip(*targets[:5])
+            return UnderlinedVocabPlan(
+                subtype="contextual_correct_among_4_corrupted",
+                target_span_ids=list(target_ids),
+                target_span_texts=list(target_texts),
+                corrupted_replacements_by_span_id={
+                    target_ids[0]: "weaken",
+                    target_ids[2]: "ignore",
+                    target_ids[3]: "delay",
+                    target_ids[4]: "worsen",
+                },
+                answer_span_id=target_ids[1],
+                selection_basis_ko="이 자리는 원문이 유지한 효과를 가장 자연스럽게 이어 주는 표현이어야 합니다",
+                supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+                explanation="문맥상 하나만 원래 의미를 유지하고 나머지는 의미를 비틀고 있습니다.",
+            )
+        selected_span_id = targets[0][0] if targets else "P0"
+        selected_span_text = targets[0][1] if targets else "improve"
+        return ContextualVocabChoicePlan(
             selected_span_id=selected_span_id,
             selected_span_text=selected_span_text,
             choice_words=[
-                selected_span_text,
+                "strengthen",
                 "weaken",
                 "ignore",
                 "delay",
                 "worsen",
             ],
-            correct_choice=selected_span_text,
-            contextual_meaning_ko="이 자리에는 원문의 핵심 기능을 유지하는 표현이 와야 한다는 의미",
+            correct_choice="strengthen",
+            contextual_meaning_ko="이 자리는 안전을 더 높이는 방향의 표현이 와야 한다는 뜻입니다",
             supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-            explanation="문맥상 이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 합니다.",
+            explanation="문맥상 이 자리는 안전을 더 높이는 방향의 표현이 와야 합니다.",
         )
 
 
@@ -802,7 +814,7 @@ class PlannerTests(unittest.TestCase):
             structured_llm_factory=lambda schema: _VocabPlanner(),
         )
         self.assertEqual(result["status"], "planned")
-        self.assertIsInstance(result["plan"], VocabChoicePlan)
+        self.assertIsInstance(result["plan"], ContextualVocabChoicePlan)
 
     def test_vocab_planner_canonicalizes_target_texts_from_ids(self) -> None:
         state = {
@@ -873,7 +885,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Lexical-slot vocab targets", vocab_prompt)
         self.assertIn("Active subtype: contextual_vocab_choice_5", vocab_prompt)
         self.assertIn("same local slot", vocab_prompt)
-        self.assertIn("correct_choice` must exactly match `selected_span_text`", vocab_prompt)
+        self.assertIn("correct_choice` should be the best contextual fit", vocab_prompt)
         self.assertIn("Single-word grammar targets", grammar_prompt)
         self.assertIn("allowed_variants=", grammar_prompt)
         self.assertIn("real, standard English word", grammar_prompt)

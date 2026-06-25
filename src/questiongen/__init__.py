@@ -5,6 +5,7 @@ from .graph import compile_question_graph
 from .schemas import (
     BatchInputRow,
     BatchResultRow,
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     GeneratedQuestion,
@@ -14,6 +15,7 @@ from .schemas import (
     QuestionState,
     SentenceInsertionPlan,
     SpanUnit,
+    UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
     VocabPlan,
     make_initial_state,
@@ -22,6 +24,7 @@ from .schemas import (
 __all__ = [
     "BatchInputRow",
     "BatchResultRow",
+    "ContextualVocabChoicePlan",
     "FillInTheBlankPlan",
     "GrammarPlan",
     "GeneratedQuestion",
@@ -31,6 +34,7 @@ __all__ = [
     "QuestionState",
     "SentenceInsertionPlan",
     "SpanUnit",
+    "UnderlinedVocabPlan",
     "UnderlinedPhraseMeaningPlan",
     "VocabPlan",
     "DEMO_PARAGRAPH",

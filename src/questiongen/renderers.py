@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import re
+import random
 from typing import Any
 
 from .parsers import normalize_text
 from .question_types import QuestionTypeSpec
 from .schemas import (
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     GeneratedQuestion,
@@ -14,8 +17,8 @@ from .schemas import (
     PreparedSource,
     QuestionState,
     SentenceInsertionPlan,
+    UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabChoicePlan,
     VocabPlan,
 )
 from .targeting import (
@@ -248,8 +251,17 @@ def render_vocab(
                 plan=plan,
                 type_spec=type_spec,
             )
-        elif isinstance(plan, VocabChoicePlan):
+        elif isinstance(plan, ContextualVocabChoicePlan):
             generated = _build_vocab_choice_question(
+                original_question_number=state["OriginalQuestionNumber"],
+                batch_row_id=state["BatchRowId"],
+                source_paragraph=state["source_paragraph"],
+                prepared_source=prepared_source,
+                plan=plan,
+                type_spec=type_spec,
+            )
+        elif isinstance(plan, UnderlinedVocabPlan):
+            generated = _build_underlined_vocab_question(
                 original_question_number=state["OriginalQuestionNumber"],
                 batch_row_id=state["BatchRowId"],
                 source_paragraph=state["source_paragraph"],
@@ -616,7 +628,7 @@ def _build_vocab_choice_question(
     batch_row_id: int,
     source_paragraph: str,
     prepared_source: PreparedSource,
-    plan: VocabChoicePlan,
+    plan: ContextualVocabChoicePlan,
     type_spec: QuestionTypeSpec,
 ) -> GeneratedQuestion:
     if type_spec.choice_count != len(MARKER_CHOICES):
@@ -634,7 +646,11 @@ def _build_vocab_choice_question(
         + BLANK_MARKER
         + source_paragraph[selected_span.char_end :]
     )
-    choices = [normalize_english_choice(choice) for choice in plan.choice_words]
+    choices = _deterministically_shuffle_choices(
+        [normalize_english_choice(choice) for choice in plan.choice_words],
+        batch_row_id=batch_row_id,
+        subtype_key=type_spec.subtype_key,
+    )
     correct_choice = normalize_english_choice(plan.correct_choice)
     if correct_choice not in choices:
         raise ValueError("correct_choice must be included in choice_words.")
@@ -651,6 +667,54 @@ def _build_vocab_choice_question(
         question_stem=type_spec.question_stem,
         given_sentence=None,
         choices=choices,
+        answer=answer,
+        explanation=plan.explanation,
+    )
+
+
+def _build_underlined_vocab_question(
+    *,
+    original_question_number: str,
+    batch_row_id: int,
+    source_paragraph: str,
+    prepared_source: PreparedSource,
+    plan: UnderlinedVocabPlan,
+    type_spec: QuestionTypeSpec,
+) -> GeneratedQuestion:
+    if type_spec.choice_count != len(MARKER_CHOICES):
+        raise ValueError("Underlined vocab renderer expects exactly five targets.")
+
+    inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+    selected_spans = _ordered_target_spans(
+        inventory=inventory,
+        target_span_ids=plan.target_span_ids,
+    )
+    ordered_ids = [span.id for span in selected_spans]
+    if plan.answer_span_id not in ordered_ids:
+        raise ValueError("answer_span_id must be included in target_span_ids.")
+
+    student_paragraph = render_numbered_span_edits(
+        source_text=source_paragraph,
+        selected_spans=selected_spans,
+        replacement_by_span_id={
+            span_id: replacement.strip()
+            for span_id, replacement in plan.corrupted_replacements_by_span_id.items()
+        },
+        markers=MARKER_CHOICES[: type_spec.choice_count],
+    )
+    answer = MARKER_CHOICES[ordered_ids.index(plan.answer_span_id)]
+
+    return GeneratedQuestion(
+        OriginalQuestionNumber=original_question_number,
+        BatchRowId=batch_row_id,
+        QuestionFormatKey=type_spec.format_key,
+        QuestionSubtypeKey=type_spec.subtype_key,
+        QuestionSubtype=type_spec.subtype_label_ko,
+        QuestionType=type_spec.family_label_ko,
+        student_paragraph=student_paragraph,
+        question_stem=type_spec.question_stem,
+        given_sentence=None,
+        choices=MARKER_CHOICES[: type_spec.choice_count],
         answer=answer,
         explanation=plan.explanation,
     )
@@ -753,3 +817,16 @@ def _ordered_target_spans(
             raise ValueError(f"Unknown target span ID: {span_id}")
         selected_spans.append(span)
     return sorted(selected_spans, key=lambda span: (span.char_start, span.char_end))
+
+
+def _deterministically_shuffle_choices(
+    choices: list[str],
+    *,
+    batch_row_id: int,
+    subtype_key: str,
+) -> list[str]:
+    shuffled = list(choices)
+    seed_material = f"{batch_row_id}:{subtype_key}".encode("utf-8")
+    seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
+    random.Random(seed).shuffle(shuffled)
+    return shuffled

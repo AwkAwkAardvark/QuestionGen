@@ -10,7 +10,7 @@ from .paragraph_ordering import (
 )
 from .parsers import content_tokens, normalize_text
 from .question_types import QuestionTypeSpec
-from .schemas import PreparedSource, VocabPlan
+from .schemas import PreparedSource, UnderlinedVocabPlan, VocabPlan
 from .targeting import (
     allowed_verb_form_variants,
     fill_blank_connective_inventory,
@@ -473,6 +473,46 @@ Selection reminders:
 - Prefer targets marked `antonym_invertible=YES` when the subtype is the contextual error format.
 - Source-owned IDs remain the authoritative contract; exact source words will be resolved deterministically from those IDs.
 """.strip()
+    if type_spec.plan_schema is UnderlinedVocabPlan:
+        target_inventory = "\n".join(
+            (
+                f"- rank {rank}: {span.id}; score={span.priority_score}; cues={vocab_choice_target_cue_count(span)}; "
+                f"shape={span_shape_label(span)}; punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
+                f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
+                f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
+            )
+            for rank, span in enumerate(vocab_choice_inventory(prepared_source, type_spec.subtype_key), start=1)
+        )
+        return f"""
+You are planning an English exam contextual vocabulary question.
+
+Return only structured data matching the required schema.
+
+Question type:
+- Key: vocab
+- Label: {type_spec.family_label_ko}
+- Active subtype: {type_spec.subtype_key}
+- Student-facing stem: {type_spec.question_stem}
+
+Planning rules:
+{type_spec.planner_prompt}
+
+Source paragraph:
+{source_paragraph}
+
+Sentence units:
+{sentence_inventory}
+
+Lexical-slot vocab targets:
+{target_inventory}
+
+Selection reminders:
+- Follow the active subtype exactly and keep subtype identity explicit in the returned schema.
+- Select five distinct source-owned target IDs and preserve them in source order when you reason about the underlined passage.
+- Every corrupted replacement must stay readable in the same local slot, while becoming semantically wrong.
+- If the subtype asks for the correct remaining item, make sure only one answer is defensible from the passage evidence.
+- Source-owned IDs remain the authoritative contract; exact source wording will be resolved deterministically from those IDs.
+""".strip()
     target_inventory = "\n".join(
         (
             f"- rank {rank}: {span.id}; score={span.priority_score}; cues={vocab_choice_target_cue_count(span)}; "
@@ -510,7 +550,9 @@ Selection reminders:
 - Choose a clean lexical slot, not a clause fragment, technical label, proper noun, or grammar-only function word.
 - Prefer `shape=claim`, `shape=phrase`, or strong single-word targets with higher `cues=` counts.
 - Every option must stay readable in the same local slot.
-- `correct_choice` must exactly match `selected_span_text`; the other four options must be contextually wrong, not near-synonymous.
+- `selected_span_text` is the original source wording, but `correct_choice` should be the best contextual fit and may differ from the source wording.
+- Prefer a strong non-identical contextual replacement when one exists; exact source wording is allowed but not required.
+- The other four options must be contextually wrong, not near-synonymous or jointly defensible.
 - Source-owned IDs remain the authoritative contract; exact source wording will be resolved deterministically from those IDs.
 """.strip()
 
@@ -532,7 +574,8 @@ Previous validation error:
 Repair rules:
 - Return a fully corrected answer.
 - Re-check the active subtype and return a plan that matches that subtype's schema exactly.
-- If the active subtype is a choice-based vocab item, `correct_choice` must exactly match `selected_span_text`.
+- If the active subtype is a blank-choice vocab item, keep `selected_span_text` as the original source wording but set `correct_choice` to the best contextual lexical fit from `choice_words`.
+- If the active subtype is an underlined vocab item, re-check the number of selected targets, the corruption count, and whether `answer_span_id` matches the stem direction.
 - Re-check that every option stays in the same local slot and remains readable in context.
 - Re-check that the wrong options are semantically wrong, not merely rare, ungrammatical, or near-synonymous.
 - If the previous error mentions ambiguity or multiple defensible answers, rebuild all distractors from scratch around clearer polarity, scope, collocation, or discourse-role mismatches.

@@ -4,6 +4,7 @@ from typing import Any
 
 from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, rendered_gap_positions
 from .schemas import (
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     GeneratedQuestion,
@@ -12,8 +13,8 @@ from .schemas import (
     PreparedSource,
     QuestionState,
     SentenceInsertionPlan,
+    UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabChoicePlan,
     VocabPlan,
 )
 from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_choice_inventory, vocab_target_inventory
@@ -92,7 +93,7 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
         }
 
     if question_type_key == "vocab":
-        if not isinstance(plan, (VocabPlan, VocabChoicePlan)):
+        if not isinstance(plan, (ContextualVocabChoicePlan, UnderlinedVocabPlan, VocabPlan)):
             return {
                 "status": "rendering_error",
                 "errors": ["A vocab plan is required before explanation generation."],
@@ -276,7 +277,7 @@ def _build_fill_in_the_blank_context(
 
 def _build_vocab_context(
     prepared_source: PreparedSource,
-    plan: VocabPlan | VocabChoicePlan,
+    plan: VocabPlan | ContextualVocabChoicePlan | UnderlinedVocabPlan,
     generated: GeneratedQuestion,
 ) -> dict[str, str]:
     sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
@@ -299,19 +300,42 @@ def _build_vocab_context(
             "correct_marker": correct_marker,
         }
 
-    inventory = {span.id: span for span in vocab_choice_inventory(prepared_source)}
-    selected_span = inventory[plan.selected_span_id]
-    choice_index = MARKER_CHOICES.index(generated.answer)
-    correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
+    if isinstance(plan, ContextualVocabChoicePlan):
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, "contextual_vocab_choice_5")}
+        selected_span = inventory[plan.selected_span_id]
+        choice_index = MARKER_CHOICES.index(generated.answer)
+        correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
+        return {
+            "subtype": plan.subtype,
+            "selected_span_text": selected_span.text,
+            "original_word": selected_span.text,
+            "correct_choice": correct_choice,
+            "source_sentence": sentence_map.get(selected_span.sentence_unit_id or "", ""),
+            "supporting_evidence": plan.supporting_evidence,
+            "correct_marker": generated.answer,
+            "contextual_meaning_ko": plan.contextual_meaning_ko,
+        }
+
+    span_map = {span.id: span for span in prepared_source.span_units}
+    ordered_spans = sorted(
+        [span_map[span_id] for span_id in plan.target_span_ids if span_id in span_map],
+        key=lambda span: (span.char_start, span.char_end),
+    )
+    ordered_ids = [span.id for span in ordered_spans]
+    answer_span = span_map[plan.answer_span_id]
+    answer_marker = MARKER_CHOICES[ordered_ids.index(plan.answer_span_id)]
+    wrong_markers = [
+        f"{marker}의 '{plan.corrupted_replacements_by_span_id[span.id]}'"
+        for marker, span in zip(MARKER_CHOICES, ordered_spans)
+        if span.id in plan.corrupted_replacements_by_span_id
+    ]
     return {
         "subtype": plan.subtype,
-        "selected_span_text": selected_span.text,
-        "original_word": selected_span.text,
-        "correct_choice": correct_choice,
-        "source_sentence": sentence_map.get(selected_span.sentence_unit_id or "", ""),
+        "answer_span_text": answer_span.text,
         "supporting_evidence": plan.supporting_evidence,
-        "correct_marker": generated.answer,
-        "contextual_meaning_ko": plan.contextual_meaning_ko,
+        "correct_marker": answer_marker,
+        "selection_basis_ko": plan.selection_basis_ko,
+        "wrong_markers": ", ".join(wrong_markers),
     }
 
 
@@ -453,17 +477,44 @@ def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
 
 
 def _write_vocab_explanation(context: dict[str, str]) -> str:
-    if context.get("subtype") in {"contextual_choice", "contextual_correct_among_4_corrupted"}:
+    if context.get("subtype") == "contextual_choice":
         meaning = _prefer_teacher_note(
             context.get("contextual_meaning_ko"),
             "앞뒤 문맥과 맞는 뜻",
         )
+        source_wording = context["selected_span_text"]
+        correct_choice = context["correct_choice"]
+        source_note = (
+            f"원문의 '{source_wording}'도 같은 자리에 놓일 수 있는 표현이지만, "
+            if correct_choice != source_wording
+            else ""
+        )
         return (
             f"'{context['supporting_evidence']}'라는 단서를 보면 이 자리에는 "
             f"\"{meaning}\"에 해당하는 표현이 와야 합니다. "
-            f"원문의 자리에는 '{context['selected_span_text']}'가 가장 정확하게 들어가고, "
+            f"{source_note}정답인 '{correct_choice}'가 그 의미를 가장 정확하게 살립니다. "
             "다른 선택지들은 문맥의 방향이나 범위, 평가를 어긋나게 만듭니다. "
             f"따라서 정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+        )
+    if context.get("subtype") in {
+        "contextual_correct_among_4_corrupted",
+        "contextual_error_1_among_5",
+        "contextual_correct_among_3_corrupted",
+    }:
+        basis = _prefer_teacher_note(
+            context.get("selection_basis_ko"),
+            "이 자리의 문맥을 가장 자연스럽게 유지하는 표현",
+        )
+        if context["subtype"] == "contextual_error_1_among_5":
+            return (
+                f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
+                f"따라서 {context['correct_marker']}의 표현만 문맥에 어긋나고, "
+                "나머지 밑줄 어휘들은 글의 기본 의미를 유지합니다."
+            )
+        return (
+            f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
+            f"따라서 {context['correct_marker']}의 '{context['answer_span_text']}'만 문맥을 유지하고, "
+            f"{context['wrong_markers']}는 각각 의미의 방향이나 범위를 어긋나게 만듭니다."
         )
     basis = _prefer_teacher_note(
         context.get("correction_basis_ko"),

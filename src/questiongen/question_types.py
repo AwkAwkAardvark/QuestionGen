@@ -3,13 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .schemas import (
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
+    UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabChoicePlan,
     VocabPlan,
 )
 
@@ -22,6 +23,9 @@ UNDERLINED_PHRASE_MEANING_STEM = "다음 글의 밑줄 친 부분의 의미로 �
 FILL_IN_THE_BLANK_STEM = "다음 빈칸에 들어갈 말로 가장 적절한 것은?"
 VOCAB_ERROR_STEM = "다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 적절하지 않은 것은?"
 VOCAB_CHOICE_STEM = "다음 글의 빈칸에 들어갈 표현으로 가장 적절한 것은?"
+VOCAB_CORRECT_AMONG_4_STEM = "다음 글의 밑줄 친 부분 중, 문맥상 가장 적절한 것은?"
+VOCAB_ERROR_1_AMONG_5_STEM = "다음 글의 밑줄 친 부분 중, 문맥상 적절하지 않은 것은?"
+VOCAB_CORRECT_AMONG_3_STEM = "다음 글의 밑줄 친 부분 중, 문맥상 옳은 것은?"
 GRAMMAR_STEM = "다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?"
 
 SENTENCE_INSERTION_PLANNER_PROMPT = """
@@ -205,7 +209,8 @@ VOCAB_CHOICE_PLANNER_PROMPT = """
 - Treat `selected_span_id` as the authoritative source-owned contract and set `selected_span_text` to the exact source wording.
 - Create exactly five unique English lexical choices in `choice_words`.
 - Every option must fit the same local slot and remain readable in context.
-- Set `correct_choice` to the exact source wording from `selected_span_text`.
+- Set `correct_choice` to the best contextual lexical fit, not automatically to the exact source wording.
+- The exact source wording may remain correct, but prefer a strong non-identical contextual replacement when one is clearly better.
 - Keep distractors readable, passage-relevant, and clearly wrong for a semantic reason such as polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, or evaluative drift.
 - Do not use near-synonyms, loose paraphrases, or multiple defensible answers.
 - Set `contextual_meaning_ko` to a short Korean teacher-facing note describing the meaning the target position must carry.
@@ -216,20 +221,52 @@ VOCAB_CHOICE_PLANNER_PROMPT = """
 
 VOCAB_CORRECT_AMONG_4_CORRUPTED_PLANNER_PROMPT = """
 - Set `subtype` to `contextual_correct_among_4_corrupted`.
-- Select exactly one target ID from the provided lexical-slot vocab inventory.
-- The target may be one English word or one short lexical phrase, but it must stay within a single lexical slot rather than a clause.
+- Select exactly five unique target IDs from the provided lexical-slot vocab inventory.
+- The targets may be English words or short lexical phrases, but each must stay within a single lexical slot rather than a clause.
+- Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
+- Prefer high-centrality targets with strong cue counts and keep the five targets separated enough that each remains readable when underlined in passage order.
+- Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
+- Build `corrupted_replacements_by_span_id` so exactly four of the five selected targets are contextually corrupted.
+- Set `answer_span_id` to the one remaining underlined item that still fits the passage.
+- Every corrupted replacement must stay locally readable and slot-compatible, while failing semantically by polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
+- Do not use near-synonyms, loose paraphrases, rare-word difficulty alone, or replacements that become ungrammatical instead of semantically wrong.
+- The one remaining correct item must be defensible from passage meaning, not just because it is the only untouched-looking surface form.
+- Set `selection_basis_ko` to a short Korean teacher-facing note describing what meaning or role the correct remaining item preserves in context.
+- Copy `supporting_evidence` as a short exact passage snippet that supports the correct lexical choice.
+- Write the explanation entirely in Korean.
+""".strip()
+
+VOCAB_ERROR_1_AMONG_5_PLANNER_PROMPT = """
+- Set `subtype` to `contextual_error_1_among_5`.
+- Select exactly five unique target IDs from the provided lexical-slot vocab inventory.
+- The targets may be English words or short lexical phrases, but each must stay within a single lexical slot rather than a clause.
+- Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
+- Prefer targets with clear contextual recoverability and stable local readability after substitution.
+- Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
+- Build `corrupted_replacements_by_span_id` so exactly one of the five selected targets is corrupted.
+- Set `answer_span_id` to that one corrupted underlined item.
+- The corrupted replacement must remain locally readable and slot-compatible, but fail semantically by polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
+- Keep the other four underlined items unchanged from the source.
+- Do not use a near-synonym, loose paraphrase, rare-word difficulty alone, or an ungrammatical replacement.
+- Set `selection_basis_ko` to a short Korean teacher-facing note describing what meaning the correct original wording should preserve in context.
+- Copy `supporting_evidence` as a short exact passage snippet that supports the diagnosis.
+- Write the explanation entirely in Korean.
+""".strip()
+
+VOCAB_CORRECT_AMONG_3_CORRUPTED_PLANNER_PROMPT = """
+- Set `subtype` to `contextual_correct_among_3_corrupted`.
+- Select exactly five unique target IDs from the provided lexical-slot vocab inventory.
+- The targets may be English words or short lexical phrases, but each must stay within a single lexical slot rather than a clause.
 - Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
 - Prefer high-centrality targets whose meaning is recoverable from at least two independent contextual cues.
-- Treat `selected_span_id` as the authoritative source-owned contract and set `selected_span_text` to the exact source wording.
-- Create exactly five unique English lexical choices in `choice_words`.
-- Set `correct_choice` to the exact source wording from `selected_span_text`.
-- The other four options must be locally readable and slot-compatible, but contextually corrupted.
-- Make the four wrong options fail for clear semantic reasons such as polarity reversal, degree or scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
-- Do not use near-synonyms, loose paraphrases, rare-word difficulty alone, or options that become ungrammatical instead of semantically wrong.
-- Do not allow multiple defensible answers under mild paraphrase.
-- Set `contextual_meaning_ko` to a short Korean teacher-facing note describing the meaning the target position must carry.
-- Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment or `...라는 의미` note.
-- Copy `supporting_evidence` as a short exact passage snippet that supports the correct lexical choice.
+- Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
+- Build `corrupted_replacements_by_span_id` so exactly three of the five selected targets are contextually corrupted.
+- Exactly two underlined items will remain uncorrupted; set `answer_span_id` to the one that is most strongly and uniquely supported by the passage.
+- Use the extra uncorrupted item only if it is clearly weaker or less central than the answer under the passage evidence.
+- Every corrupted replacement must stay locally readable and slot-compatible, while failing semantically by polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
+- Do not use near-synonyms, loose paraphrases, rare-word difficulty alone, or replacements that become ungrammatical instead of semantically wrong.
+- Set `selection_basis_ko` to a short Korean teacher-facing note describing why the answer item alone remains the best contextual fit.
+- Copy `supporting_evidence` as a short exact passage snippet that supports that judgment.
 - Write the explanation entirely in Korean.
 """.strip()
 
@@ -536,7 +573,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             unit_level="span",
             renderer_key="vocab",
             validator_key="vocab",
-            plan_schema=VocabChoicePlan,
+            plan_schema=ContextualVocabChoicePlan,
             min_source_units=2,
             choice_count=5,
         ),
@@ -546,11 +583,39 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             subtype_label_ko="문맥상 옳은 어휘 선택",
             format_key="contextual_vocab_correct_among_4_corrupted_5",
             planner_prompt=VOCAB_CORRECT_AMONG_4_CORRUPTED_PLANNER_PROMPT,
-            question_stem=VOCAB_CHOICE_STEM,
+            question_stem=VOCAB_CORRECT_AMONG_4_STEM,
             unit_level="span",
             renderer_key="vocab",
             validator_key="vocab",
-            plan_schema=VocabChoicePlan,
+            plan_schema=UnderlinedVocabPlan,
+            min_source_units=2,
+            choice_count=5,
+        ),
+        _spec(
+            family_key="vocab",
+            subtype_key="contextual_vocab_error_1_among_5_5",
+            subtype_label_ko="문맥상 어휘 오류 찾기",
+            format_key="contextual_vocab_error_1_among_5_5",
+            planner_prompt=VOCAB_ERROR_1_AMONG_5_PLANNER_PROMPT,
+            question_stem=VOCAB_ERROR_1_AMONG_5_STEM,
+            unit_level="span",
+            renderer_key="vocab",
+            validator_key="vocab",
+            plan_schema=UnderlinedVocabPlan,
+            min_source_units=2,
+            choice_count=5,
+        ),
+        _spec(
+            family_key="vocab",
+            subtype_key="contextual_vocab_correct_among_3_corrupted_5",
+            subtype_label_ko="문맥상 남는 어휘 선택",
+            format_key="contextual_vocab_correct_among_3_corrupted_5",
+            planner_prompt=VOCAB_CORRECT_AMONG_3_CORRUPTED_PLANNER_PROMPT,
+            question_stem=VOCAB_CORRECT_AMONG_3_STEM,
+            unit_level="span",
+            renderer_key="vocab",
+            validator_key="vocab",
+            plan_schema=UnderlinedVocabPlan,
             min_source_units=2,
             choice_count=5,
         ),

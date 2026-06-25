@@ -11,12 +11,13 @@ from questiongen.graph import compile_question_graph
 from questiongen.planners import PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR, PLANNER_QUOTA_EXHAUSTED_ERROR
 from questiongen.schemas import (
     BatchInputRow,
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
+    UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabChoicePlan,
     VocabPlan,
 )
 from questiongen.targeting import allowed_verb_form_variants
@@ -30,7 +31,8 @@ class _StubPlanner:
             | ParagraphOrderingPlan
             | UnderlinedPhraseMeaningPlan
             | FillInTheBlankPlan
-            | VocabChoicePlan
+            | ContextualVocabChoicePlan
+            | UnderlinedVocabPlan
             | VocabPlan
             | GrammarPlan
         ],
@@ -44,7 +46,8 @@ class _StubPlanner:
         | ParagraphOrderingPlan
         | UnderlinedPhraseMeaningPlan
         | FillInTheBlankPlan
-        | VocabChoicePlan
+        | ContextualVocabChoicePlan
+        | UnderlinedVocabPlan
         | VocabPlan
         | GrammarPlan
     ):
@@ -85,29 +88,62 @@ class _StubPlanner:
                 supporting_evidence=selected_span_text,
                 explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
             )
-        if self.output_schema is VocabChoicePlan:
+        if self.output_schema is ContextualVocabChoicePlan:
             match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
             selected_span_id = match.group(1) if match else "P0"
             selected_span_text = match.group(2) if match else "improve"
             return self.output_schema(
-                subtype=(
-                    "contextual_correct_among_4_corrupted"
-                    if "contextual_vocab_correct_among_4_corrupted_5" in prompt
-                    else "contextual_choice"
-                ),
                 selected_span_id=selected_span_id,
                 selected_span_text=selected_span_text,
                 choice_words=[
-                    selected_span_text,
+                    "strengthen",
                     "weaken",
                     "ignore",
                     "delay",
                     "worsen",
                 ],
-                correct_choice=selected_span_text,
-                contextual_meaning_ko="이 자리에는 원문의 핵심 기능을 유지하는 표현이 와야 한다는 의미",
+                correct_choice="strengthen",
+                contextual_meaning_ko="이 자리는 안전을 더 높이는 방향의 표현이 와야 한다는 뜻입니다",
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-                explanation="문맥상 이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 합니다.",
+                explanation="문맥상 이 자리는 안전을 더 높이는 방향의 표현이 와야 합니다.",
+            )
+        if self.output_schema is UnderlinedVocabPlan:
+            targets = _extract_ranked_lexical_targets(prompt)
+            target_ids, target_texts = zip(*targets[:5])
+            subtype = (
+                "contextual_correct_among_4_corrupted"
+                if "contextual_vocab_correct_among_4_corrupted_5" in prompt
+                else "contextual_error_1_among_5"
+                if "contextual_vocab_error_1_among_5_5" in prompt
+                else "contextual_correct_among_3_corrupted"
+            )
+            if subtype == "contextual_correct_among_4_corrupted":
+                replacements = {
+                    target_ids[0]: "weaken",
+                    target_ids[2]: "ignore",
+                    target_ids[3]: "delay",
+                    target_ids[4]: "worsen",
+                }
+                answer_span_id = target_ids[1]
+            elif subtype == "contextual_error_1_among_5":
+                replacements = {target_ids[2]: "ignore"}
+                answer_span_id = target_ids[2]
+            else:
+                replacements = {
+                    target_ids[0]: "weaken",
+                    target_ids[3]: "delay",
+                    target_ids[4]: "worsen",
+                }
+                answer_span_id = target_ids[1]
+            return self.output_schema(
+                subtype=subtype,
+                target_span_ids=list(target_ids),
+                target_span_texts=list(target_texts),
+                corrupted_replacements_by_span_id=replacements,
+                answer_span_id=answer_span_id,
+                selection_basis_ko="문맥상 주민 안전을 높이는 원래 기능을 가장 자연스럽게 유지하는 표현이어야 합니다",
+                supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+                explanation="문맥상 정답만 원래 의미를 유지하고 나머지는 의미를 비틀고 있습니다.",
             )
         if self.output_schema is GrammarPlan:
             targets = _extract_ranked_single_word_targets(prompt)
@@ -146,6 +182,10 @@ class _StubPlanner:
 
 def _extract_ranked_single_word_targets(prompt: str) -> list[tuple[str, str]]:
     return re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)
+
+
+def _extract_ranked_lexical_targets(prompt: str) -> list[tuple[str, str]]:
+    return re.findall(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
 
 
 class _FailingRunner:
@@ -246,7 +286,7 @@ class BatchTests(unittest.TestCase):
             ],
             self.runner,
         )
-        self.assertEqual(len(results), 17)
+        self.assertEqual(len(results), 19)
         by_subtype = {result.QuestionSubtypeKey: result for result in results}
         self.assertEqual(by_subtype["sentence_insertion_5_gaps"].status, "validation_passed")
         self.assertEqual(by_subtype["abc_ordering_after_intro"].status, "qtype_incompatibility_error")
@@ -255,7 +295,9 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(by_subtype["blank_connective_relation_5_choices"].status, "validation_passed")
         self.assertEqual(by_subtype["blank_summary_completion_5_choices"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["contextual_vocab_choice_5"].status, "validation_passed")
-        self.assertEqual(by_subtype["contextual_vocab_correct_among_4_corrupted_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_correct_among_4_corrupted_5"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_5"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["contextual_vocab_correct_among_3_corrupted_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["grammar_error_verb_form_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_subject_verb_agreement_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["grammar_error_finite_nonfinite_5"].status, "validation_passed")

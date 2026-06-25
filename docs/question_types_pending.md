@@ -8,7 +8,11 @@ Current live registry:
 - `paragraph_ordering`
 - `underlined_phrase_meaning` (`underlined_phrase_meaning_5_ko` with `[밑줄]...[/밑줄]` export markers)
 - `fill_in_the_blank` (`blank_inference_proposition_5_choices` with the `_____` blank marker)
-- `vocab` (`contextual_vocab_error_5` with five numbered single-word underlines, opposition-biased target selection, and one contextual corruption)
+- `vocab`
+  - `contextual_vocab_choice_5`
+  - `contextual_vocab_correct_among_4_corrupted_5`
+  - `contextual_vocab_error_1_among_5_5`
+  - `contextual_vocab_correct_among_3_corrupted_5`
 - `grammar` (`grammar_error_5` with five numbered single-word verb-form targets and one controlled corruption)
 
 Current dormant implemented family:
@@ -151,46 +155,36 @@ Current recommendation on registry shape:
 
 ### `vocab`
 
-- First format key: `contextual_vocab_error_5`
-- Korean stem direction:
-  - likely `다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 적절하지 않은 것은?`
-  - treat the first release as contextual lexical-fit rather than vocabulary-definition recall
-- Output shape:
-  - original passage with 5 numbered underlined targets
-  - one target deterministically replaced with a grammatically possible but contextually wrong word or short phrase
-  - marker answer `①`-`⑤`
-  - Korean explanation
-- Infrastructure:
-  - span-based, multi-target
-- Expected incompatibility patterns:
-  - fewer than 5 good lexical targets
-  - no candidate word strongly constrained by passage logic
-  - replacement becomes too obvious or too arbitrary
-  - vocabulary profile too technical or too flat
-  - inserted corruption creates more than one arguable wrong answer
-- Major risks:
-  - needs stronger span prep than the single-target types
-  - wrong replacement must remain plausible
-  - validation likely needs lexical-quality and grammar-preservation checks beyond current deterministic rules
-- Current live hardening direction:
-  - prefer targets whose corruption can reverse or clearly distort passage meaning
-  - expose only a conservative planner-facing opposition signal rather than broad prefix-based guessing
-  - reject obvious near-synonym substitutions deterministically before any broader subtype expansion
-- User confirmation still needed:
-  - whether short phrases are allowed as first-release targets or only single words
-
-Possible later variants under the same broad family:
-
-- contextual vocab error
-- contextual vocab choice
-- narrower failure modes such as polarity, semantic-role, scope, or collocation errors
-
-Current recommendation on registry shape:
-
-- Do not split this family into multiple live registry keys yet.
-- Keep `vocab` as the broad family key for now.
-- Put the first supported subtype in `format_key`, starting with `contextual_vocab_error_5`.
-- Revisit narrower registry keys only if later product needs clearly different launch behavior or evaluation surfaces.
+- Current live family shape:
+  - broad key remains `vocab`
+  - baseline blank-choice subtype: `contextual_vocab_choice_5`
+  - hard underlined subtypes:
+    - `contextual_vocab_correct_among_4_corrupted_5`
+    - `contextual_vocab_error_1_among_5_5`
+    - `contextual_vocab_correct_among_3_corrupted_5`
+- Current live policy:
+  - treat the baseline subtype as contextual lexical substitution, not source restoration
+  - allow the correct answer to differ from the original source wording when a stronger contextual replacement exists
+  - keep the hard family as five numbered underlined targets rendered in source order
+  - keep all live subtypes single-answer exports under the broad family key
+- Current deterministic contract:
+  - blank-choice vocab stores both original source wording and best-fit answer wording
+  - blank-choice option order is deterministically shuffled from `BatchRowId` plus subtype key
+  - hard-family plans carry explicit target IDs, source texts, corruption maps, subtype direction, and answer span ID
+  - validators reject punctuation-crossing, clause-like, proper-noun, technical-label, function-word, near-synonym, and multiple-defensible-answer failures
+- Current incompatibility patterns:
+  - fewer than 5 strong lexical-slot targets for hard subtypes
+  - fewer than 1 strong lexical-slot target for the blank-choice subtype
+  - target cue count too weak for stable contextual recovery
+  - extra untouched item not uniquely weaker in `contextual_vocab_correct_among_3_corrupted_5`
+- Possible later subtype directions within the same broad family:
+  - stronger phrase-focused contextual substitution, where all five options stay phrase-level rather than mixing word and phrase slots
+  - narrower underlined corruption families keyed to one failure mode such as polarity reversal, collocation mismatch, or discourse-role drift
+  - a stricter “best paraphrase in context” subtype that forbids the unchanged source wording entirely when a genuine contextual substitute exists
+- Registry-shape recommendation:
+  - keep `vocab` as the broad family key
+  - keep concrete subtype behavior in `format_key` / `QuestionSubtypeKey`
+  - do not split future vocab work into separate broad registry keys unless launcher behavior truly needs it
 
 ### `grammar`
 
@@ -463,8 +457,8 @@ Useful later, but not yet stable enough to adopt as schema truth:
 Current recommendation:
 
 - Keep the broad key `vocab` for now.
-- Treat the first implementation as `contextual_vocab_error`, encoded through `format_key` rather than a separate live registry key.
-- Use prompt tightening to force context-constrained target selection and controlled wrong-word replacement before doing any major schema rewrite.
+- Keep the live subtype fan-out under that broad key instead of splitting registry keys.
+- Use future vocab work to sharpen subtype semantics and quality gates rather than reopening the broad-family contract.
 
 ### `grammar`
 

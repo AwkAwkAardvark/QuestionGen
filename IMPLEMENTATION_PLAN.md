@@ -177,10 +177,12 @@
 - [x] `vocab`
   - rollout policy: live now with broad-key preservation and subtype fan-out
   - live subtype set:
-    - `contextual_vocab_error_5`
     - `contextual_vocab_choice_5`
-  - shipped policy: broad-family runs now produce both the five-target corruption item and the single-target lexical choice item
-  - current hardening policy: renderer, validator, and explanation writer resolve exact source words from selected target IDs, prefer opposition-capable targets through conservative planner hints, deterministically reject obvious near-synonym corruptions, and favor evidence-led teacher explanations over generic boilerplate
+    - `contextual_vocab_correct_among_4_corrupted_5`
+    - `contextual_vocab_error_1_among_5_5`
+    - `contextual_vocab_correct_among_3_corrupted_5`
+  - shipped policy: broad-family runs now produce one blank-choice contextual substitution subtype plus three underlined multi-target corruption/diagnosis subtypes
+  - current hardening policy: the baseline blank-choice subtype stores both the original source wording and the best contextual answer, renderer choice order is deterministically shuffled from `BatchRowId` and subtype key, the hard family keeps explicit corruption maps and stem directions, and validators reject weak targets, near-synonym drift, and non-unique remaining answers
 - [x] `grammar`
   - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
   - live subtype set:
@@ -198,7 +200,7 @@
 ### Multi-span acceptance
 
 - [ ] The span layer can support numbered multi-target rendering without destabilizing earlier single-span types.
-- [x] The validator can prove there is exactly one structurally rendered corruption.
+- [x] The validator can prove subtype-specific corruption counts and a unique answer contract for the live multi-span vocab and grammar families.
 - [ ] Real-batch outputs remain diagnostically readable in CSV/JSON when passages do not fit these families.
 
 ## Wave 8: Dormant Affective Family

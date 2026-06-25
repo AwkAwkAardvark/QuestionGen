@@ -19,11 +19,19 @@ from .prompts import (
     build_vocab_repair_prompt,
 )
 from .question_types import QuestionTypeSpec
-from .schemas import BaseModel, GrammarPlan, PreparedSource, QuestionState, VocabChoicePlan, VocabPlan, coerce_model
+from .schemas import (
+    BaseModel,
+    ContextualVocabChoicePlan,
+    GrammarPlan,
+    PreparedSource,
+    QuestionState,
+    UnderlinedVocabPlan,
+    VocabPlan,
+    coerce_model,
+)
 from .targeting import (
     grammar_subtype_inventory,
     grammar_target_inventory,
-    normalize_english_choice,
     vocab_choice_inventory,
     vocab_target_inventory,
 )
@@ -163,25 +171,23 @@ def _canonicalize_source_owned_plan(
             )
         return plan
 
-    if isinstance(plan, VocabChoicePlan):
+    if isinstance(plan, ContextualVocabChoicePlan):
         inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
         selected_span = inventory.get(plan.selected_span_id)
         if selected_span is not None:
-            old_correct_choice = plan.correct_choice
-            old_selected_text = plan.selected_span_text
             return plan.model_copy(
                 update={
                     "selected_span_text": selected_span.text,
-                    "correct_choice": selected_span.text,
-                    "choice_words": [
-                        selected_span.text
-                        if normalize_english_choice(choice) in {
-                            normalize_english_choice(old_correct_choice),
-                            normalize_english_choice(old_selected_text),
-                        }
-                        else choice
-                        for choice in plan.choice_words
-                    ],
+                }
+            )
+        return plan
+
+    if isinstance(plan, UnderlinedVocabPlan):
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+        if len(plan.target_span_ids) == 5 and all(span_id in inventory for span_id in plan.target_span_ids):
+            return plan.model_copy(
+                update={
+                    "target_span_texts": [inventory[span_id].text for span_id in plan.target_span_ids],
                 }
             )
         return plan

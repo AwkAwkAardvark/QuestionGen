@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
+import random
 import re
 from typing import Any
 
@@ -28,6 +30,7 @@ from .renderers import (
     rendered_gap_positions,
 )
 from .schemas import (
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     GeneratedQuestion,
@@ -36,8 +39,8 @@ from .schemas import (
     PreparedSource,
     QuestionState,
     SentenceInsertionPlan,
+    UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabChoicePlan,
     VocabPlan,
 )
 from .targeting import (
@@ -742,27 +745,29 @@ def _validate_vocab_plan(
     plan: object,
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
-    if isinstance(plan, VocabChoicePlan):
+    if isinstance(plan, ContextualVocabChoicePlan):
         inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
         selected_span = inventory.get(plan.selected_span_id)
         if selected_span is None:
             return [f"Unknown selected span ID: {plan.selected_span_id}"]
         errors: list[str] = []
-        expected_plan_subtype = (
-            "contextual_correct_among_4_corrupted"
-            if type_spec.subtype_key == "contextual_vocab_correct_among_4_corrupted_5"
-            else "contextual_choice"
-        )
-        if plan.subtype != expected_plan_subtype:
-            errors.append(f"VocabChoicePlan subtype must be {expected_plan_subtype} for {type_spec.subtype_key}.")
+        if plan.subtype != "contextual_choice":
+            errors.append("ContextualVocabChoicePlan subtype must be contextual_choice.")
         if plan.selected_span_text != selected_span.text:
-            errors.append("VocabChoicePlan selected_span_text must exactly match the selected span text.")
+            errors.append("ContextualVocabChoicePlan selected_span_text must exactly match the selected span text.")
         if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
-            errors.append("VocabChoicePlan supporting_evidence must be copied from the source passage.")
+            errors.append("ContextualVocabChoicePlan supporting_evidence must be copied from the source passage.")
         target_error = vocab_choice_target_quality_error(selected_span, subtype_key=type_spec.subtype_key)
         if target_error is not None:
             errors.append(target_error)
         errors.extend(_validate_vocab_choice_options(selected_span.text, plan.choice_words, plan.correct_choice))
+        return errors
+    if isinstance(plan, UnderlinedVocabPlan):
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+        if any(span_id not in inventory for span_id in plan.target_span_ids):
+            missing_ids = [span_id for span_id in plan.target_span_ids if span_id not in inventory]
+            return [f"Unknown target span IDs: {', '.join(missing_ids)}"]
+        errors = _validate_underlined_vocab_plan(prepared_source, plan, type_spec, inventory)
         return errors
     if not isinstance(plan, VocabPlan):
         return ["VocabPlan is missing for deterministic plan checks."]
@@ -784,9 +789,13 @@ def _validate_vocab_compatibility(
     prepared_source: PreparedSource,
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
-    if type_spec.plan_schema is VocabChoicePlan:
+    if type_spec.plan_schema is ContextualVocabChoicePlan:
         if len(vocab_choice_inventory(prepared_source, type_spec.subtype_key)) < 1:
             return [f"Passage does not contain a workable lexical-slot vocab target for {type_spec.subtype_key}."]
+        return []
+    if type_spec.plan_schema is UnderlinedVocabPlan:
+        if len(vocab_choice_inventory(prepared_source, type_spec.subtype_key)) < 5:
+            return [f"Passage does not contain five workable lexical-slot vocab targets for {type_spec.subtype_key}."]
         return []
     if len(vocab_target_inventory(prepared_source)) < 5:
         return ["Passage does not contain five workable single-word vocab targets."]
@@ -799,27 +808,140 @@ def _validate_vocab_choice_options(
     correct_choice: str,
 ) -> list[str]:
     errors: list[str] = []
-    normalized_selected = normalize_english_choice(selected_span_text)
     normalized_correct = normalize_english_choice(correct_choice)
-    if normalized_correct != normalized_selected:
-        errors.append("VocabChoicePlan correct_choice must exactly match selected_span_text.")
+    normalized_selected = normalize_english_choice(selected_span_text)
+    normalized_choices = [normalize_english_choice(choice) for choice in choice_words]
+    if normalized_correct not in normalized_choices:
+        errors.append("ContextualVocabChoicePlan correct_choice must be included in choice_words.")
+    if normalized_correct != normalized_selected and normalized_selected in normalized_choices:
+        errors.append(
+            "ContextualVocabChoicePlan must not keep the unchanged original wording as a second defensible option when correct_choice differs."
+        )
     selected_token_count = len(" ".join(selected_span_text.split()).split())
     if not is_short_english_lexical_choice(selected_span_text):
-        errors.append("VocabChoicePlan selected_span_text must be a short readable English lexical choice.")
+        errors.append("ContextualVocabChoicePlan selected_span_text must be a short readable English lexical choice.")
     for choice in choice_words:
         if not is_short_english_lexical_choice(choice):
-            errors.append(f"VocabChoicePlan choice '{choice}' is not a short readable English lexical choice.")
+            errors.append(f"ContextualVocabChoicePlan choice '{choice}' is not a short readable English lexical choice.")
             continue
-        choice_token_count = len(choice.split())
-        if selected_token_count == 1 and choice_token_count != 1:
-            errors.append("VocabChoicePlan options must preserve a single-word slot when the target is one word.")
-        if selected_token_count > 1 and abs(choice_token_count - selected_token_count) > 1:
-            errors.append("VocabChoicePlan options must preserve the same short lexical slot width.")
-        if normalize_english_choice(choice) != normalized_selected and is_auxiliary_like(choice):
-            errors.append("VocabChoicePlan distractors must not collapse into auxiliary-only grammar choices.")
-        if normalize_english_choice(choice) != normalized_selected and is_near_synonym_choice(selected_span_text, choice):
-            errors.append("VocabChoicePlan distractors must not be near-synonyms of the correct choice.")
+        errors.extend(_validate_vocab_slot_compatibility(selected_span_text, choice, field_prefix="ContextualVocabChoicePlan"))
+        normalized_choice = normalize_english_choice(choice)
+        if normalized_choice == normalized_correct:
+            continue
+        if is_near_synonym_choice(correct_choice, choice) or is_near_synonym_choice(selected_span_text, choice):
+            errors.append("ContextualVocabChoicePlan distractors must not be near-synonyms of the correct answer.")
+    if selected_token_count and len(set(normalized_choices)) != len(normalized_choices):
+        errors.append("ContextualVocabChoicePlan choice_words must remain unique after normalization.")
     return errors
+
+
+def _validate_underlined_vocab_plan(
+    prepared_source: PreparedSource,
+    plan: UnderlinedVocabPlan,
+    type_spec: QuestionTypeSpec,
+    inventory: dict[str, Any],
+) -> list[str]:
+    errors: list[str] = []
+    expected_plan_subtype = {
+        "contextual_vocab_correct_among_4_corrupted_5": "contextual_correct_among_4_corrupted",
+        "contextual_vocab_error_1_among_5_5": "contextual_error_1_among_5",
+        "contextual_vocab_correct_among_3_corrupted_5": "contextual_correct_among_3_corrupted",
+    }[type_spec.subtype_key]
+    if plan.subtype != expected_plan_subtype:
+        errors.append(f"UnderlinedVocabPlan subtype must be {expected_plan_subtype} for {type_spec.subtype_key}.")
+
+    ordered_spans = sorted(
+        [inventory[span_id] for span_id in plan.target_span_ids],
+        key=lambda span: (span.char_start, span.char_end),
+    )
+    expected_texts = [inventory[span_id].text for span_id in plan.target_span_ids]
+    if plan.target_span_texts != expected_texts:
+        errors.append("UnderlinedVocabPlan target_span_texts must exactly match the selected source span texts.")
+
+    if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
+        errors.append("UnderlinedVocabPlan supporting_evidence must be copied from the source passage.")
+
+    corrupted_ids = set(plan.corrupted_replacements_by_span_id)
+    expected_corruption_count = {
+        "contextual_correct_among_4_corrupted": 4,
+        "contextual_error_1_among_5": 1,
+        "contextual_correct_among_3_corrupted": 3,
+    }[plan.subtype]
+    if len(corrupted_ids) != expected_corruption_count:
+        errors.append(
+            f"UnderlinedVocabPlan must contain exactly {expected_corruption_count} corrupted replacements for {plan.subtype}."
+        )
+
+    rendered_texts: list[str] = []
+    for span in ordered_spans:
+        target_error = vocab_choice_target_quality_error(span, subtype_key=type_spec.subtype_key)
+        if target_error is not None:
+            errors.append(target_error)
+        replacement = plan.corrupted_replacements_by_span_id.get(span.id)
+        rendered_text = replacement.strip() if replacement is not None else span.text
+        rendered_texts.append(normalize_english_choice(rendered_text))
+        if replacement is None:
+            continue
+        if normalize_english_choice(replacement) == normalize_english_choice(span.text):
+            errors.append(f"UnderlinedVocabPlan replacement for {span.id} must differ from the source text.")
+        errors.extend(_validate_vocab_slot_compatibility(span.text, replacement, field_prefix="UnderlinedVocabPlan"))
+        if is_near_synonym_choice(span.text, replacement):
+            errors.append("UnderlinedVocabPlan corrupted replacements must not be near-synonyms of the source wording.")
+
+    if len(set(rendered_texts)) != len(rendered_texts):
+        errors.append("UnderlinedVocabPlan rendered underlined items must remain unique after corruption.")
+
+    if plan.subtype == "contextual_error_1_among_5":
+        if plan.answer_span_id not in corrupted_ids:
+            errors.append("UnderlinedVocabPlan answer_span_id must be the one corrupted item for contextual_error_1_among_5.")
+    else:
+        if plan.answer_span_id in corrupted_ids:
+            errors.append("UnderlinedVocabPlan answer_span_id must remain uncorrupted for pick-the-correct subtypes.")
+
+    if plan.subtype == "contextual_correct_among_3_corrupted":
+        untouched_spans = [span for span in ordered_spans if span.id not in corrupted_ids]
+        if len(untouched_spans) == 2:
+            answer_span = inventory[plan.answer_span_id]
+            alternate_span = next(span for span in untouched_spans if span.id != plan.answer_span_id)
+            answer_strength = (vocab_choice_target_cue_count(answer_span), answer_span.priority_score)
+            alternate_strength = (vocab_choice_target_cue_count(alternate_span), alternate_span.priority_score)
+            if answer_strength <= alternate_strength:
+                errors.append(
+                    "UnderlinedVocabPlan contextual_correct_among_3_corrupted must leave one uniquely stronger correct item than the extra untouched distractor."
+                )
+
+    return errors
+
+
+def _validate_vocab_slot_compatibility(
+    source_text: str,
+    candidate_text: str,
+    *,
+    field_prefix: str,
+) -> list[str]:
+    errors: list[str] = []
+    source_token_count = len(" ".join(source_text.split()).split())
+    candidate_token_count = len(candidate_text.split())
+    if source_token_count == 1 and candidate_token_count != 1:
+        errors.append(f"{field_prefix} options must preserve a single-word slot when the target is one word.")
+    if source_token_count > 1 and abs(candidate_token_count - source_token_count) > 1:
+        errors.append(f"{field_prefix} options must preserve the same short lexical slot width.")
+    if normalize_english_choice(candidate_text) != normalize_english_choice(source_text) and is_auxiliary_like(candidate_text):
+        errors.append(f"{field_prefix} distractors must not collapse into auxiliary-only grammar choices.")
+    return errors
+
+
+def _deterministically_shuffle_choices(
+    choices: list[str],
+    *,
+    batch_row_id: int,
+    subtype_key: str,
+) -> list[str]:
+    shuffled = list(choices)
+    seed_material = f"{batch_row_id}:{subtype_key}".encode("utf-8")
+    seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
+    random.Random(seed).shuffle(shuffled)
+    return shuffled
 
 
 def _validate_grammar_plan(
@@ -1130,7 +1252,7 @@ def _validate_vocab_state(
 
     if prepared_source is None:
         return ["PreparedSource is missing for validation."]
-    if not isinstance(plan, (VocabPlan, VocabChoicePlan)):
+    if not isinstance(plan, (VocabPlan, ContextualVocabChoicePlan, UnderlinedVocabPlan)):
         return ["A vocab plan is missing for validation."]
     if not isinstance(generated, GeneratedQuestion):
         return ["GeneratedQuestion is missing for validation."]
@@ -1453,17 +1575,21 @@ def validate_fill_in_the_blank_output(
 def validate_vocab_output(
     *,
     prepared_source: PreparedSource,
-    plan: VocabPlan | VocabChoicePlan,
+    plan: VocabPlan | ContextualVocabChoicePlan | UnderlinedVocabPlan,
     generated: GeneratedQuestion,
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
-    if isinstance(plan, VocabChoicePlan):
+    if isinstance(plan, ContextualVocabChoicePlan):
         inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
         selected_span = inventory.get(plan.selected_span_id)
         if selected_span is None:
             return [f"Unknown selected span ID: {plan.selected_span_id}"]
         errors: list[str] = []
-        expected_choices = [normalize_english_choice(choice) for choice in plan.choice_words]
+        expected_choices = _deterministically_shuffle_choices(
+            [normalize_english_choice(choice) for choice in plan.choice_words],
+            batch_row_id=generated.BatchRowId,
+            subtype_key=type_spec.subtype_key,
+        )
         errors.extend(_validate_vocab_choice_options(selected_span.text, plan.choice_words, plan.correct_choice))
         if generated.question_stem != type_spec.question_stem:
             errors.append("question_stem does not match the question type metadata.")
@@ -1481,6 +1607,46 @@ def validate_vocab_output(
         )
         if generated.student_paragraph != expected_paragraph:
             errors.append("student_paragraph must preserve the source except for one exact vocab-choice blank replacement.")
+        errors.extend(
+            validate_teacher_facing_explanation(
+                generated.explanation,
+                question_type_key="vocab",
+            )
+        )
+        return errors
+    if isinstance(plan, UnderlinedVocabPlan):
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+        if any(span_id not in inventory for span_id in plan.target_span_ids):
+            missing_ids = [span_id for span_id in plan.target_span_ids if span_id not in inventory]
+            return [f"Unknown target span IDs: {', '.join(missing_ids)}"]
+        errors = _validate_underlined_vocab_plan(prepared_source, plan, type_spec, inventory)
+        ordered_spans = sorted(
+            [inventory[span_id] for span_id in plan.target_span_ids],
+            key=lambda span: (span.char_start, span.char_end),
+        )
+        ordered_ids = [span.id for span in ordered_spans]
+        if generated.question_stem != type_spec.question_stem:
+            errors.append("question_stem does not match the question type metadata.")
+        if generated.given_sentence is not None:
+            errors.append("given_sentence must be None for vocab.")
+        if generated.choices is None or generated.choices != MARKER_CHOICES[: type_spec.choice_count]:
+            errors.append(f"choices must be exactly {MARKER_CHOICES[: type_spec.choice_count]}.")
+        expected_answer = MARKER_CHOICES[ordered_ids.index(plan.answer_span_id)]
+        if generated.answer != expected_answer:
+            errors.append(
+                f"answer should map to the correct underlined vocab item as {expected_answer}, got {generated.answer}."
+            )
+        expected_paragraph = render_numbered_span_edits(
+            source_text=prepared_source.source_text,
+            selected_spans=ordered_spans,
+            replacement_by_span_id={
+                span_id: replacement.strip()
+                for span_id, replacement in plan.corrupted_replacements_by_span_id.items()
+            },
+            markers=MARKER_CHOICES[: type_spec.choice_count],
+        )
+        if generated.student_paragraph != expected_paragraph:
+            errors.append("student_paragraph must preserve the source except for the planned underlined vocab replacements.")
         errors.extend(
             validate_teacher_facing_explanation(
                 generated.explanation,

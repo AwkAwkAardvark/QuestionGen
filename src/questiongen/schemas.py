@@ -370,8 +370,8 @@ class VocabPlan(BaseModel):
         return self
 
 
-class VocabChoicePlan(BaseModel):
-    subtype: Literal["contextual_choice", "contextual_correct_among_4_corrupted"] = "contextual_choice"
+class ContextualVocabChoicePlan(BaseModel):
+    subtype: Literal["contextual_choice"] = "contextual_choice"
     selected_span_id: str
     selected_span_text: str
     choice_words: list[str] = Field(default_factory=list)
@@ -381,34 +381,96 @@ class VocabChoicePlan(BaseModel):
     explanation: str
 
     @model_validator(mode="after")
-    def _validate_plan(self) -> VocabChoicePlan:
+    def _validate_plan(self) -> ContextualVocabChoicePlan:
         if not self.selected_span_id:
-            raise ValueError("VocabChoicePlan selected_span_id is required.")
+            raise ValueError("ContextualVocabChoicePlan selected_span_id is required.")
         if not self.selected_span_text or not self.selected_span_text.strip():
-            raise ValueError("VocabChoicePlan selected_span_text is required.")
+            raise ValueError("ContextualVocabChoicePlan selected_span_text is required.")
         if len(self.choice_words) != 5:
-            raise ValueError("VocabChoicePlan requires exactly five choice_words.")
+            raise ValueError("ContextualVocabChoicePlan requires exactly five choice_words.")
         normalized_choices = [" ".join(text.split()).lower() for text in self.choice_words]
         if len(set(normalized_choices)) != 5:
-            raise ValueError("VocabChoicePlan choice_words must be unique.")
+            raise ValueError("ContextualVocabChoicePlan choice_words must be unique.")
         if any(not _is_short_english_lexical_choice(choice) for choice in self.choice_words):
-            raise ValueError("VocabChoicePlan choice_words must be short readable English lexical choices.")
-        normalized_selected = " ".join(self.selected_span_text.split()).lower()
+            raise ValueError("ContextualVocabChoicePlan choice_words must be short readable English lexical choices.")
         normalized_correct = " ".join(self.correct_choice.split()).lower()
         if normalized_correct not in normalized_choices:
-            raise ValueError("VocabChoicePlan correct_choice must be included in choice_words.")
-        if normalized_correct != normalized_selected:
-            raise ValueError("VocabChoicePlan correct_choice must match selected_span_text exactly.")
+            raise ValueError("ContextualVocabChoicePlan correct_choice must be included in choice_words.")
         if not self.contextual_meaning_ko or not self.contextual_meaning_ko.strip():
-            raise ValueError("VocabChoicePlan contextual_meaning_ko is required.")
+            raise ValueError("ContextualVocabChoicePlan contextual_meaning_ko is required.")
         if not _HANGUL_RE.search(self.contextual_meaning_ko):
-            raise ValueError("VocabChoicePlan contextual_meaning_ko must contain Korean text.")
+            raise ValueError("ContextualVocabChoicePlan contextual_meaning_ko must contain Korean text.")
         if not self.supporting_evidence or not self.supporting_evidence.strip():
-            raise ValueError("VocabChoicePlan supporting_evidence is required.")
+            raise ValueError("ContextualVocabChoicePlan supporting_evidence is required.")
         if not self.explanation or not self.explanation.strip():
-            raise ValueError("VocabChoicePlan explanation is required.")
+            raise ValueError("ContextualVocabChoicePlan explanation is required.")
         if not _HANGUL_RE.search(self.explanation):
-            raise ValueError("VocabChoicePlan explanation must contain Korean text.")
+            raise ValueError("ContextualVocabChoicePlan explanation must contain Korean text.")
+        return self
+
+
+class UnderlinedVocabPlan(BaseModel):
+    subtype: Literal[
+        "contextual_correct_among_4_corrupted",
+        "contextual_error_1_among_5",
+        "contextual_correct_among_3_corrupted",
+    ]
+    target_span_ids: list[str] = Field(default_factory=list)
+    target_span_texts: list[str] = Field(default_factory=list)
+    corrupted_replacements_by_span_id: dict[str, str] = Field(default_factory=dict)
+    answer_span_id: str
+    selection_basis_ko: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_plan(self) -> UnderlinedVocabPlan:
+        if len(self.target_span_ids) != 5:
+            raise ValueError("UnderlinedVocabPlan requires exactly five target_span_ids.")
+        if len(set(self.target_span_ids)) != 5:
+            raise ValueError("UnderlinedVocabPlan target_span_ids must be unique.")
+        if len(self.target_span_texts) != 5:
+            raise ValueError("UnderlinedVocabPlan requires exactly five target_span_texts.")
+        normalized_texts = [" ".join(text.split()).lower() for text in self.target_span_texts]
+        if len(set(normalized_texts)) != 5:
+            raise ValueError("UnderlinedVocabPlan target_span_texts must be unique.")
+        if any(not _is_short_english_lexical_choice(text) for text in self.target_span_texts):
+            raise ValueError("UnderlinedVocabPlan target_span_texts must be short readable English lexical choices.")
+        if self.answer_span_id not in self.target_span_ids:
+            raise ValueError("UnderlinedVocabPlan answer_span_id must be included in target_span_ids.")
+
+        corrupted_ids = list(self.corrupted_replacements_by_span_id.keys())
+        if len(set(corrupted_ids)) != len(corrupted_ids):
+            raise ValueError("UnderlinedVocabPlan corrupted_replacements_by_span_id keys must be unique.")
+        if any(span_id not in self.target_span_ids for span_id in corrupted_ids):
+            raise ValueError("UnderlinedVocabPlan corrupted_replacements_by_span_id keys must be included in target_span_ids.")
+        if any(not _is_short_english_lexical_choice(text) for text in self.corrupted_replacements_by_span_id.values()):
+            raise ValueError("UnderlinedVocabPlan corrupted replacements must be short readable English lexical choices.")
+
+        expected_corruption_count = {
+            "contextual_correct_among_4_corrupted": 4,
+            "contextual_error_1_among_5": 1,
+            "contextual_correct_among_3_corrupted": 3,
+        }[self.subtype]
+        if len(self.corrupted_replacements_by_span_id) != expected_corruption_count:
+            raise ValueError(
+                f"UnderlinedVocabPlan requires exactly {expected_corruption_count} corrupted replacements for {self.subtype}."
+            )
+        if self.subtype == "contextual_error_1_among_5" and self.answer_span_id not in self.corrupted_replacements_by_span_id:
+            raise ValueError("UnderlinedVocabPlan answer_span_id must be the corrupted item for contextual_error_1_among_5.")
+        if self.subtype != "contextual_error_1_among_5" and self.answer_span_id in self.corrupted_replacements_by_span_id:
+            raise ValueError("UnderlinedVocabPlan answer_span_id must remain uncorrupted for pick-the-correct vocab subtypes.")
+
+        if not self.selection_basis_ko or not self.selection_basis_ko.strip():
+            raise ValueError("UnderlinedVocabPlan selection_basis_ko is required.")
+        if not _HANGUL_RE.search(self.selection_basis_ko):
+            raise ValueError("UnderlinedVocabPlan selection_basis_ko must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("UnderlinedVocabPlan supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("UnderlinedVocabPlan explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("UnderlinedVocabPlan explanation must contain Korean text.")
         return self
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from questiongen.parsers import prepare_source
-from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_TYPES
+from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_SUBTYPE_SPECS, QUESTION_TYPES
 from questiongen.renderers import (
     render_fill_in_the_blank,
     render_grammar,
@@ -14,13 +14,14 @@ from questiongen.renderers import (
     render_vocab,
 )
 from questiongen.schemas import (
+    ContextualVocabChoicePlan,
     FillInTheBlankPlan,
     GrammarPlan,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
     SentenceInsertionPlan,
+    UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
-    VocabChoicePlan,
 )
 from questiongen.targeting import (
     allowed_verb_form_variants,
@@ -309,26 +310,26 @@ class RendererTests(unittest.TestCase):
         )
         prepared = prepare_source(source)
         target = vocab_choice_inventory(prepared, QUESTION_TYPES["vocab"].subtype_key)[0]
-        plan = VocabChoicePlan(
+        plan = ContextualVocabChoicePlan(
             selected_span_id=target.id,
             selected_span_text=target.text,
             choice_words=[
-                target.text,
+                "strengthen",
                 "weaken",
                 "ignore",
                 "delay",
                 "worsen",
             ],
-            correct_choice=target.text,
-            contextual_meaning_ko="이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 한다는 의미",
+            correct_choice="strengthen",
+            contextual_meaning_ko="이 자리는 안전을 더 높이는 방향의 표현이 와야 한다는 뜻입니다",
             supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-            explanation="문맥상 이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 합니다.",
+            explanation="문맥상 이 자리는 안전을 더 높이는 방향의 표현이 와야 합니다.",
         )
         result = render_vocab(
             {
                 "source_paragraph": source,
                 "OriginalQuestionNumber": "MVP-02",
-                "BatchRowId": 0,
+                "BatchRowId": 7,
                 "QuestionTypeKey": "vocab",
                 "prepared_source": prepared,
                 "plan": plan,
@@ -340,10 +341,11 @@ class RendererTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "rendered")
         generated = result["generated"]
-        self.assertEqual(generated.choices, [target.text, "weaken", "ignore", "delay", "worsen"])
+        self.assertCountEqual(generated.choices, ["strengthen", "weaken", "ignore", "delay", "worsen"])
+        self.assertNotEqual(generated.choices, ["strengthen", "weaken", "ignore", "delay", "worsen"])
         self.assertIn("_____", generated.student_paragraph)
         self.assertNotIn(target.text, generated.student_paragraph)
-        self.assertEqual(generated.answer, "①")
+        self.assertIn(generated.answer, ["①", "②", "③", "④", "⑤"])
 
     def test_vocab_renderer_uses_selected_id_as_source_owned_contract(self) -> None:
         source = (
@@ -356,26 +358,26 @@ class RendererTests(unittest.TestCase):
         )
         prepared = prepare_source(source)
         target = vocab_choice_inventory(prepared, QUESTION_TYPES["vocab"].subtype_key)[0]
-        plan = VocabChoicePlan(
+        plan = ContextualVocabChoicePlan(
             selected_span_id=target.id,
             selected_span_text=target.text,
             choice_words=[
-                target.text,
+                "strengthen",
                 "weaken",
                 "ignore",
                 "delay",
                 "worsen",
             ],
-            correct_choice=target.text,
-            contextual_meaning_ko="이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 한다는 의미",
+            correct_choice="strengthen",
+            contextual_meaning_ko="이 자리는 안전을 더 높이는 방향의 표현이 와야 한다는 뜻입니다",
             supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
-            explanation="문맥상 이 자리는 원문의 핵심 기능을 유지하는 표현이 와야 합니다.",
+            explanation="문맥상 이 자리는 안전을 더 높이는 방향의 표현이 와야 합니다.",
         )
         result = render_vocab(
             {
                 "source_paragraph": source,
                 "OriginalQuestionNumber": "MVP-02",
-                "BatchRowId": 0,
+                "BatchRowId": 7,
                 "QuestionTypeKey": "vocab",
                 "prepared_source": prepared,
                 "plan": plan,
@@ -386,8 +388,58 @@ class RendererTests(unittest.TestCase):
             QUESTION_TYPES["vocab"],
         )
         self.assertEqual(result["status"], "rendered")
-        self.assertEqual(result["generated"].choices[0], target.text)
-        self.assertEqual(result["generated"].answer, "①")
+        self.assertNotIn(target.text, result["generated"].student_paragraph)
+        self.assertIn("strengthen", result["generated"].choices)
+
+    def test_vocab_renderer_marks_five_underlined_targets_for_hard_subtype(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        targets = sorted(
+            vocab_choice_inventory(prepared, "contextual_vocab_correct_among_4_corrupted_5")[:5],
+            key=lambda span: span.char_start,
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_correct_among_4_corrupted",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_replacements_by_span_id={
+                targets[0].id: "weaken",
+                targets[2].id: "ignore",
+                targets[3].id: "delay",
+                targets[4].id: "worsen",
+            },
+            answer_span_id=targets[1].id,
+            selection_basis_ko="이 자리만 원래 맥락의 의미를 자연스럽게 유지합니다",
+            supporting_evidence="Stronger pumps reduce pressure loss across the valley.",
+            explanation="문맥상 하나만 원래 의미를 유지하고 나머지는 의미를 비틉니다.",
+        )
+        result = render_vocab(
+            {
+                "source_paragraph": source,
+                "OriginalQuestionNumber": "MVP-02",
+                "BatchRowId": 7,
+                "QuestionTypeKey": "vocab",
+                "prepared_source": prepared,
+                "plan": plan,
+                "generated": None,
+                "status": "planned",
+                "errors": [],
+            },
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+        )
+        self.assertEqual(result["status"], "rendered")
+        generated = result["generated"]
+        self.assertEqual(generated.choices, ["①", "②", "③", "④", "⑤"])
+        self.assertEqual(generated.student_paragraph.count("[밑줄"), 5)
+        self.assertIn("weaken", generated.student_paragraph)
+        self.assertEqual(generated.answer, "②")
 
     def test_grammar_renderer_marks_five_targets_and_one_corruption(self) -> None:
         source = (
