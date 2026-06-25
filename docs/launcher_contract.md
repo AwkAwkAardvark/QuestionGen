@@ -167,6 +167,10 @@ Rules:
 
 - CSV and JSON must represent the same `BatchResultRow` results.
 - The checked-in `sample_data/generated_questions.json` file is a branch review artifact for logic quality, not the sole source of truth for the export contract.
+- The checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_104227.csv` and `..._111945.csv` files are also historical review artifacts only:
+  - `104227` is `34` source passages expanded across `3` live families for `102` rows
+  - `111945` is the same `34` source passages expanded across all `8` live `vocab` subtypes for `272` rows
+- Historical review artifacts may contain stale pre-fix planner failures; for example, the old hard-`vocab` `400` schema failures in `111945` should not be treated as the current runtime contract after the `UnderlinedVocabPlan` schema rescue landed on `2026-06-25`.
 - `QuestionTypeKey` remains the broad family key, while `QuestionFormatKey` and `QuestionSubtypeKey` identify the concrete runnable subtype row.
 - Failed type/passage combinations must remain visible in the exported artifacts.
 - Expected incompatibility between a valid passage and a specific question type should surface as `qtype_incompatibility_error`, not be collapsed into generic source or planner failure.

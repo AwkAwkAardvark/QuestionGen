@@ -16,6 +16,70 @@ Current branch snapshot reviewed on `hail-mary-finish-everything`:
   - `8` `qtype_incompatibility_error`
   - `7` `planning_error`
 
+## 2026-06-25 Checked-In CSV Audit
+
+The two checked-in CSV review artifacts under `sample_data/output/` are evidence for quality review only. They are not the runtime contract, and they were generated before the current hard-vocab rescue landed on `main`.
+
+`Olymforce_cleaned_spellchecked_nobom_20260625_104227.csv`
+
+- shape: `34` source passages expanded across `3` live families for `102` exported rows
+- families present: `sentence_insertion`, `paragraph_ordering`, `underlined_phrase_meaning`
+- status mix:
+  - `44` `validation_passed`
+  - `54` `qtype_incompatibility_error`
+  - `3` `source_error`
+  - `1` `planning_error`
+- family mix:
+  - `sentence_insertion`: `22` passed, `10` incompatibility, `1` source error, `1` planning error
+  - `paragraph_ordering`: `1` passed, `32` incompatibility, `1` source error
+  - `underlined_phrase_meaning`: `21` passed, `12` incompatibility, `1` source error
+
+`Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv`
+
+- shape: `34` source passages expanded across all `8` live `vocab` subtypes for `272` exported rows
+- status mix:
+  - `68` `validation_passed`
+  - `160` `qtype_incompatibility_error`
+  - `36` `planning_error`
+  - `8` `source_error`
+- subtype mix:
+  - `contextual_vocab_choice_5`: `33` passed, `1` source error
+  - `contextual_vocab_best_paraphrase_choice_5`: `32` passed, `1` planning error, `1` source error
+  - `contextual_vocab_phrase_choice_5`: `3` passed, `30` incompatibility, `1` source error
+  - each of the five hard underlined `vocab` subtypes: `7` planning errors, `26` incompatibility, `1` source error
+
+How to interpret the `111945` hard-family failures now:
+
+- the `35` hard-family `planning_error` rows are stale pre-fix artifacts from the old dict-shaped `UnderlinedVocabPlan` field `corrupted_replacements_by_span_id`
+- those rows should be treated as historical schema-contract failures, not as evidence that the five hard subtypes are intrinsically poor fits for the same passages
+- the remaining `1` `planning_error` in that CSV belongs to `contextual_vocab_best_paraphrase_choice_5` and is a separate old choice-quality issue, not part of the hard-family schema failure
+
+Current-code re-audit on `2026-06-25` of the same `34` checked-in `vocab` source passages:
+
+- this was a deterministic compatibility re-audit on current code, not a fresh live-model generation run
+- current code now admits all `34/34` passages for:
+  - `contextual_vocab_choice_5`
+  - `contextual_vocab_best_paraphrase_choice_5`
+  - `contextual_vocab_correct_among_4_corrupted_5`
+  - `contextual_vocab_error_1_among_5_5`
+  - `contextual_vocab_error_1_among_5_polarity_scope_5`
+  - `contextual_vocab_error_1_among_5_collocation_5`
+  - `contextual_vocab_correct_among_3_corrupted_5`
+- `contextual_vocab_phrase_choice_5` remains intentionally narrow at `3/34` compatible passages
+
+`ResponseFeedbackDump` still has useful prioritization signal, but it is stale in two important ways:
+
+- it assumes only a subset of `vocab` subtypes were active in the review artifact
+- it interprets the old hard-family `400` schema failures as subtype weakness rather than as a now-fixed schema-contract problem
+
+Repo-truth takeaways that still survive from that dump:
+
+- `contextual_vocab_choice_5` is the strongest currently demonstrated branch
+- the hard underlined `vocab` branches remain the highest-value next runtime-quality surface now that the schema blocker is gone
+- `contextual_vocab_correct_among_3_corrupted_5` is still the most ambiguity-prone subtype and should receive extra scrutiny before it earns long-term confidence
+- blank-choice target quality still needs pressure against too-local or too-easy targets
+- `best_paraphrase` and `correct_among_3_corrupted` remain the biggest ambiguity-risk branches inside the current live `vocab` set
+
 ## `paragraph_ordering` Review
 
 Current sample slice:

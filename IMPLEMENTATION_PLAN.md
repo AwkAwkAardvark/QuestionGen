@@ -196,6 +196,14 @@
     - [x] tighten the hard-vocab planner and repair prompts so retries explicitly react to insufficient distinct targets, ambiguity between surviving answers, wrong corruption class, slot-width drift, and duplicate rendered targets
     - [x] clean exported `vocab` explanations in the same pass so they do not open with raw quoted English evidence and they strip duplicated Korean memo boilerplate such as repeated `이 자리에는 ...`
     - [x] keep regression coverage that re-audits checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv` source passages and requires every hard `vocab` subtype to produce at least some `validation_passed` rows with no schema-shaped `planning_error`
+  - next quality-pass priorities on top of the hard-schema rescue:
+    - [x] record the checked-in `2026-06-25` sample-output CSVs and `ResponseFeedbackDump` as review evidence rather than as contract truth
+    - [x] document that the old `35` hard-family `400` rows in `111945` are stale schema artifacts, not current-code subtype verdicts
+    - [x] re-audit current deterministic compatibility on those same `34` checked-in `vocab` source passages to separate post-fix behavior from stale pre-fix CSV evidence
+    - [ ] rerun a fresh live `vocab` sample export on current code so artifact review is no longer anchored to pre-fix planner output
+    - [ ] prioritize hard underlined subtype pass/fail quality after the schema fix, especially whether accepted rows still feel exam-natural
+    - [ ] tighten blank-choice target quality against too-local / too-easy targets without regressing subtype coverage
+    - [ ] scrutinize ambiguity risk in `contextual_vocab_best_paraphrase_choice_5` and `contextual_vocab_correct_among_3_corrupted_5` before expanding confidence in those branches
 - [x] `grammar`
   - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
   - live subtype set:

@@ -43,6 +43,13 @@ Latest gating lessons from sample review:
 - a smaller residual parser/source false positive still matters: complete clauses like the row-9 `they’d ever been to` sentence should not be rejected as fragments
 - the updated `sample_data/generated_questions.json` is now the branch's main logic-review artifact: 78 rows, 63 `validation_passed`, 7 `planning_error`, and 8 `qtype_incompatibility_error`
 - the sample should be used as live-quality evidence, not as the authoritative export-shape baseline
+- the checked-in `2026-06-25` CSV artifacts under `sample_data/output/` are also review evidence only:
+  - `104227` covers `34` source passages expanded across `sentence_insertion`, `paragraph_ordering`, and `underlined_phrase_meaning` for `102` rows total
+  - `111945` covers the same `34` source passages expanded across all `8` live `vocab` subtypes for `272` rows total
+- the old `111945` hard-vocab `planning_error` rows should now be read as stale schema artifacts:
+  - `35` of them are the old `UnderlinedVocabPlan` `400` failure caused by the removed dict-shaped `corrupted_replacements_by_span_id` field
+  - they should not be used as current evidence that the hard underlined `vocab` subtypes are fundamentally incompatible with those passages
+- `ResponseFeedbackDump` is still useful for prioritization, but stale as a direct diagnosis because it assumes only a subset of live `vocab` subtypes and treats those old schema failures as subtype-quality evidence
 - the main current signal is live-family quality, not operations:
   - `paragraph_ordering` is the clearest next hardening target because the sample still shows a concentrated cluster of weak-adjacency rows reaching late `planning_error`
   - `sentence_insertion` and `underlined_phrase_meaning` still need quality work, but their current sample failures are less concentrated than the `paragraph_ordering` issue
@@ -51,6 +58,10 @@ Latest gating lessons from sample review:
 - the current explanation-quality rule for high-pass families is:
   - `fill_in_the_blank`, `vocab`, and `grammar` should anchor explanations in supporting evidence first
   - planner-supplied Korean meaning/basis notes should be cleaned or replaced before export if they read like memo fragments
+- current `vocab` follow-up priorities after the hard-schema rescue are:
+  - keep `contextual_vocab_choice_5` as the strongest demonstrated baseline, but push harder against too-local or too-easy blank targets
+  - treat the hard underlined `vocab` family as the next highest-value runtime-quality surface now that it is no longer blocked by schema failure
+  - review `contextual_vocab_best_paraphrase_choice_5` and especially `contextual_vocab_correct_among_3_corrupted_5` as ambiguity-risk branches rather than as automatically safe extensions of the baseline choice subtype
 - model-tier specialization is a later optimization problem, not part of the current MVP hardening pass
 
 ## Recommended Order
@@ -194,6 +205,10 @@ Current recommendation on registry shape:
 - Current hard-family planning policy:
   - parser-derived scores, cue counts, and source anchors remain visible in the prompt as ranked hints
   - those parser hints should bias selection, but they are not a strict pre-planning veto once five clean lexical-slot candidates exist
+- Current audit-backed priority notes:
+  - the checked-in `111945` artifact is stale on hard-family viability because its `35` hard `planning_error` rows were produced before the structured-output schema rescue landed
+  - local current-code compatibility re-audit on `2026-06-25` admits all `34/34` checked-in source passages for every hard underlined subtype, so the next pass should focus on output quality and ambiguity rather than on resurrecting that old schema bug
+  - `contextual_vocab_correct_among_3_corrupted_5` remains the most likely subtype to create "more than one defensible survivor" ambiguity
 - Possible later subtype directions within the same broad family:
   - stronger phrase-focused contextual substitution, where all five options stay phrase-level rather than mixing word and phrase slots
   - narrower underlined corruption families keyed to one failure mode such as polarity reversal, collocation mismatch, or discourse-role drift
