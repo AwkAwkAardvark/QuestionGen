@@ -1,21 +1,30 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from questiongen.batch import BatchProgressUpdate
 from questiongen.question_types import QUESTION_TYPES
 from questiongen.ui.gradio_app import (
+    QUESTION_TYPE_CHECKLIST_CSS,
     all_question_type_keys,
     create_app,
     default_api_key_path,
     default_drive_input_csv,
     default_output_dir,
-    deselect_all_question_type_keys,
+    deselect_all_question_type_flags,
     load_api_keys,
     normalize_question_type_keys,
+    question_type_checklist_items,
     resolve_input_csv,
+    select_all_question_type_flags,
+    selected_question_type_keys_from_flags,
+    _running_summary,
+    _should_log_progress_update,
 )
 
 
@@ -25,10 +34,12 @@ class GradioAppHelperTests(unittest.TestCase):
 
     def test_question_type_selection_helpers_match_registry(self) -> None:
         self.assertEqual(all_question_type_keys(), list(QUESTION_TYPES.keys()))
-        self.assertEqual(deselect_all_question_type_keys(), [])
+        items = question_type_checklist_items()
+        self.assertEqual([item.key for item in items], list(QUESTION_TYPES.keys()))
+        self.assertTrue(all(item.key in item.label for item in items))
 
     def test_normalize_question_type_keys_defaults_to_registry(self) -> None:
-        normalized = normalize_question_type_keys([])
+        normalized = normalize_question_type_keys(None)
         self.assertIn("sentence_insertion", normalized)
         self.assertIn("paragraph_ordering", normalized)
         self.assertIn("underlined_phrase_meaning", normalized)
@@ -36,6 +47,25 @@ class GradioAppHelperTests(unittest.TestCase):
         self.assertIn("vocab", normalized)
         self.assertIn("grammar", normalized)
         self.assertNotIn("mood_atmosphere", normalized)
+
+    def test_normalize_question_type_keys_preserves_explicit_empty_selection(self) -> None:
+        self.assertEqual(normalize_question_type_keys([]), [])
+
+    def test_select_all_and_deselect_all_flags_match_live_registry(self) -> None:
+        self.assertEqual(select_all_question_type_flags(), [True] * len(QUESTION_TYPES))
+        self.assertEqual(deselect_all_question_type_flags(), [False] * len(QUESTION_TYPES))
+        self.assertEqual(
+            selected_question_type_keys_from_flags(select_all_question_type_flags()),
+            list(QUESTION_TYPES.keys()),
+        )
+        self.assertEqual(
+            selected_question_type_keys_from_flags(deselect_all_question_type_flags()),
+            [],
+        )
+
+    def test_question_type_checklist_css_is_scrollable(self) -> None:
+        self.assertIn("max-height: 18rem", QUESTION_TYPE_CHECKLIST_CSS)
+        self.assertIn("overflow-y: auto", QUESTION_TYPE_CHECKLIST_CSS)
 
     def test_normalize_question_type_keys_rejects_unknown(self) -> None:
         with self.assertRaises(ValueError):
@@ -107,9 +137,68 @@ class GradioAppHelperTests(unittest.TestCase):
                 else:
                     os.environ[key] = value
 
+    def test_progress_log_filters_routine_success_updates(self) -> None:
+        passed_update = BatchProgressUpdate(
+            event="item_completed",
+            completed_items=1,
+            total_items=4,
+            current_row_number="10-03",
+            batch_row_id=0,
+            question_type_key="sentence_insertion",
+            question_subtype_key="sentence_insertion_basic",
+            status="validation_passed",
+        )
+        incompatible_update = BatchProgressUpdate(
+            event="item_completed",
+            completed_items=2,
+            total_items=4,
+            current_row_number="10-03",
+            batch_row_id=0,
+            question_type_key="paragraph_ordering",
+            question_subtype_key="paragraph_ordering_4_blocks",
+            status="qtype_incompatibility_error",
+            message="Passage is not suitable for this question type.",
+        )
+        started_update = BatchProgressUpdate(
+            event="started",
+            completed_items=0,
+            total_items=4,
+            message="Starting batch run.",
+        )
+
+        self.assertFalse(_should_log_progress_update(passed_update))
+        self.assertTrue(_should_log_progress_update(incompatible_update))
+        self.assertTrue(_should_log_progress_update(started_update))
+
+    def test_running_summary_keeps_current_item_and_latest_notable_event_separate(self) -> None:
+        summary = _running_summary(
+            input_mode="Upload CSV",
+            input_csv=Path("/tmp/questions.csv"),
+            selected_question_types=["sentence_insertion", "paragraph_ordering"],
+            expanded_subtype_count=3,
+            completed_items=1,
+            total_items=6,
+            current_item="10-03 / sentence_insertion_basic: validation_passed",
+            latest_notable_event="[0/6] Batch run started.",
+        )
+
+        self.assertIn("Current item", summary)
+        self.assertIn("Latest notable event", summary)
+        self.assertIn("10-03 / sentence_insertion_basic: validation_passed", summary)
+        self.assertIn("[0/6] Batch run started.", summary)
+
     def test_create_app_requires_gradio_when_missing(self) -> None:
-        with self.assertRaises(ImportError):
-            create_app()
+        original_import = __import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "gradio":
+                raise ImportError("mocked gradio import failure")
+            return original_import(name, globals, locals, fromlist, level)
+
+        with mock.patch("builtins.__import__", side_effect=fake_import):
+            sys.modules.pop("gradio", None)
+            with self.assertRaises(ImportError):
+                create_app()
 
 
 if __name__ == "__main__":

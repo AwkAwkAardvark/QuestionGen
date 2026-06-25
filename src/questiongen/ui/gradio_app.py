@@ -5,6 +5,7 @@ import os
 import queue
 import threading
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -18,6 +19,22 @@ DEFAULT_DATA_DIR = Path("/content/drive/MyDrive/QuestionGenData")
 DEFAULT_API_KEY_PATH = DEFAULT_DATA_DIR / "secrets" / "api_key.txt"
 DEFAULT_DRIVE_INPUT_CSV = DEFAULT_DATA_DIR / "input" / "questions.csv"
 DEFAULT_OUTPUT_DIR = DEFAULT_DATA_DIR / "output" / "gradio"
+
+QUESTION_TYPE_CHECKLIST_CSS = """
+#question-type-checklist {
+    max-height: 18rem;
+    overflow-y: auto;
+    border: 1px solid var(--block-border-color);
+    border-radius: 12px;
+    padding: 0.5rem 0.75rem;
+}
+"""
+
+
+@dataclass(frozen=True)
+class QuestionTypeChecklistItem:
+    key: str
+    label: str
 
 
 def default_data_dir() -> Path:
@@ -55,8 +72,22 @@ def all_question_type_keys() -> list[str]:
     return list(QUESTION_TYPES.keys())
 
 
-def deselect_all_question_type_keys() -> list[str]:
-    return []
+def question_type_checklist_items() -> list[QuestionTypeChecklistItem]:
+    return [
+        QuestionTypeChecklistItem(
+            key=key,
+            label=f"{type_spec.label_ko} ({key})",
+        )
+        for key, type_spec in QUESTION_TYPES.items()
+    ]
+
+
+def select_all_question_type_flags() -> list[bool]:
+    return [True] * len(question_type_checklist_items())
+
+
+def deselect_all_question_type_flags() -> list[bool]:
+    return [False] * len(question_type_checklist_items())
 
 
 def create_app():
@@ -68,7 +99,7 @@ def create_app():
             "`pip install -e .[ui]` or install `gradio` separately."
         ) from exc
 
-    question_type_choices = all_question_type_keys()
+    question_type_items = question_type_checklist_items()
     api_key_path_default = default_api_key_path()
     drive_csv_default = default_drive_input_csv()
     output_dir_default = default_output_dir()
@@ -77,7 +108,7 @@ def create_app():
         upload_visible = input_mode == "Upload CSV"
         return gr.update(visible=upload_visible), gr.update(visible=not upload_visible)
 
-    with gr.Blocks(title="QuestionGen Gradio Runner") as app:
+    with gr.Blocks(title="QuestionGen Gradio Runner", css=QUESTION_TYPE_CHECKLIST_CSS) as app:
         gr.Markdown(
             """
             # QuestionGen Gradio Runner
@@ -127,12 +158,17 @@ def create_app():
                     value=float(os.getenv("QUESTIONGEN_TEMPERATURE", "0")),
                     precision=2,
                 )
-                question_type_keys = gr.CheckboxGroup(
-                    choices=question_type_choices,
-                    value=question_type_choices,
-                    label="Question Types",
-                    info="All registered types are selected by default.",
-                )
+                gr.Markdown("### Question Types")
+                gr.Markdown("All registered question families are selected by default.")
+                question_type_checkboxes: list[object] = []
+                with gr.Column(elem_id="question-type-checklist"):
+                    for item in question_type_items:
+                        question_type_checkboxes.append(
+                            gr.Checkbox(
+                                label=item.label,
+                                value=True,
+                            )
+                        )
                 with gr.Row():
                     select_all_button = gr.Button("Select All")
                     deselect_all_button = gr.Button("Deselect All")
@@ -161,12 +197,12 @@ def create_app():
         )
 
         select_all_button.click(
-            lambda: all_question_type_keys(),
-            outputs=[question_type_keys],
+            lambda: select_all_question_type_flags(),
+            outputs=question_type_checkboxes,
         )
         deselect_all_button.click(
-            lambda: deselect_all_question_type_keys(),
-            outputs=[question_type_keys],
+            lambda: deselect_all_question_type_flags(),
+            outputs=question_type_checkboxes,
         )
 
         def _run_from_ui_with_progress(
@@ -177,9 +213,10 @@ def create_app():
             output_dir: str,
             model_name: str,
             temperature: float,
-            question_type_keys: Sequence[str] | None,
+            *question_type_flags: bool,
             progress=gr.Progress(track_tqdm=False),
         ):
+            question_type_keys = selected_question_type_keys_from_flags(question_type_flags)
             yield from _run_from_ui(
                 input_mode,
                 uploaded_csv_path,
@@ -202,7 +239,7 @@ def create_app():
                 output_dir,
                 model_name,
                 temperature,
-                question_type_keys,
+                *question_type_checkboxes,
             ],
             outputs=[
                 summary,
@@ -262,7 +299,7 @@ def resolve_input_csv(
 
 
 def normalize_question_type_keys(question_type_keys: Sequence[str] | None) -> list[str]:
-    if not question_type_keys:
+    if question_type_keys is None:
         return all_question_type_keys()
 
     normalized = list(question_type_keys)
@@ -270,6 +307,14 @@ def normalize_question_type_keys(question_type_keys: Sequence[str] | None) -> li
     if unknown:
         raise ValueError(f"Unknown question types: {', '.join(unknown)}")
     return normalized
+
+
+def selected_question_type_keys_from_flags(question_type_flags: Sequence[bool]) -> list[str]:
+    items = question_type_checklist_items()
+    flags = list(question_type_flags)
+    if len(flags) != len(items):
+        raise ValueError("Question type selection is out of sync with the live registry.")
+    return [item.key for item, selected in zip(items, flags) if selected]
 
 
 def _artifact_paths(output_dir: str | Path, input_csv_path: Path) -> tuple[Path, Path, Path]:
@@ -312,6 +357,8 @@ def _run_from_ui(
             raise ValueError("OPENAI_API_KEY is not set. Provide an api_key.txt path or pre-load the env var.")
 
         selected_question_types = normalize_question_type_keys(question_type_keys)
+        if not selected_question_types:
+            raise ValueError("Select at least one question type before running QuestionGen.")
         expanded_subtype_count = sum(
             len(QUESTION_TYPE_SPECS_BY_FAMILY[family_key])
             for family_key in selected_question_types
@@ -319,6 +366,8 @@ def _run_from_ui(
         )
         input_csv = resolve_input_csv(input_mode, uploaded_csv_path, drive_csv_path)
         output_csv, output_json, output_markdown = _artifact_paths(output_dir, input_csv)
+        current_item = "Waiting for the batch worker to start."
+        latest_notable_event = "Preparing batch run..."
         running_summary = _running_summary(
             input_mode=input_mode,
             input_csv=input_csv,
@@ -326,11 +375,12 @@ def _run_from_ui(
             expanded_subtype_count=expanded_subtype_count,
             completed_items=0,
             total_items=0,
-            latest_status="Preparing batch run...",
+            current_item=current_item,
+            latest_notable_event=latest_notable_event,
         )
         yield _ui_outputs(
             summary=running_summary,
-            run_log="Preparing batch run...",
+            run_log="",
         )
 
         runner = compile_question_graph(
@@ -372,22 +422,22 @@ def _run_from_ui(
 
             if update.event == "started":
                 line = update.message or "Batch run started."
-                latest_status = line
+                current_item = "Starting batch run."
+                latest_notable_event = line
             elif update.event == "completed":
                 line = update.message or "Batch run completed."
-                latest_status = line
+                current_item = "Batch run complete."
+                latest_notable_event = line
             else:
                 line = _format_progress_line(update)
-                latest_status = (
-                    f"{update.current_row_number} / "
-                    f"{update.question_subtype_key or update.question_type_key}: "
-                    f"{update.status}"
-                )
+                current_item = _current_progress_item(update)
 
-            run_log_lines.append(line)
-            if len(run_log_lines) > 200:
-                del run_log_lines[:-200]
-            print(line, flush=True)
+            if _should_log_progress_update(update):
+                latest_notable_event = line
+                run_log_lines.append(line)
+                if len(run_log_lines) > 200:
+                    del run_log_lines[:-200]
+                print(line, flush=True)
 
             if progress is not None:
                 total = update.total_items or 1
@@ -403,7 +453,8 @@ def _run_from_ui(
                 expanded_subtype_count=expanded_subtype_count,
                 completed_items=update.completed_items,
                 total_items=update.total_items,
-                latest_status=latest_status,
+                current_item=current_item,
+                latest_notable_event=latest_notable_event,
             )
             yield _ui_outputs(
                 summary=running_summary,
@@ -497,7 +548,8 @@ def _running_summary(
     expanded_subtype_count: int,
     completed_items: int,
     total_items: int,
-    latest_status: str,
+    current_item: str,
+    latest_notable_event: str,
 ) -> str:
     progress_text = f"{completed_items}/{total_items}" if total_items else "preparing"
     return "\n".join(
@@ -509,9 +561,23 @@ def _running_summary(
             f"- Question families: `{', '.join(selected_question_types)}`",
             f"- Expanded subtypes: `{expanded_subtype_count}`",
             f"- Progress: `{progress_text}`",
-            f"- Latest status: `{latest_status}`",
+            f"- Current item: `{current_item}`",
+            f"- Latest notable event: `{latest_notable_event}`",
         ]
     )
+
+
+def _current_progress_item(update: BatchProgressUpdate) -> str:
+    subtype = update.question_subtype_key or update.question_type_key or "unknown"
+    row_label = update.current_row_number or f"row {update.batch_row_id}"
+    status = update.status or "unknown"
+    return f"{row_label} / {subtype}: {status}"
+
+
+def _should_log_progress_update(update: BatchProgressUpdate) -> bool:
+    if update.event in {"started", "completed"}:
+        return True
+    return update.status != "validation_passed"
 
 
 def _ui_outputs(
