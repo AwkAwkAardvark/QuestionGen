@@ -192,6 +192,8 @@ Rules:
 - `contextual_vocab_best_paraphrase_choice_5` should forbid the unchanged source wording as both the correct answer and as a distractor, because the task is closest contextual paraphrase rather than source restoration.
 - `contextual_vocab_phrase_choice_5` should use only multiword phrase-level targets and phrase-level options with tight slot-width preservation.
 - The five hard vocab subtypes should preserve source-order numbered underlines in passage text and export marker answers `①`-`⑤` that point to the underlined target, not to a choice-list lexical option.
+- Hard-vocab planning should use the broader clean lexical-slot candidate inventory for admission, and parser-derived scores/cues should remain ranked hints plus source anchors rather than a strict pre-planning veto.
+- Hard-vocab structured planning should use ordered `corrupted_replacements` records with `span_id` plus `replacement_text`, not a dict-typed corruption field.
 - `contextual_vocab_error_1_among_5_polarity_scope_5` should restrict its one corruption to polarity, degree, or scope drift.
 - `contextual_vocab_error_1_among_5_collocation_5` should restrict its one corruption to collocation or selectional-restriction mismatch rather than broad opposite meaning.
 - `grammar` now fans out into multiple controlled subtype rows under the broad family key, with subtype-specific compatibility gating.

@@ -91,6 +91,39 @@ The current live branch now applies the following policy for `paragraph_ordering
 - the planner prompt now exposes boundary signals, ranked block starts, and ranked partition candidates so accepted passages are biased toward stronger partitions
 - deterministic plan validation remains strict after planning, so this change is an earlier gate and prompt refinement, not a validator relaxation
 
+## `vocab` Hard-Family Rescue Status
+
+This hardening pass is now checked in:
+
+- review artifact for checked-in regression coverage: `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv`
+- target family: the five live hard underlined `vocab` subtypes
+
+Resolved failure classes from the sample-driven rescue pass:
+
+1. Structured-output schema failure before real planning
+
+- the underlined hard-vocab planner shape no longer uses a dict-typed corruption field
+- `UnderlinedVocabPlan` now carries an ordered `corrupted_replacements` record list, which is safe for structured-output planning
+- planner canonicalization, validators, renderers, explanation-context assembly, and test stubs were all updated together to consume the new shape
+
+2. Parser heuristics acting as a near-hard pre-planning veto
+
+- the hard-family compatibility path no longer requires parser-top-tier targets before planning
+- all five hard subtypes now admit passages whenever at least five clean lexical-slot candidates exist in the broader hard-candidate inventory
+- parser-derived scores, cue counts, and anchors remain visible to the planner as ranked hints and source anchors rather than as the primary admission veto
+
+3. Explanation export quality still needs deterministic cleanup on the `vocab` branch
+
+- exported explanations no longer open with raw quoted English evidence as the first move
+- awkward Korean memo fragments such as duplicated `이 자리에는` phrasing are now cleaned deterministically before export
+
+Current acceptance boundary for this rescue:
+
+- keep all five hard `vocab` subtypes live in default expansion
+- eliminate schema-shaped `planning_error` for the hard family
+- reserve `qtype_incompatibility_error` for true candidate-inventory failure rather than for missing five parser-top-tier targets
+- keep regression coverage that re-audits the checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv` source passages and requires that each hard subtype produces at least some `validation_passed` rows rather than remaining stuck at zero-pass default incompatibility
+
 ## Explanation Quality Policy For High-Pass Families
 
 Current explanation hardening target after `paragraph_ordering`:

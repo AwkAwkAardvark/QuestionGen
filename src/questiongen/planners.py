@@ -31,6 +31,7 @@ from .schemas import (
 )
 from .targeting import (
     grammar_subtype_inventory,
+    vocab_hard_candidate_inventory,
     grammar_target_inventory,
     vocab_choice_inventory,
     vocab_target_inventory,
@@ -183,7 +184,7 @@ def _canonicalize_source_owned_plan(
         return plan
 
     if isinstance(plan, UnderlinedVocabPlan):
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+        inventory = {span.id: span for span in vocab_hard_candidate_inventory(prepared_source)}
         if len(plan.target_span_ids) == 5 and all(span_id in inventory for span_id in plan.target_span_ids):
             return plan.model_copy(
                 update={

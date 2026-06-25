@@ -266,7 +266,7 @@ VOCAB_CORRECT_AMONG_4_CORRUPTED_PLANNER_PROMPT = """
 - Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
 - Prefer high-centrality targets with strong cue counts and keep the five targets separated enough that each remains readable when underlined in passage order.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
-- Build `corrupted_replacements_by_span_id` so exactly four of the five selected targets are contextually corrupted.
+- Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly four of the five selected targets are contextually corrupted.
 - Set `answer_span_id` to the one remaining underlined item that still fits the passage.
 - Every corrupted replacement must stay locally readable and slot-compatible, while failing semantically by polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
 - Do not use near-synonyms, loose paraphrases, rare-word difficulty alone, or replacements that become ungrammatical instead of semantically wrong.
@@ -283,7 +283,7 @@ VOCAB_ERROR_1_AMONG_5_PLANNER_PROMPT = """
 - Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
 - Prefer targets with clear contextual recoverability and stable local readability after substitution.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
-- Build `corrupted_replacements_by_span_id` so exactly one of the five selected targets is corrupted.
+- Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly one of the five selected targets is corrupted.
 - Set `answer_span_id` to that one corrupted underlined item.
 - The corrupted replacement must remain locally readable and slot-compatible, but fail semantically by polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
 - Keep the other four underlined items unchanged from the source.
@@ -300,7 +300,7 @@ VOCAB_ERROR_1_AMONG_5_POLARITY_SCOPE_PLANNER_PROMPT = """
 - Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
 - Prefer targets with strong contextual recoverability, especially where polarity, degree, or scope is tightly constrained by passage logic.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
-- Build `corrupted_replacements_by_span_id` so exactly one of the five selected targets is corrupted.
+- Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly one of the five selected targets is corrupted.
 - Set `answer_span_id` to that one corrupted underlined item.
 - The corrupted replacement must remain locally readable and slot-compatible, but it must fail specifically by polarity reversal, degree drift, or scope distortion.
 - Do not use collocation-only errors, discourse-role-only errors, rare-word difficulty alone, or an ungrammatical replacement.
@@ -317,7 +317,7 @@ VOCAB_ERROR_1_AMONG_5_COLLOCATION_PLANNER_PROMPT = """
 - Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
 - Prefer targets whose original wording forms a natural local combination that can be made subtly wrong through collocation or selectional-restriction mismatch.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
-- Build `corrupted_replacements_by_span_id` so exactly one of the five selected targets is corrupted.
+- Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly one of the five selected targets is corrupted.
 - Set `answer_span_id` to that one corrupted underlined item.
 - The corrupted replacement must remain grammatically readable and slot-compatible, but it must become wrong through collocation mismatch or selectional-restriction mismatch.
 - Do not use pure polarity reversal, broad semantic opposites, rare-word difficulty alone, or an ungrammatical replacement.
@@ -334,7 +334,7 @@ VOCAB_CORRECT_AMONG_3_CORRUPTED_PLANNER_PROMPT = """
 - Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
 - Prefer high-centrality targets whose meaning is recoverable from at least two independent contextual cues.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
-- Build `corrupted_replacements_by_span_id` so exactly three of the five selected targets are contextually corrupted.
+- Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly three of the five selected targets are contextually corrupted.
 - Exactly two underlined items will remain uncorrupted; set `answer_span_id` to the one that is most strongly and uniquely supported by the passage.
 - Use the extra uncorrupted item only if it is clearly weaker or less central than the answer under the passage evidence.
 - Every corrupted replacement must stay locally readable and slot-compatible, while failing semantically by polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.

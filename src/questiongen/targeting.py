@@ -358,6 +358,17 @@ def vocab_choice_inventory(
     )
 
 
+def vocab_hard_candidate_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
+    return sorted(
+        _dedupe_by_text(
+            span
+            for span in prepared_source.span_units
+            if vocab_choice_target_quality_error(span, subtype_key="contextual_vocab_choice_5") is None
+        ),
+        key=_vocab_choice_sort_key,
+    )
+
+
 def grammar_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
     return _dedupe_by_text(
         span
@@ -634,14 +645,6 @@ def vocab_choice_target_quality_error(
         and span.priority_score < 5
     ):
         return "Selected span is not central enough to passage interpretation for vocab."
-    if subtype_key in {
-        "contextual_vocab_correct_among_4_corrupted_5",
-        "contextual_vocab_error_1_among_5_5",
-        "contextual_vocab_error_1_among_5_polarity_scope_5",
-        "contextual_vocab_error_1_among_5_collocation_5",
-        "contextual_vocab_correct_among_3_corrupted_5",
-    } and (span.priority_score < 6 or vocab_choice_target_cue_count(span) < 3):
-        return f"Selected span is not strong enough for {subtype_key}."
     return None
 
 

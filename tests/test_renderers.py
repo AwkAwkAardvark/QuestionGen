@@ -27,6 +27,7 @@ from questiongen.targeting import (
     allowed_verb_form_variants,
     fill_blank_target_inventory,
     grammar_target_inventory,
+    vocab_hard_candidate_inventory,
     vocab_choice_inventory,
 )
 from questiongen.validators import validate_sentence_insertion_output
@@ -401,20 +402,21 @@ class RendererTests(unittest.TestCase):
             "Teachers discuss the results every Friday."
         )
         prepared = prepare_source(source)
+        inventory = vocab_hard_candidate_inventory(prepared)
         targets = sorted(
-            vocab_choice_inventory(prepared, "contextual_vocab_correct_among_4_corrupted_5")[:5],
+            inventory[:5],
             key=lambda span: span.char_start,
         )
         plan = UnderlinedVocabPlan(
             subtype="contextual_correct_among_4_corrupted",
             target_span_ids=[span.id for span in targets],
             target_span_texts=[span.text for span in targets],
-            corrupted_replacements_by_span_id={
-                targets[0].id: "weaken",
-                targets[2].id: "ignore",
-                targets[3].id: "delay",
-                targets[4].id: "worsen",
-            },
+            corrupted_replacements=[
+                {"span_id": targets[0].id, "replacement_text": "weaken"},
+                {"span_id": targets[2].id, "replacement_text": "ignore"},
+                {"span_id": targets[3].id, "replacement_text": "delay"},
+                {"span_id": targets[4].id, "replacement_text": "worsen"},
+            ],
             answer_span_id=targets[1].id,
             selection_basis_ko="이 자리만 원래 맥락의 의미를 자연스럽게 유지합니다",
             supporting_evidence="Stronger pumps reduce pressure loss across the valley.",
@@ -451,15 +453,19 @@ class RendererTests(unittest.TestCase):
             "Teachers discuss the results every Friday."
         )
         prepared = prepare_source(source)
+        inventory = vocab_hard_candidate_inventory(prepared)
+        polarity_target = next(span for span in inventory if span.text == "cease")
         targets = sorted(
-            vocab_choice_inventory(prepared, "contextual_vocab_error_1_among_5_polarity_scope_5")[:5],
+            [polarity_target] + [span for span in inventory if span.id != polarity_target.id][:4],
             key=lambda span: span.char_start,
         )
         plan = UnderlinedVocabPlan(
             subtype="contextual_error_1_among_5_polarity_scope",
             target_span_ids=[span.id for span in targets],
             target_span_texts=[span.text for span in targets],
-            corrupted_replacements_by_span_id={targets[0].id: "continue"},
+            corrupted_replacements=[
+                {"span_id": targets[0].id, "replacement_text": "continue"},
+            ],
             answer_span_id=targets[0].id,
             selection_basis_ko="이 자리는 멈춤이나 축소처럼 방향과 범위가 분명히 제한되어야 합니다",
             supporting_evidence="Leaders cease wasteful spending during droughts.",
@@ -496,16 +502,19 @@ class RendererTests(unittest.TestCase):
             "Teachers discuss the results every Friday."
         )
         prepared = prepare_source(source)
+        inventory = vocab_hard_candidate_inventory(prepared)
+        collocation_target = next(span for span in inventory if span.text == "ignore")
         targets = sorted(
-            vocab_choice_inventory(prepared, "contextual_vocab_error_1_among_5_collocation_5")[:5],
+            [collocation_target] + [span for span in inventory if span.id != collocation_target.id][:4],
             key=lambda span: span.char_start,
         )
-        collocation_target = next(span for span in targets if span.text == "ignore")
         plan = UnderlinedVocabPlan(
             subtype="contextual_error_1_among_5_collocation",
             target_span_ids=[span.id for span in targets],
             target_span_texts=[span.text for span in targets],
-            corrupted_replacements_by_span_id={collocation_target.id: "collect"},
+            corrupted_replacements=[
+                {"span_id": collocation_target.id, "replacement_text": "collect"},
+            ],
             answer_span_id=collocation_target.id,
             selection_basis_ko="이 자리는 문맥상 자연스러운 어휘 결합과 선택 제약이 유지되어야 합니다",
             supporting_evidence="Families ignore rumors during emergencies.",

@@ -413,6 +413,23 @@ class ContextualVocabChoicePlan(BaseModel):
         return self
 
 
+class UnderlinedVocabReplacement(BaseModel):
+    span_id: str
+    replacement_text: str
+
+    @model_validator(mode="after")
+    def _validate_replacement(self) -> UnderlinedVocabReplacement:
+        if not self.span_id:
+            raise ValueError("UnderlinedVocabReplacement span_id is required.")
+        if not self.replacement_text or not self.replacement_text.strip():
+            raise ValueError("UnderlinedVocabReplacement replacement_text is required.")
+        if not _is_short_english_lexical_choice(self.replacement_text):
+            raise ValueError(
+                "UnderlinedVocabReplacement replacement_text must be a short readable English lexical choice."
+            )
+        return self
+
+
 class UnderlinedVocabPlan(BaseModel):
     subtype: Literal[
         "contextual_correct_among_4_corrupted",
@@ -423,11 +440,17 @@ class UnderlinedVocabPlan(BaseModel):
     ]
     target_span_ids: list[str] = Field(default_factory=list)
     target_span_texts: list[str] = Field(default_factory=list)
-    corrupted_replacements_by_span_id: dict[str, str] = Field(default_factory=dict)
+    corrupted_replacements: list[UnderlinedVocabReplacement] = Field(default_factory=list)
     answer_span_id: str
     selection_basis_ko: str
     supporting_evidence: str
     explanation: str
+
+    def corrupted_replacement_map(self) -> dict[str, str]:
+        return {
+            replacement.span_id: replacement.replacement_text
+            for replacement in self.corrupted_replacements
+        }
 
     @model_validator(mode="after")
     def _validate_plan(self) -> UnderlinedVocabPlan:
@@ -445,13 +468,11 @@ class UnderlinedVocabPlan(BaseModel):
         if self.answer_span_id not in self.target_span_ids:
             raise ValueError("UnderlinedVocabPlan answer_span_id must be included in target_span_ids.")
 
-        corrupted_ids = list(self.corrupted_replacements_by_span_id.keys())
+        corrupted_ids = [replacement.span_id for replacement in self.corrupted_replacements]
         if len(set(corrupted_ids)) != len(corrupted_ids):
-            raise ValueError("UnderlinedVocabPlan corrupted_replacements_by_span_id keys must be unique.")
+            raise ValueError("UnderlinedVocabPlan corrupted_replacements span_id values must be unique.")
         if any(span_id not in self.target_span_ids for span_id in corrupted_ids):
-            raise ValueError("UnderlinedVocabPlan corrupted_replacements_by_span_id keys must be included in target_span_ids.")
-        if any(not _is_short_english_lexical_choice(text) for text in self.corrupted_replacements_by_span_id.values()):
-            raise ValueError("UnderlinedVocabPlan corrupted replacements must be short readable English lexical choices.")
+            raise ValueError("UnderlinedVocabPlan corrupted_replacements span_id values must be included in target_span_ids.")
 
         expected_corruption_count = {
             "contextual_correct_among_4_corrupted": 4,
@@ -460,7 +481,7 @@ class UnderlinedVocabPlan(BaseModel):
             "contextual_error_1_among_5_collocation": 1,
             "contextual_correct_among_3_corrupted": 3,
         }[self.subtype]
-        if len(self.corrupted_replacements_by_span_id) != expected_corruption_count:
+        if len(self.corrupted_replacements) != expected_corruption_count:
             raise ValueError(
                 f"UnderlinedVocabPlan requires exactly {expected_corruption_count} corrupted replacements for {self.subtype}."
             )
@@ -470,7 +491,7 @@ class UnderlinedVocabPlan(BaseModel):
                 "contextual_error_1_among_5_polarity_scope",
                 "contextual_error_1_among_5_collocation",
             }
-            and self.answer_span_id not in self.corrupted_replacements_by_span_id
+            and self.answer_span_id not in corrupted_ids
         ):
             raise ValueError("UnderlinedVocabPlan answer_span_id must be the corrupted item for contextual_error_1_among_5.")
         if (
@@ -480,7 +501,7 @@ class UnderlinedVocabPlan(BaseModel):
                 "contextual_error_1_among_5_polarity_scope",
                 "contextual_error_1_among_5_collocation",
             }
-            and self.answer_span_id in self.corrupted_replacements_by_span_id
+            and self.answer_span_id in corrupted_ids
         ):
             raise ValueError("UnderlinedVocabPlan answer_span_id must remain uncorrupted for pick-the-correct vocab subtypes.")
 

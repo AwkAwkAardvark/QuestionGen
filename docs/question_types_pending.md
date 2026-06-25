@@ -184,13 +184,16 @@ Current recommendation on registry shape:
   - best-paraphrase vocab forbids `correct_choice == selected_span_text` and also forbids the unchanged source wording anywhere in `choice_words`
   - phrase-choice vocab requires multiword targets, multiword options, and tight phrase-slot width preservation
   - blank-choice option order is deterministically shuffled from `BatchRowId` plus subtype key
-  - hard-family plans carry explicit target IDs, source texts, corruption maps, subtype direction, and answer span ID
+  - hard-family plans carry explicit target IDs, source texts, ordered `corrupted_replacements` records, subtype direction, and answer span ID
   - validators reject punctuation-crossing, clause-like, proper-noun, technical-label, function-word, near-synonym, wrong-corruption-class, and multiple-defensible-answer failures
 - Current incompatibility patterns:
-  - fewer than 5 strong lexical-slot targets for hard subtypes
+  - fewer than 5 clean lexical-slot candidates in the broader hard-candidate inventory for hard subtypes
   - fewer than 1 strong lexical-slot target for the blank-choice subtype
   - target cue count too weak for stable contextual recovery
   - extra untouched item not uniquely weaker in `contextual_vocab_correct_among_3_corrupted_5`
+- Current hard-family planning policy:
+  - parser-derived scores, cue counts, and source anchors remain visible in the prompt as ranked hints
+  - those parser hints should bias selection, but they are not a strict pre-planning veto once five clean lexical-slot candidates exist
 - Possible later subtype directions within the same broad family:
   - stronger phrase-focused contextual substitution, where all five options stay phrase-level rather than mixing word and phrase slots
   - narrower underlined corruption families keyed to one failure mode such as polarity reversal, collocation mismatch, or discourse-role drift

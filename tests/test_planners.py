@@ -342,7 +342,9 @@ class _VocabPlanner:
                 subtype="contextual_error_1_among_5_polarity_scope",
                 target_span_ids=list(target_ids),
                 target_span_texts=list(target_texts),
-                corrupted_replacements_by_span_id={target_ids[polarity_index]: "continue"},
+                corrupted_replacements=[
+                    {"span_id": target_ids[polarity_index], "replacement_text": "continue"},
+                ],
                 answer_span_id=target_ids[polarity_index],
                 selection_basis_ko="이 자리는 멈춤이나 축소처럼 방향과 범위가 분명히 제한되어야 합니다",
                 supporting_evidence="Leaders cease wasteful spending during droughts.",
@@ -355,7 +357,9 @@ class _VocabPlanner:
                 subtype="contextual_error_1_among_5_collocation",
                 target_span_ids=list(target_ids),
                 target_span_texts=list(target_texts),
-                corrupted_replacements_by_span_id={target_ids[collocation_index]: "collect"},
+                corrupted_replacements=[
+                    {"span_id": target_ids[collocation_index], "replacement_text": "collect"},
+                ],
                 answer_span_id=target_ids[collocation_index],
                 selection_basis_ko="이 자리는 문맥상 자연스러운 어휘 결합과 선택 제약이 유지되어야 합니다",
                 supporting_evidence="Families ignore rumors during emergencies.",
@@ -367,12 +371,12 @@ class _VocabPlanner:
                 subtype="contextual_correct_among_4_corrupted",
                 target_span_ids=list(target_ids),
                 target_span_texts=list(target_texts),
-                corrupted_replacements_by_span_id={
-                    target_ids[0]: "weaken",
-                    target_ids[2]: "ignore",
-                    target_ids[3]: "delay",
-                    target_ids[4]: "worsen",
-                },
+                corrupted_replacements=[
+                    {"span_id": target_ids[0], "replacement_text": "weaken"},
+                    {"span_id": target_ids[2], "replacement_text": "ignore"},
+                    {"span_id": target_ids[3], "replacement_text": "delay"},
+                    {"span_id": target_ids[4], "replacement_text": "worsen"},
+                ],
                 answer_span_id=target_ids[1],
                 selection_basis_ko="이 자리는 원문이 유지한 효과를 가장 자연스럽게 이어 주는 표현이어야 합니다",
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
@@ -1077,6 +1081,49 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("어구 단위", explanation)
         self.assertIn("어구 결합", explanation)
 
+    def test_graph_rewrites_vocab_explanation_cleans_duplicate_slot_phrase(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(span for span in prepared.span_units if span.text == "improve")
+        plan = ContextualVocabChoicePlan(
+            subtype="contextual_choice",
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            choice_words=["strengthen", "weaken", "ignore", "delay", "worsen"],
+            correct_choice="strengthen",
+            contextual_meaning_ko="이 자리에는 이 자리에는 안전을 더 높이는 방향의 표현이 와야 합니다",
+            supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+            explanation="초안입니다.",
+        )
+        rendered = render_vocab(
+            {
+                **self.state,
+                "source_paragraph": source,
+                "QuestionTypeKey": "vocab",
+                "QuestionSubtypeKey": "contextual_vocab_choice_5",
+                "QuestionFormatKey": "contextual_vocab_choice_5",
+                "prepared_source": prepared,
+                "plan": plan,
+            },
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_choice_5"],
+        )
+        context_result = build_explanation_context(
+            {**self.state, **rendered, "prepared_source": prepared, "plan": plan, "QuestionTypeKey": "vocab"}
+        )
+        rewrite_result = write_teacher_facing_explanation(
+            {**self.state, **rendered, **context_result, "prepared_source": prepared, "plan": plan, "QuestionTypeKey": "vocab"}
+        )
+        explanation = rewrite_result["generated"].explanation or ""
+        self.assertNotIn("이 자리에는 이 자리에는", explanation)
+        self.assertFalse(explanation.startswith("'"))
+
     def test_graph_rewrites_polarity_scope_explanation_with_direction_language(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
         state = {
@@ -1146,9 +1193,10 @@ class PlannerTests(unittest.TestCase):
         result = runner.invoke(state)
         self.assertEqual(result["status"], "validation_passed")
         explanation = result["generated"].explanation or ""
-        self.assertIn("단서를 보면", explanation)
+        self.assertTrue(explanation.startswith("문맥상"))
         self.assertIn("brighter crosswalks feel safer", explanation)
         self.assertIn("다른 선택지들은", explanation)
+        self.assertFalse(explanation.startswith("'"))
         self.assertNotIn("그 방향을 뒷받침", explanation)
         self.assertNotIn("자유서술 설명", explanation)
 

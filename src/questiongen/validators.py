@@ -67,6 +67,7 @@ from .targeting import (
     render_numbered_span_edits,
     underlined_phrase_inventory,
     underlined_span_quality_error,
+    vocab_hard_candidate_inventory,
     vocab_corruption_is_collocation_like,
     vocab_corruption_is_polarity_scope_like,
     vocab_choice_inventory,
@@ -778,7 +779,7 @@ def _validate_vocab_plan(
         )
         return errors
     if isinstance(plan, UnderlinedVocabPlan):
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+        inventory = {span.id: span for span in vocab_hard_candidate_inventory(prepared_source)}
         if any(span_id not in inventory for span_id in plan.target_span_ids):
             missing_ids = [span_id for span_id in plan.target_span_ids if span_id not in inventory]
             return [f"Unknown target span IDs: {', '.join(missing_ids)}"]
@@ -811,7 +812,7 @@ def _validate_vocab_compatibility(
             return [f"Passage does not contain a workable lexical-slot vocab target for {type_spec.subtype_key}."]
         return []
     if type_spec.plan_schema is UnderlinedVocabPlan:
-        if len(vocab_choice_inventory(prepared_source, type_spec.subtype_key)) < 5:
+        if len(vocab_hard_candidate_inventory(prepared_source)) < 5:
             return [f"Passage does not contain five workable lexical-slot vocab targets for {type_spec.subtype_key}."]
         return []
     if len(vocab_target_inventory(prepared_source)) < 5:
@@ -899,7 +900,8 @@ def _validate_underlined_vocab_plan(
     if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
         errors.append("UnderlinedVocabPlan supporting_evidence must be copied from the source passage.")
 
-    corrupted_ids = set(plan.corrupted_replacements_by_span_id)
+    replacement_by_span_id = plan.corrupted_replacement_map()
+    corrupted_ids = set(replacement_by_span_id)
     expected_corruption_count = {
         "contextual_correct_among_4_corrupted": 4,
         "contextual_error_1_among_5": 1,
@@ -917,7 +919,7 @@ def _validate_underlined_vocab_plan(
         target_error = vocab_choice_target_quality_error(span, subtype_key=type_spec.subtype_key)
         if target_error is not None:
             errors.append(target_error)
-        replacement = plan.corrupted_replacements_by_span_id.get(span.id)
+        replacement = replacement_by_span_id.get(span.id)
         rendered_text = replacement.strip() if replacement is not None else span.text
         rendered_texts.append(normalize_english_choice(rendered_text))
         if replacement is None:
@@ -1684,7 +1686,7 @@ def validate_vocab_output(
         )
         return errors
     if isinstance(plan, UnderlinedVocabPlan):
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+        inventory = {span.id: span for span in vocab_hard_candidate_inventory(prepared_source)}
         if any(span_id not in inventory for span_id in plan.target_span_ids):
             missing_ids = [span_id for span_id in plan.target_span_ids if span_id not in inventory]
             return [f"Unknown target span IDs: {', '.join(missing_ids)}"]
@@ -1710,7 +1712,7 @@ def validate_vocab_output(
             selected_spans=ordered_spans,
             replacement_by_span_id={
                 span_id: replacement.strip()
-                for span_id, replacement in plan.corrupted_replacements_by_span_id.items()
+                for span_id, replacement in plan.corrupted_replacement_map().items()
             },
             markers=MARKER_CHOICES[: type_spec.choice_count],
         )

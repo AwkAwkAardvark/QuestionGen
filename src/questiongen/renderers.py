@@ -32,6 +32,7 @@ from .targeting import (
     numbered_underline_open,
     phrase_span_inventory,
     render_numbered_span_edits,
+    vocab_hard_candidate_inventory,
     vocab_choice_inventory,
     vocab_target_inventory,
 )
@@ -684,7 +685,7 @@ def _build_underlined_vocab_question(
     if type_spec.choice_count != len(MARKER_CHOICES):
         raise ValueError("Underlined vocab renderer expects exactly five targets.")
 
-    inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+    inventory = {span.id: span for span in vocab_hard_candidate_inventory(prepared_source)}
     selected_spans = _ordered_target_spans(
         inventory=inventory,
         target_span_ids=plan.target_span_ids,
@@ -698,7 +699,7 @@ def _build_underlined_vocab_question(
         selected_spans=selected_spans,
         replacement_by_span_id={
             span_id: replacement.strip()
-            for span_id, replacement in plan.corrupted_replacements_by_span_id.items()
+            for span_id, replacement in plan.corrupted_replacement_map().items()
         },
         markers=MARKER_CHOICES[: type_spec.choice_count],
     )

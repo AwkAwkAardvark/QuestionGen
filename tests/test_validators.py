@@ -28,7 +28,9 @@ from questiongen.targeting import (
     phrase_span_inventory,
     render_numbered_span_edits,
     underlined_span_quality_error,
+    vocab_hard_candidate_inventory,
     vocab_choice_inventory,
+    vocab_choice_target_cue_count,
     vocab_choice_target_quality_error,
     vocab_target_inventory,
 )
@@ -1220,6 +1222,75 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("workable lexical-slot vocab target" in error for error in errors))
 
+    def test_underlined_vocab_schema_uses_structured_replacement_records(self) -> None:
+        schema = UnderlinedVocabPlan.model_json_schema()
+        self.assertIn("corrupted_replacements", schema["properties"])
+        self.assertNotIn("corrupted_replacements_by_span_id", schema["properties"])
+        self.assertEqual(schema["properties"]["corrupted_replacements"]["type"], "array")
+        replacement_def = schema.get("$defs", {}).get("UnderlinedVocabReplacement", {})
+        self.assertIn("span_id", replacement_def.get("properties", {}))
+        self.assertIn("replacement_text", replacement_def.get("properties", {}))
+
+    def test_vocab_hard_subtype_compatibility_accepts_five_clean_base_candidates_without_old_hard_gate(self) -> None:
+        sentences = [
+            "The committee offered steady guidance to new teachers.",
+            "Local mentors provide support for new teachers.",
+            "City leaders made careful changes after storms.",
+            "Brighter signs keep evening crossings safer for children.",
+            "Volunteers protect fragile habitats during repairs.",
+        ]
+        source = " ".join(sentences)
+        sentence_units = [SourceUnit(id=f"S{index}", text=text, index=index) for index, text in enumerate(sentences)]
+        gap_units = [
+            GapUnit(
+                id=f"G{index}",
+                index=index,
+                before_unit_id=f"S{index - 1}" if index > 0 else None,
+                after_unit_id=f"S{index}" if index < len(sentences) else None,
+            )
+            for index in range(len(sentences) + 1)
+        ]
+        candidate_words = ["steady", "support", "careful", "safer", "protect"]
+        span_units: list[SpanUnit] = []
+        search_start = 0
+        for index, word in enumerate(candidate_words):
+            char_start = source.index(word, search_start)
+            char_end = char_start + len(word)
+            sentence_text = sentences[index]
+            sentence_start = source.index(sentence_text)
+            sentence_offset = char_start - sentence_start
+            span_units.append(
+                SpanUnit(
+                    id=f"P{index}",
+                    text=word,
+                    normalized_text=word,
+                    char_start=char_start,
+                    char_end=char_end,
+                    sentence_unit_id=f"S{index}",
+                    sentence_index=index,
+                    context_before=sentence_text[:sentence_offset],
+                    context_after=sentence_text[sentence_offset + len(word) :],
+                    heuristic_tags=["single_word", "contextual_cue", "vocab_candidate"],
+                    priority_score=5,
+                )
+            )
+            search_start = char_end
+
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=sentence_units,
+            gap_units=gap_units,
+            span_units=span_units,
+        )
+
+        self.assertEqual(len(vocab_hard_candidate_inventory(prepared)), 5)
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+        )
+        self.assertEqual(errors, [])
+
     def test_fill_in_the_blank_validator_accepts_valid_output(self) -> None:
         source = (
             "City planners recently tested brighter LED lights on several downtown blocks. "
@@ -1392,19 +1463,19 @@ class ValidatorTests(unittest.TestCase):
         )
         prepared = prepare_source(source)
         targets = sorted(
-            vocab_choice_inventory(prepared, "contextual_vocab_correct_among_4_corrupted_5")[:5],
+            vocab_hard_candidate_inventory(prepared)[:5],
             key=lambda span: span.char_start,
         )
         plan = UnderlinedVocabPlan(
             subtype="contextual_correct_among_4_corrupted",
             target_span_ids=[span.id for span in targets],
             target_span_texts=[span.text for span in targets],
-            corrupted_replacements_by_span_id={
-                targets[0].id: "weaken",
-                targets[2].id: "ignore",
-                targets[3].id: "delay",
-                targets[4].id: "worsen",
-            },
+            corrupted_replacements=[
+                {"span_id": targets[0].id, "replacement_text": "weaken"},
+                {"span_id": targets[2].id, "replacement_text": "ignore"},
+                {"span_id": targets[3].id, "replacement_text": "delay"},
+                {"span_id": targets[4].id, "replacement_text": "worsen"},
+            ],
             answer_span_id=targets[1].id,
             selection_basis_ko="이 자리만 원래 맥락의 의미를 자연스럽게 유지합니다",
             supporting_evidence="Stronger pumps reduce pressure loss across the valley.",
@@ -1417,7 +1488,7 @@ class ValidatorTests(unittest.TestCase):
             student_paragraph=render_numbered_span_edits(
                 source_text=source,
                 selected_spans=targets,
-                replacement_by_span_id=plan.corrupted_replacements_by_span_id,
+                replacement_by_span_id=plan.corrupted_replacement_map(),
                 markers=["①", "②", "③", "④", "⑤"],
             ),
             question_stem=QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"].question_stem,
@@ -1446,19 +1517,26 @@ class ValidatorTests(unittest.TestCase):
         )
         prepared = prepare_source(source)
         targets = sorted(
-            vocab_choice_inventory(prepared, "contextual_vocab_correct_among_3_corrupted_5")[:5],
+            vocab_hard_candidate_inventory(prepared)[:5],
             key=lambda span: span.char_start,
         )
+        ranked_by_strength = sorted(
+            targets,
+            key=lambda span: (vocab_choice_target_cue_count(span), span.priority_score),
+        )
+        answer_span = ranked_by_strength[0]
+        untouched_distractor = ranked_by_strength[-1]
+        corrupted_targets = [span for span in targets if span.id not in {answer_span.id, untouched_distractor.id}]
         plan = UnderlinedVocabPlan(
             subtype="contextual_correct_among_3_corrupted",
             target_span_ids=[span.id for span in targets],
             target_span_texts=[span.text for span in targets],
-            corrupted_replacements_by_span_id={
-                targets[0].id: "weaken",
-                targets[3].id: "delay",
-                targets[4].id: "worsen",
-            },
-            answer_span_id=targets[2].id,
+            corrupted_replacements=[
+                {"span_id": corrupted_targets[0].id, "replacement_text": "weaken"},
+                {"span_id": corrupted_targets[1].id, "replacement_text": "delay"},
+                {"span_id": corrupted_targets[2].id, "replacement_text": "worsen"},
+            ],
+            answer_span_id=answer_span.id,
             selection_basis_ko="이 자리만 가장 강하게 passage의 핵심 효과를 유지합니다",
             supporting_evidence="Stronger pumps reduce pressure loss across the valley.",
             explanation="문맥상 정답만 가장 강하게 원래 의미를 유지합니다.",
@@ -1870,22 +1948,33 @@ class ValidatorTests(unittest.TestCase):
             "Teachers discuss the results every Friday."
         )
         prepared = prepare_source(source)
+        inventory = vocab_hard_candidate_inventory(prepared)
+        polarity_target = next(span for span in inventory if span.text == "cease")
         targets = sorted(
-            vocab_choice_inventory(prepared, "contextual_vocab_error_1_among_5_polarity_scope_5")[:5],
+            [polarity_target] + [span for span in inventory if span.id != polarity_target.id][:4],
             key=lambda span: span.char_start,
         )
         valid_plan = UnderlinedVocabPlan(
             subtype="contextual_error_1_among_5_polarity_scope",
             target_span_ids=[span.id for span in targets],
             target_span_texts=[span.text for span in targets],
-            corrupted_replacements_by_span_id={targets[0].id: "continue"},
+            corrupted_replacements=[
+                {"span_id": targets[0].id, "replacement_text": "continue"},
+            ],
             answer_span_id=targets[0].id,
             selection_basis_ko="이 자리는 멈춤이나 축소처럼 방향과 범위가 분명히 제한되어야 합니다",
             supporting_evidence="Leaders cease wasteful spending during droughts.",
             explanation="문맥상 방향과 범위를 어긋나게 만든 표현을 골라야 합니다.",
         )
-        invalid_plan = valid_plan.model_copy(
-            update={"corrupted_replacements_by_span_id": {targets[0].id: "fragile"}}
+        invalid_plan = UnderlinedVocabPlan(
+            subtype=valid_plan.subtype,
+            target_span_ids=valid_plan.target_span_ids,
+            target_span_texts=valid_plan.target_span_texts,
+            corrupted_replacements=[{"span_id": targets[0].id, "replacement_text": "fragile"}],
+            answer_span_id=valid_plan.answer_span_id,
+            selection_basis_ko=valid_plan.selection_basis_ko,
+            supporting_evidence=valid_plan.supporting_evidence,
+            explanation=valid_plan.explanation,
         )
         self.assertEqual(
             validate_plan_against_prepared_source(
@@ -1912,23 +2001,33 @@ class ValidatorTests(unittest.TestCase):
             "Teachers discuss the results every Friday."
         )
         prepared = prepare_source(source)
+        inventory = vocab_hard_candidate_inventory(prepared)
+        collocation_target = next(span for span in inventory if span.text == "ignore")
         targets = sorted(
-            vocab_choice_inventory(prepared, "contextual_vocab_error_1_among_5_collocation_5")[:5],
+            [collocation_target] + [span for span in inventory if span.id != collocation_target.id][:4],
             key=lambda span: span.char_start,
         )
-        collocation_target = next(span for span in targets if span.text == "ignore")
         valid_plan = UnderlinedVocabPlan(
             subtype="contextual_error_1_among_5_collocation",
             target_span_ids=[span.id for span in targets],
             target_span_texts=[span.text for span in targets],
-            corrupted_replacements_by_span_id={collocation_target.id: "collect"},
+            corrupted_replacements=[
+                {"span_id": collocation_target.id, "replacement_text": "collect"},
+            ],
             answer_span_id=collocation_target.id,
             selection_basis_ko="이 자리는 문맥상 자연스러운 어휘 결합과 선택 제약이 유지되어야 합니다",
             supporting_evidence="Families ignore rumors during emergencies.",
             explanation="문맥상 자연스러운 어휘 결합을 깨뜨린 표현을 골라야 합니다.",
         )
-        invalid_plan = valid_plan.model_copy(
-            update={"corrupted_replacements_by_span_id": {collocation_target.id: "notice"}}
+        invalid_plan = UnderlinedVocabPlan(
+            subtype=valid_plan.subtype,
+            target_span_ids=valid_plan.target_span_ids,
+            target_span_texts=valid_plan.target_span_texts,
+            corrupted_replacements=[{"span_id": collocation_target.id, "replacement_text": "notice"}],
+            answer_span_id=valid_plan.answer_span_id,
+            selection_basis_ko=valid_plan.selection_basis_ko,
+            supporting_evidence=valid_plan.supporting_evidence,
+            explanation=valid_plan.explanation,
         )
         self.assertEqual(
             validate_plan_against_prepared_source(

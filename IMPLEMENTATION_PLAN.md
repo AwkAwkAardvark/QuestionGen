@@ -186,7 +186,16 @@
     - `contextual_vocab_error_1_among_5_collocation_5`
     - `contextual_vocab_correct_among_3_corrupted_5`
   - shipped policy: broad-family runs now produce three blank-choice contextual substitution subtypes plus five underlined multi-target corruption/diagnosis subtypes
-  - current hardening policy: the blank-choice branch now distinguishes baseline contextual substitution, strict non-restoration best-paraphrase selection, and phrase-only lexical substitution; renderer choice order remains deterministically shuffled from `BatchRowId` and subtype key; the hard family keeps explicit corruption maps and stem directions; validators reject weak targets, unchanged-source best-paraphrase answers, phrase-width drift, wrong corruption class, near-synonym drift, and non-unique remaining answers
+  - current hardening policy: the blank-choice branch now distinguishes baseline contextual substitution, strict non-restoration best-paraphrase selection, and phrase-only lexical substitution; renderer choice order remains deterministically shuffled from `BatchRowId` and subtype key; the hard family now uses structured-output-safe ordered `corrupted_replacements` records instead of a dict-shaped field; validators reject weak targets, unchanged-source best-paraphrase answers, phrase-width drift, wrong corruption class, near-synonym drift, rendered-underline collisions, and non-unique remaining answers
+  - current hard-family admission and prompting policy:
+    - [x] keep all five hard underlined vocab subtypes live with the structured-output-safe ordered replacement-record collection
+    - [x] update planner canonicalization, deterministic validators, renderers, explanation-context assembly, and tests together around that new replacement shape
+    - [x] allow hard-family planning whenever at least five clean lexical-slot candidates exist from the broader hard-candidate inventory, rather than requiring old parser-top-tier thresholds
+    - [x] keep parser-derived scores, cue counts, and source anchors visible to the planner as ranked hints rather than as a hard admission veto
+    - [x] keep subtype-specific post-plan checks strict: corruption counts, source-order uniqueness, slot compatibility, no near-synonym corruption, rendered uniqueness, one-best-answer behavior, polarity/scope-only checks, collocation-only checks, and uniquely stronger surviving-answer checks for `contextual_vocab_correct_among_3_corrupted_5`
+    - [x] tighten the hard-vocab planner and repair prompts so retries explicitly react to insufficient distinct targets, ambiguity between surviving answers, wrong corruption class, slot-width drift, and duplicate rendered targets
+    - [x] clean exported `vocab` explanations in the same pass so they do not open with raw quoted English evidence and they strip duplicated Korean memo boilerplate such as repeated `이 자리에는 ...`
+    - [x] keep regression coverage that re-audits checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv` source passages and requires every hard `vocab` subtype to produce at least some `validation_passed` rows with no schema-shaped `planning_error`
 - [x] `grammar`
   - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
   - live subtype set:

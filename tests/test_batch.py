@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import re
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from pathlib import Path
 
 from questiongen.batch import BatchProgressUpdate, run_batch_dataframe, run_batch_files, run_batch_rows
 from questiongen.graph import compile_question_graph
+from questiongen.parsers import prepare_source
 from questiongen.planners import PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR, PLANNER_QUOTA_EXHAUSTED_ERROR
 from questiongen.schemas import (
     BatchInputRow,
@@ -171,8 +173,20 @@ class _StubPlanner:
                 replacements = {target_ids[2]: "ignore"}
                 answer_span_id = target_ids[2]
             elif subtype == "contextual_error_1_among_5_polarity_scope":
-                replacements = {target_ids[0]: "continue"}
-                answer_span_id = target_ids[0]
+                if "cease" in target_texts:
+                    polarity_index = target_texts.index("cease")
+                    polarity_replacement = "continue"
+                elif "expand" in target_texts:
+                    polarity_index = target_texts.index("expand")
+                    polarity_replacement = "reduce"
+                elif "less" in target_texts:
+                    polarity_index = target_texts.index("less")
+                    polarity_replacement = "more"
+                else:
+                    polarity_index = 0
+                    polarity_replacement = "less"
+                replacements = {target_ids[polarity_index]: polarity_replacement}
+                answer_span_id = target_ids[polarity_index]
             elif subtype == "contextual_error_1_among_5_collocation":
                 collocation_index = target_texts.index("ignore") if "ignore" in target_texts else len(target_ids) - 1
                 replacements = {target_ids[collocation_index]: "collect"}
@@ -188,7 +202,10 @@ class _StubPlanner:
                 subtype=subtype,
                 target_span_ids=list(target_ids),
                 target_span_texts=list(target_texts),
-                corrupted_replacements_by_span_id=replacements,
+                corrupted_replacements=[
+                    {"span_id": span_id, "replacement_text": replacement_text}
+                    for span_id, replacement_text in replacements.items()
+                ],
                 answer_span_id=answer_span_id,
                 selection_basis_ko="문맥상 주민 안전을 높이는 원래 기능을 가장 자연스럽게 유지하는 표현이어야 합니다",
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
@@ -229,12 +246,276 @@ class _StubPlanner:
         )
 
 
+_HARD_GENERIC_REPLACEMENTS = {
+    "ability": "inability",
+    "actually": "barely",
+    "cease": "continue",
+    "complex": "simple",
+    "composed": "copied",
+    "destroy": "preserve",
+    "expand": "reduce",
+    "happiness": "misery",
+    "heated": "calm",
+    "improve": "weaken",
+    "inequity": "fairness",
+    "necessary": "optional",
+    "open": "close",
+    "possible": "impossible",
+    "protect": "damage",
+    "reduce": "increase",
+    "sacrosanct": "negotiable",
+}
+
+_HARD_POLARITY_REPLACEMENTS = {
+    "actually": "barely",
+    "cease": "continue",
+    "expand": "reduce",
+    "improve": "weaken",
+    "less": "more",
+    "necessary": "optional",
+    "open": "close",
+    "possible": "impossible",
+    "protect": "damage",
+    "reduce": "increase",
+}
+
+_HARD_COLLOCATION_REPLACEMENTS = {
+    "ability": "machinery",
+    "acknowledged": "collect",
+    "complex": "wooden",
+    "composed": "collect",
+    "destroy": "collect",
+    "expand": "collect",
+    "happiness": "machinery",
+    "heated": "wooden",
+    "ignore": "collect",
+    "improve": "collect",
+    "inequity": "machinery",
+    "necessary": "wooden",
+    "open": "wooden",
+    "possible": "wooden",
+    "protect": "collect",
+    "reduce": "collect",
+}
+
+_HARD_GENERIC_FALLBACKS = {
+    1: ["distort", "worsen", "narrow", "fragile", "static"],
+    2: ["far weaker", "less stable", "more narrow", "deeply fragile"],
+    3: ["far less stable", "much more narrow", "markedly less coherent"],
+}
+
+_HARD_POLARITY_FALLBACKS = {
+    1: ["less", "more", "never", "always"],
+    2: ["far less", "far more", "not fully", "only partly"],
+    3: ["much less often", "far more often", "not at all"],
+}
+
+_HARD_COLLOCATION_FALLBACKS = {
+    1: ["wooden", "metallic", "machinery", "textile"],
+    2: ["wooden signal", "metallic belief", "textile judgment"],
+    3: ["wooden social signal", "metallic moral judgment"],
+}
+
+
+class _HardVocabAuditPlanner:
+    def __init__(self, output_schema: type[UnderlinedVocabPlan]) -> None:
+        self.output_schema = output_schema
+
+    def invoke(self, prompt: str) -> UnderlinedVocabPlan:
+        target_infos = _extract_ranked_lexical_target_infos(prompt)[:5]
+        target_ids = tuple(info["span_id"] for info in target_infos)
+        target_texts = tuple(info["text"] for info in target_infos)
+        subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
+        active_subtype = subtype_match.group(1) if subtype_match else ""
+
+        if active_subtype == "contextual_vocab_error_1_among_5_polarity_scope_5":
+            corruption_index, replacement_text = self._pick_first_replacement(
+                target_texts,
+                _HARD_POLARITY_REPLACEMENTS,
+                _HARD_POLARITY_FALLBACKS,
+                fallback="more",
+            )
+            subtype = "contextual_error_1_among_5_polarity_scope"
+            replacements = [
+                {"span_id": target_ids[corruption_index], "replacement_text": replacement_text},
+            ]
+            answer_span_id = target_ids[corruption_index]
+            selection_basis_ko = "문맥상 원래 표현의 방향이나 정도가 유지되어야 합니다"
+        elif active_subtype == "contextual_vocab_error_1_among_5_collocation_5":
+            corruption_index, replacement_text = self._pick_first_replacement(
+                target_texts,
+                _HARD_COLLOCATION_REPLACEMENTS,
+                _HARD_COLLOCATION_FALLBACKS,
+                fallback="collect",
+            )
+            subtype = "contextual_error_1_among_5_collocation"
+            replacements = [
+                {"span_id": target_ids[corruption_index], "replacement_text": replacement_text},
+            ]
+            answer_span_id = target_ids[corruption_index]
+            selection_basis_ko = "문맥상 이 자리는 자연스러운 어휘 결합이 유지되어야 합니다"
+        elif active_subtype == "contextual_vocab_error_1_among_5_5":
+            corruption_index, replacement_text = self._pick_first_replacement(
+                target_texts,
+                _HARD_GENERIC_REPLACEMENTS,
+                _HARD_GENERIC_FALLBACKS,
+                fallback="worsen",
+            )
+            subtype = "contextual_error_1_among_5"
+            replacements = [
+                {"span_id": target_ids[corruption_index], "replacement_text": replacement_text},
+            ]
+            answer_span_id = target_ids[corruption_index]
+            selection_basis_ko = "문맥상 원래 표현만 글의 핵심 의미를 유지합니다"
+        elif active_subtype == "contextual_vocab_correct_among_3_corrupted_5":
+            subtype = "contextual_correct_among_3_corrupted"
+            answer_index, untouched_index = self._pick_strongest_and_weakest_indices(target_infos)
+            used_replacements: list[str] = []
+            replacements = [
+                {
+                    "span_id": target_ids[index],
+                    "replacement_text": self._replacement_for(
+                        target_texts[index],
+                        target_texts,
+                        used_replacements,
+                        _HARD_GENERIC_REPLACEMENTS,
+                        _HARD_GENERIC_FALLBACKS,
+                        fallback="worsen",
+                    ),
+                }
+                for index in range(len(target_ids))
+                if index not in {answer_index, untouched_index}
+            ]
+            answer_span_id = target_ids[answer_index]
+            selection_basis_ko = "문맥상 정답 표현만 가장 강하게 원래 의미를 유지합니다"
+        else:
+            subtype = "contextual_correct_among_4_corrupted"
+            used_replacements = []
+            replacements = [
+                {
+                    "span_id": target_ids[index],
+                    "replacement_text": self._replacement_for(
+                        target_texts[index],
+                        target_texts,
+                        used_replacements,
+                        _HARD_GENERIC_REPLACEMENTS,
+                        _HARD_GENERIC_FALLBACKS,
+                        fallback="worsen",
+                    ),
+                }
+                for index in (1, 2, 3, 4)
+            ]
+            answer_span_id = target_ids[0]
+            selection_basis_ko = "문맥상 정답 표현만 원래 의미를 자연스럽게 유지합니다"
+
+        return self.output_schema(
+            subtype=subtype,
+            target_span_ids=list(target_ids),
+            target_span_texts=list(target_texts),
+            corrupted_replacements=replacements,
+            answer_span_id=answer_span_id,
+            selection_basis_ko=selection_basis_ko,
+            supporting_evidence=target_texts[0],
+            explanation="문맥상 정답과 오답의 의미 차이를 구분해야 합니다.",
+        )
+
+    @staticmethod
+    def _replacement_for(
+        text: str,
+        target_texts: tuple[str, ...],
+        used_replacements: list[str],
+        replacements: dict[str, str],
+        fallback_replacements: dict[int, list[str]],
+        *,
+        fallback: str,
+    ) -> str:
+        token_count = len(text.split())
+        taken = {_normalize_lexical_text(target_text) for target_text in target_texts}
+        taken.update(_normalize_lexical_text(replacement) for replacement in used_replacements)
+        candidates: list[str] = []
+        mapped = replacements.get(text.lower())
+        if mapped is not None:
+            candidates.append(mapped)
+        candidates.extend(fallback_replacements.get(token_count, []))
+        candidates.append(fallback)
+        for candidate in candidates:
+            if _normalize_lexical_text(candidate) not in taken:
+                used_replacements.append(candidate)
+                return candidate
+        used_replacements.append(fallback)
+        return fallback
+
+    @classmethod
+    def _pick_first_replacement(
+        cls,
+        target_texts: tuple[str, ...],
+        replacements: dict[str, str],
+        fallback_replacements: dict[int, list[str]],
+        *,
+        fallback: str,
+    ) -> tuple[int, str]:
+        used_replacements: list[str] = []
+        for index, text in enumerate(target_texts):
+            replacement = cls._replacement_for(
+                text,
+                target_texts,
+                used_replacements,
+                replacements,
+                fallback_replacements,
+                fallback=fallback,
+            )
+            if replacement:
+                return index, replacement
+        return 0, fallback
+
+    @staticmethod
+    def _pick_strongest_and_weakest_indices(target_infos: list[dict[str, int | str]]) -> tuple[int, int]:
+        ranked = sorted(
+            range(len(target_infos)),
+            key=lambda index: (
+                int(target_infos[index]["cues"]),
+                int(target_infos[index]["score"]),
+                -index,
+            ),
+            reverse=True,
+        )
+        answer_index = ranked[0]
+        weakest_ranked = sorted(
+            (index for index in range(len(target_infos)) if index != answer_index),
+            key=lambda index: (
+                int(target_infos[index]["cues"]),
+                int(target_infos[index]["score"]),
+                index,
+            ),
+        )
+        return answer_index, weakest_ranked[0]
+
+
 def _extract_ranked_single_word_targets(prompt: str) -> list[tuple[str, str]]:
     return re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)
 
 
 def _extract_ranked_lexical_targets(prompt: str) -> list[tuple[str, str]]:
     return re.findall(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+
+
+def _extract_ranked_lexical_target_infos(prompt: str) -> list[dict[str, int | str]]:
+    return [
+        {
+            "span_id": span_id,
+            "score": int(score),
+            "cues": int(cues),
+            "text": text,
+        }
+        for span_id, score, cues, text in re.findall(
+            r"- rank \d+: (P\d+); score=(\d+); cues=(\d+); .*text='([^']+)'",
+            prompt,
+        )
+    ]
+
+
+def _normalize_lexical_text(text: str) -> str:
+    return " ".join(text.lower().split())
 
 
 class _FailingRunner:
@@ -346,11 +627,11 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(by_subtype["contextual_vocab_choice_5"].status, "validation_passed")
         self.assertEqual(by_subtype["contextual_vocab_best_paraphrase_choice_5"].status, "validation_passed")
         self.assertEqual(by_subtype["contextual_vocab_phrase_choice_5"].status, "qtype_incompatibility_error")
-        self.assertEqual(by_subtype["contextual_vocab_correct_among_4_corrupted_5"].status, "qtype_incompatibility_error")
-        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_5"].status, "qtype_incompatibility_error")
-        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_polarity_scope_5"].status, "qtype_incompatibility_error")
-        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_collocation_5"].status, "qtype_incompatibility_error")
-        self.assertEqual(by_subtype["contextual_vocab_correct_among_3_corrupted_5"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["contextual_vocab_correct_among_4_corrupted_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_polarity_scope_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_collocation_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_correct_among_3_corrupted_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_verb_form_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_subject_verb_agreement_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["grammar_error_finite_nonfinite_5"].status, "validation_passed")
@@ -365,6 +646,78 @@ class BatchTests(unittest.TestCase):
         results = run_batch_rows(self.rows, ["sentence_insertion"], _IncompatibleRunner())
         self.assertEqual(results[0].status, "qtype_incompatibility_error")
         self.assertTrue(any("not suitable" in error for error in results[0].errors))
+
+    def test_hard_vocab_subtypes_produce_passes_on_sample_reaudit(self) -> None:
+        sample_path = Path("sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv")
+        with sample_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            sample_rows = list(csv.DictReader(handle))
+
+        runner = compile_question_graph(structured_llm_factory=lambda schema: _HardVocabAuditPlanner(schema))
+        seen_sources: set[str] = set()
+        rows: list[BatchInputRow] = []
+        for sample_row in sample_rows:
+            source = sample_row["source_paragraph"]
+            if source in seen_sources:
+                continue
+            seen_sources.add(source)
+            rows.append(
+                BatchInputRow(
+                    OriginalQuestionNumber=str(sample_row["OriginalQuestionNumber"]),
+                    BatchRowId=len(rows),
+                    source_paragraph=source,
+                )
+            )
+
+        hard_subtypes = [
+            "contextual_vocab_correct_among_4_corrupted_5",
+            "contextual_vocab_error_1_among_5_5",
+            "contextual_vocab_error_1_among_5_polarity_scope_5",
+            "contextual_vocab_error_1_among_5_collocation_5",
+            "contextual_vocab_correct_among_3_corrupted_5",
+        ]
+
+        results = []
+        for row in rows:
+            for subtype in hard_subtypes:
+                prepared = prepare_source(row.source_paragraph)
+                results.append(
+                    runner.invoke(
+                        {
+                            "OriginalQuestionNumber": row.OriginalQuestionNumber,
+                            "BatchRowId": row.BatchRowId,
+                            "source_paragraph": row.source_paragraph,
+                            "QuestionTypeKey": "vocab",
+                            "QuestionSubtypeKey": subtype,
+                            "QuestionFormatKey": subtype,
+                            "prepared_source": prepared,
+                            "plan": None,
+                            "generated": None,
+                            "status": "source_prepared",
+                            "errors": [],
+                        }
+                    )
+                )
+
+        for subtype in hard_subtypes:
+            subtype_results = [result for result in results if result["QuestionSubtypeKey"] == subtype]
+            self.assertTrue(subtype_results, msg=f"Expected rows for {subtype} in sample re-audit.")
+            self.assertTrue(
+                any(result["status"] == "validation_passed" for result in subtype_results),
+                msg=f"Expected at least one validation_passed row for {subtype} in sample re-audit.",
+            )
+            self.assertFalse(
+                any(
+                    result["status"] == "planning_error"
+                    and any(
+                        "corrupted_replacements_by_span_id" in error
+                        or "corrupted_replacements span_id values" in error
+                        or "schema" in error.lower()
+                        for error in (result.get("errors") or [])
+                    )
+                    for result in subtype_results
+                ),
+                msg=f"Did not expect schema-shaped planning_error rows for {subtype} in sample re-audit.",
+            )
 
     def test_quota_failure_triggers_batch_global_fail_fast(self) -> None:
         runner = _QuotaThenUnexpectedRunner()

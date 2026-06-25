@@ -21,6 +21,7 @@ from .targeting import (
     span_crosses_punctuation,
     span_shape_label,
     underlined_phrase_inventory,
+    vocab_hard_candidate_inventory,
     vocab_choice_inventory,
     vocab_choice_target_cue_count,
     vocab_target_inventory,
@@ -477,11 +478,12 @@ Selection reminders:
         target_inventory = "\n".join(
             (
                 f"- rank {rank}: {span.id}; score={span.priority_score}; cues={vocab_choice_target_cue_count(span)}; "
+                f"preference={_vocab_hard_preference_label(span.priority_score, vocab_choice_target_cue_count(span))}; "
                 f"shape={span_shape_label(span)}; punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
                 f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
                 f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
             )
-            for rank, span in enumerate(vocab_choice_inventory(prepared_source, type_spec.subtype_key), start=1)
+            for rank, span in enumerate(vocab_hard_candidate_inventory(prepared_source), start=1)
         )
         return f"""
 You are planning an English exam contextual vocabulary question.
@@ -508,10 +510,16 @@ Lexical-slot vocab targets:
 
 Selection reminders:
 - Follow the active subtype exactly and keep subtype identity explicit in the returned schema.
+- Return hard-family corruptions as an ordered `corrupted_replacements` list of records with `span_id` and `replacement_text`, not as a free-form mapping.
 - Select five distinct source-owned target IDs and preserve them in source order when you reason about the underlined passage.
+- Prefer the highest-ranked `preference=top` or `preference=strong` candidates first, but you may use a lower-ranked clean lexical slot when needed to reach five distinct usable targets.
 - Every corrupted replacement must stay readable in the same local slot, while becoming semantically wrong.
+- `score=` and `cues=` are ranked hints, not a validity boundary; lower-ranked clean lexical slots are still allowed if they remain passage-anchored and slot-compatible.
+- If the active subtype is `contextual_vocab_correct_among_4_corrupted_5`, exactly four items must be corrupted and exactly one item must remain clearly correct.
+- If the active subtype is `contextual_vocab_error_1_among_5_5`, exactly one item must be corrupted and the other four must remain unchanged.
 - If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must fail specifically by polarity, degree, or scope drift.
 - If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must fail by collocation or selectional mismatch, not by broad opposite meaning.
+- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, exactly three items must be corrupted, exactly two must remain unchanged, and only one unchanged item may remain the uniquely strongest answer.
 - If the subtype asks for the correct remaining item, make sure only one answer is defensible from the passage evidence.
 - Source-owned IDs remain the authoritative contract; exact source wording will be resolved deterministically from those IDs.
 """.strip()
@@ -581,12 +589,16 @@ Repair rules:
 - If the active subtype is a blank-choice vocab item, keep `selected_span_text` as the original source wording but set `correct_choice` to the best contextual lexical fit from `choice_words`.
 - If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, `correct_choice` must differ from `selected_span_text` and the unchanged source wording must not appear anywhere in `choice_words`.
 - If the active subtype is `contextual_vocab_phrase_choice_5`, re-check that `selected_span_text` and every option are multiword phrases with tight slot-width preservation.
-- If the active subtype is an underlined vocab item, re-check the number of selected targets, the corruption count, and whether `answer_span_id` matches the stem direction.
+- If the active subtype is an underlined vocab item, re-check the number of selected targets, the corruption count, whether `answer_span_id` matches the stem direction, and whether `corrupted_replacements` is an ordered list of `{{span_id, replacement_text}}` records.
 - If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, re-check that the one corruption is specifically a polarity, degree, or scope distortion.
 - If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, re-check that the one corruption is a collocation or selectional mismatch rather than a broad opposite.
 - Re-check that every option stays in the same local slot and remains readable in context.
 - Re-check that the wrong options are semantically wrong, not merely rare, ungrammatical, or near-synonymous.
+- If the previous error mentions insufficient distinct targets, rebuild the full five-target set from the ranked inventory instead of editing only one target.
 - If the previous error mentions ambiguity or multiple defensible answers, rebuild all distractors from scratch around clearer polarity, scope, collocation, or discourse-role mismatches.
+- If the previous error mentions the wrong corruption class, replace the corrupted item from scratch rather than only paraphrasing the same bad replacement.
+- If the previous error mentions slot-width drift, choose replacements that better preserve local phrase width and lexical-slot shape.
+- If the previous error mentions duplicate rendered targets, rebuild the entire corruption set so all five visible underlined items stay distinct after substitution.
 - If the active subtype is the legacy error format, re-check that `target_span_ids` contains exactly five unique IDs, that `corrupted_span_id` is one of them, and that `corrupted_word` clearly reverses or distorts the passage meaning.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
 - Keep the explanation in Korean.
@@ -835,6 +847,16 @@ def _span_priority_label(score: int) -> str:
     if score >= 3:
         return "watch"
     return "weak"
+
+
+def _vocab_hard_preference_label(score: int, cue_count: int) -> str:
+    if score >= 7 and cue_count >= 3:
+        return "top"
+    if score >= 6 and cue_count >= 2:
+        return "strong"
+    if score >= 4 or cue_count >= 2:
+        return "usable"
+    return "fallback"
 
 
 def _span_centrality_label(tags: list[str]) -> str:

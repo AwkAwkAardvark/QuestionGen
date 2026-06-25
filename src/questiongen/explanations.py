@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, rendered_gap_positions
@@ -333,10 +334,11 @@ def _build_vocab_context(
     ordered_ids = [span.id for span in ordered_spans]
     answer_span = span_map[plan.answer_span_id]
     answer_marker = MARKER_CHOICES[ordered_ids.index(plan.answer_span_id)]
+    replacement_by_span_id = plan.corrupted_replacement_map()
     wrong_markers = [
-        f"{marker}의 '{plan.corrupted_replacements_by_span_id[span.id]}'"
+        f"{marker}의 '{replacement_by_span_id[span.id]}'"
         for marker, span in zip(MARKER_CHOICES, ordered_spans)
-        if span.id in plan.corrupted_replacements_by_span_id
+        if span.id in replacement_by_span_id
     ]
     return {
         "subtype": plan.subtype,
@@ -500,33 +502,39 @@ def _write_vocab_explanation(context: dict[str, str]) -> str:
         correct_choice = context["correct_choice"]
         subtype = context.get("subtype")
         if subtype == "contextual_best_paraphrase_choice":
-            return (
-                f"'{context['supporting_evidence']}'라는 단서를 보면 이 자리에는 "
-                f"\"{meaning}\"을 가장 가깝게 바꿔 말한 표현이 와야 합니다. "
-                f"원문의 '{source_wording}'를 그대로 복원하는 문제가 아니라, "
-                f"정답인 '{correct_choice}'가 그 의미를 가장 정확한 문맥상 바꿔쓰기로 살립니다. "
-                "다른 선택지들은 의미 방향이나 범위가 어긋나므로 "
-                f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+            return _polish_teacher_explanation(
+                (
+                    f"문맥상 이 자리는 \"{meaning}\"을 가장 가깝게 바꿔 말한 표현이 와야 합니다. "
+                    f"특히 '{context['supporting_evidence']}'라는 단서가 그 해석을 뒷받침합니다. "
+                    f"원문의 '{source_wording}'를 그대로 복원하는 문제가 아니라, "
+                    f"정답인 '{correct_choice}'가 그 의미를 가장 정확한 문맥상 바꿔쓰기로 살립니다. "
+                    "다른 선택지들은 의미 방향이나 범위가 어긋나므로 "
+                    f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+                )
             )
         if subtype == "contextual_phrase_choice":
-            return (
-                f"'{context['supporting_evidence']}'라는 단서를 보면 이 자리는 한 단어가 아니라 "
-                f"\"{meaning}\"에 해당하는 어구 단위가 들어가야 합니다. "
-                f"정답인 '{correct_choice}'가 그 의미와 어구 단위를 함께 가장 자연스럽게 맞추고, "
-                "다른 선택지들은 의미나 어구 결합이 어긋납니다. "
-                f"따라서 정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+            return _polish_teacher_explanation(
+                (
+                    f"문맥상 이 자리는 한 단어가 아니라 \"{meaning}\"에 해당하는 어구 단위가 들어가야 합니다. "
+                    f"특히 '{context['supporting_evidence']}'라는 단서가 그 어구 의미를 뒷받침합니다. "
+                    f"정답인 '{correct_choice}'가 그 의미와 어구 단위를 함께 가장 자연스럽게 맞추고, "
+                    "다른 선택지들은 의미나 어구 결합이 어긋납니다. "
+                    f"따라서 정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+                )
             )
         source_note = (
             f"원문의 '{source_wording}'도 같은 자리에 놓일 수 있는 표현이지만, "
             if correct_choice != source_wording
             else ""
         )
-        return (
-            f"'{context['supporting_evidence']}'라는 단서를 보면 이 자리에는 "
-            f"\"{meaning}\"에 해당하는 표현이 와야 합니다. "
-            f"{source_note}정답인 '{correct_choice}'가 그 의미를 가장 정확하게 살립니다. "
-            "다른 선택지들은 문맥의 방향이나 범위, 평가를 어긋나게 만듭니다. "
-            f"따라서 정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+        return _polish_teacher_explanation(
+            (
+                f"문맥상 이 자리는 \"{meaning}\"에 해당하는 표현이 와야 합니다. "
+                f"특히 '{context['supporting_evidence']}'라는 단서가 그 판단의 근거가 됩니다. "
+                f"{source_note}정답인 '{correct_choice}'가 그 의미를 가장 정확하게 살립니다. "
+                "다른 선택지들은 문맥의 방향이나 범위, 평가를 어긋나게 만듭니다. "
+                f"따라서 정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+            )
         )
     if context.get("subtype") in {
         "contextual_correct_among_4_corrupted",
@@ -540,34 +548,49 @@ def _write_vocab_explanation(context: dict[str, str]) -> str:
             "이 자리의 문맥을 가장 자연스럽게 유지하는 표현",
         )
         if context["subtype"] == "contextual_error_1_among_5_polarity_scope":
-            return (
-                f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
-                f"따라서 {context['correct_marker']}의 표현은 방향, 정도, 또는 적용 범위를 어긋나게 만들어 문맥상 틀립니다."
+            return _polish_teacher_explanation(
+                (
+                    f"문맥상 {basis}. "
+                    f"특히 '{context['supporting_evidence']}'라는 단서가 원래 표현의 방향과 범위를 고정합니다. "
+                    f"따라서 {context['correct_marker']}의 표현은 방향, 정도, 또는 적용 범위를 어긋나게 만들어 문맥상 틀립니다."
+                )
             )
         if context["subtype"] == "contextual_error_1_among_5_collocation":
-            return (
-                f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
-                f"따라서 {context['correct_marker']}의 표현은 문법만 그럴듯할 뿐, 이 자리에서 자연스럽게 결합하는 어휘 선택이 아닙니다."
+            return _polish_teacher_explanation(
+                (
+                    f"문맥상 {basis}. "
+                    f"특히 '{context['supporting_evidence']}'라는 단서가 이 자리의 자연스러운 어휘 결합을 보여 줍니다. "
+                    f"따라서 {context['correct_marker']}의 표현은 문법만 그럴듯할 뿐, 이 자리에서 자연스럽게 결합하는 어휘 선택이 아닙니다."
+                )
             )
         if context["subtype"] == "contextual_error_1_among_5":
-            return (
-                f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
-                f"따라서 {context['correct_marker']}의 표현만 문맥에 어긋나고, "
-                "나머지 밑줄 어휘들은 글의 기본 의미를 유지합니다."
+            return _polish_teacher_explanation(
+                (
+                    f"문맥상 {basis}. "
+                    f"특히 '{context['supporting_evidence']}'라는 단서가 그 기준을 분명히 보여 줍니다. "
+                    f"따라서 {context['correct_marker']}의 표현만 문맥에 어긋나고, "
+                    "나머지 밑줄 어휘들은 글의 기본 의미를 유지합니다."
+                )
             )
-        return (
-            f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
-            f"따라서 {context['correct_marker']}의 '{context['answer_span_text']}'만 문맥을 유지하고, "
-            f"{context['wrong_markers']}는 각각 의미의 방향이나 범위를 어긋나게 만듭니다."
+        return _polish_teacher_explanation(
+            (
+                f"문맥상 {basis}. "
+                f"특히 '{context['supporting_evidence']}'라는 단서가 정답 표현의 의미를 뒷받침합니다. "
+                f"따라서 {context['correct_marker']}의 '{context['answer_span_text']}'만 문맥을 유지하고, "
+                f"{context['wrong_markers']}는 각각 의미의 방향이나 범위를 어긋나게 만듭니다."
+            )
         )
     basis = _prefer_teacher_note(
         context.get("correction_basis_ko"),
         "이 자리에는 앞뒤 내용과 맞는 뜻의 낱말이 와야 합니다",
     )
-    return (
-        f"'{context['supporting_evidence']}'라는 단서를 보면 {basis}. "
-        f"따라서 {context['correct_marker']}의 '{context['corrupted_word']}'는 문맥에 맞지 않고, "
-        f"원래 '{context['original_word']}'가 와야 합니다."
+    return _polish_teacher_explanation(
+        (
+            f"문맥상 {basis}. "
+            f"특히 '{context['supporting_evidence']}'라는 단서가 원래 표현의 의미를 뒷받침합니다. "
+            f"따라서 {context['correct_marker']}의 '{context['corrupted_word']}'는 문맥에 맞지 않고, "
+            f"원래 '{context['original_word']}'가 와야 합니다."
+        )
     )
 
 
@@ -588,11 +611,26 @@ def _clean_teacher_note(note: str | None) -> str:
         return ""
     cleaned = " ".join(note.split()).strip()
     cleaned = cleaned.rstrip(". ")
+    cleaned = re.sub(r"(이 자리에는)(?:\s+\1)+", r"\1", cleaned)
+    cleaned = re.sub(r"(이 자리는)(?:\s+\1)+", r"\1", cleaned)
+    for prefix in ("이 자리에는 ", "이 자리는 ", "빈칸에는 ", "빈칸은 "):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].lstrip()
     if cleaned.endswith("다는 의미"):
         cleaned = cleaned[: -len("는 의미")].rstrip()
     for suffix in ("라는 의미", "이라는 의미"):
         if cleaned.endswith(suffix):
             cleaned = cleaned[: -len(suffix)].rstrip()
+    return cleaned
+
+
+def _polish_teacher_explanation(text: str) -> str:
+    cleaned = " ".join(text.split()).strip()
+    cleaned = re.sub(r"(이 자리에는)(?:\s+\1)+", r"\1", cleaned)
+    cleaned = re.sub(r"(이 자리는)(?:\s+\1)+", r"\1", cleaned)
+    cleaned = cleaned.replace("이 자리에는 이 자리는", "이 자리는")
+    cleaned = re.sub(r"([\"'])\s+", r"\1", cleaned)
+    cleaned = re.sub(r"\s+([\"'])", r"\1", cleaned)
     return cleaned
 
 
