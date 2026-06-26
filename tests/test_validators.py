@@ -1222,7 +1222,12 @@ class ValidatorTests(unittest.TestCase):
             prepared,
             QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
         )
-        self.assertTrue(any("workable lexical-slot vocab target" in error for error in errors))
+        self.assertTrue(
+            any(
+                "workable lexical-slot vocab target" in error or "stable five-target vocab bundle" in error
+                for error in errors
+            )
+        )
 
     def test_underlined_vocab_schema_uses_structured_replacement_records(self) -> None:
         schema = UnderlinedVocabPlan.model_json_schema()
@@ -2236,6 +2241,177 @@ class ValidatorTests(unittest.TestCase):
             QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
         )
         self.assertTrue(any("collocation or selectional mismatch" in error for error in invalid_errors))
+
+    def test_collocation_compatibility_rejects_generic_bundle_without_collocation_anchor(self) -> None:
+        source = "Leaders reduce. Families support. Workers improve. Students discuss. Teachers ignore."
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id=f"S{index}", text=text, index=index)
+                for index, text in enumerate(
+                    [
+                        "Leaders reduce.",
+                        "Families support.",
+                        "Workers improve.",
+                        "Students discuss.",
+                        "Teachers ignore.",
+                    ]
+                )
+            ],
+            gap_units=[
+                GapUnit(id=f"G{index}", index=index, before_unit_id=None if index == 0 else f"S{index - 1}", after_unit_id=f"S{index}" if index < 5 else None)
+                for index in range(6)
+            ],
+            span_units=[
+                SpanUnit(
+                    id=f"P{index}",
+                    text=text,
+                    normalized_text=text,
+                    char_start=index * 10,
+                    char_end=index * 10 + len(text),
+                    sentence_unit_id=f"S{index}",
+                    sentence_index=index,
+                    context_before="to ",
+                    context_after=" the",
+                    heuristic_tags=["single_word", "abstract_term", "contextual_cue", "vocab_candidate"],
+                    priority_score=7,
+                )
+                for index, text in enumerate(["reduce", "support", "improve", "discuss", "ignore"])
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
+        )
+        self.assertTrue(any("none is collocation-eligible" in error for error in errors))
+
+    def test_collocation_plan_against_design_rejects_noneligible_corruption(self) -> None:
+        source = (
+            "Families ignore rumors during emergencies. "
+            "Teachers support the new shelter each winter. "
+            "Workers improve service around town every week. "
+            "Students discuss the updated route after class. "
+            "Volunteers collect supplies near the station. "
+            "Leaders reduce delays before sunrise."
+        )
+        prepared = prepare_source(source)
+        targets = vocab_hard_candidate_inventory(prepared)[:5]
+        eligible_span = next(span for span in targets if span.text == "ignore")
+        noneligible_span = next(span for span in targets if span.id != eligible_span.id)
+        design = UnderlinedVocabDesign(
+            family_key="vocab",
+            subtype_key="contextual_vocab_error_1_among_5_collocation_5",
+            subtype="contextual_error_1_among_5_collocation",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corruptible_span_ids=[eligible_span.id],
+            prompt_payload={},
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_error_1_among_5_collocation",
+            target_span_ids=design.target_span_ids,
+            target_span_texts=design.target_span_texts,
+            corrupted_replacements=[{"span_id": noneligible_span.id, "replacement_text": "collect"}],
+            answer_span_id=noneligible_span.id,
+            selection_basis_ko="이 자리는 자연스러운 어휘 결합이 유지되어야 합니다",
+            supporting_evidence="Families ignore rumors during emergencies.",
+            explanation="문맥상 자연스러운 어휘 결합을 깨뜨린 표현입니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
+            design=design,
+        )
+        self.assertTrue(any("locked design corruptible subset" in error for error in errors))
+
+    def test_correct_among_4_plan_against_design_rejects_changed_survivor(self) -> None:
+        source = (
+            "Residents praise the durable signal each winter. "
+            "Planners discuss the updated route after dinner. "
+            "Workers reduce delays around town every week. "
+            "Students support the new shelter during storms. "
+            "Volunteers collect supplies near the station. "
+            "Teachers ignore gossip before exams."
+        )
+        prepared = prepare_source(source)
+        targets = vocab_hard_candidate_inventory(prepared)[:5]
+        design_answer = max(targets, key=vocab_choice_target_cue_count)
+        plan_answer = next(span for span in targets if span.id != design_answer.id)
+        design = UnderlinedVocabDesign(
+            family_key="vocab",
+            subtype_key="contextual_vocab_correct_among_4_corrupted_5",
+            subtype="contextual_correct_among_4_corrupted",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            answer_span_id=design_answer.id,
+            prompt_payload={},
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_correct_among_4_corrupted",
+            target_span_ids=design.target_span_ids,
+            target_span_texts=design.target_span_texts,
+            corrupted_replacements=[
+                {"span_id": span.id, "replacement_text": replacement}
+                for span, replacement in zip(
+                    [span for span in targets if span.id != plan_answer.id],
+                    ["weaken", "ignore", "delay", "worsen"],
+                    strict=False,
+                )
+            ],
+            answer_span_id=plan_answer.id,
+            selection_basis_ko="정답 표현만 원래 의미를 유지합니다",
+            supporting_evidence="Residents praise the durable signal each winter.",
+            explanation="문맥상 하나만 원래 의미를 유지합니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+            design=design,
+        )
+        self.assertTrue(any("locked design survivor" in error or "corrupt every non-answer item" in error for error in errors))
+
+    def test_error_1_plan_against_design_rejects_changed_corrupted_target(self) -> None:
+        source = (
+            "Residents praise the durable signal each winter. "
+            "Planners discuss the updated route after dinner. "
+            "Workers reduce delays around town every week. "
+            "Students support the new shelter during storms. "
+            "Volunteers collect supplies near the station. "
+            "Teachers ignore gossip before exams."
+        )
+        prepared = prepare_source(source)
+        targets = vocab_hard_candidate_inventory(prepared)[:5]
+        design_answer = max(targets, key=vocab_choice_target_cue_count)
+        plan_answer = next(span for span in targets if span.id != design_answer.id)
+        design = UnderlinedVocabDesign(
+            family_key="vocab",
+            subtype_key="contextual_vocab_error_1_among_5_5",
+            subtype="contextual_error_1_among_5",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            answer_span_id=design_answer.id,
+            prompt_payload={},
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_error_1_among_5",
+            target_span_ids=design.target_span_ids,
+            target_span_texts=design.target_span_texts,
+            corrupted_replacements=[{"span_id": plan_answer.id, "replacement_text": "ignore"}],
+            answer_span_id=plan_answer.id,
+            selection_basis_ko="원래 표현만 글의 핵심 의미를 유지합니다",
+            supporting_evidence="Residents praise the durable signal each winter.",
+            explanation="문맥상 하나의 표현만 의미를 어긋나게 만듭니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_5"],
+            design=design,
+        )
+        self.assertTrue(any("locked design corrupted target" in error or "corrupt only the locked design target" in error for error in errors))
 
     def test_correct_among_3_compatibility_rejects_flat_strength_bundle(self) -> None:
         source = (

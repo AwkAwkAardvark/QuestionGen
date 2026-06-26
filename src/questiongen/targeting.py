@@ -477,29 +477,42 @@ def vocab_polarity_scope_candidate_inventory(prepared_source: PreparedSource) ->
     ]
 
 
+def vocab_collocation_candidate_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
+    return [
+        span
+        for span in vocab_hard_candidate_inventory(prepared_source)
+        if vocab_target_is_collocation_eligible(span)
+    ]
+
+
 def vocab_hard_bundle(prepared_source: PreparedSource, subtype_key: str) -> VocabHardBundle | None:
     inventory = vocab_hard_candidate_inventory(prepared_source)
     if len(inventory) < 5:
         return None
 
     if subtype_key == "contextual_vocab_error_1_among_5_polarity_scope_5":
-        eligible = vocab_polarity_scope_candidate_inventory(prepared_source)
-        if not eligible:
-            return None
-        selected: list[SpanUnit] = [eligible[0]]
-        selected_ids = {eligible[0].id}
-        for span in inventory:
-            if span.id in selected_ids:
-                continue
-            selected.append(span)
-            selected_ids.add(span.id)
-            if len(selected) == 5:
-                break
-        if len(selected) < 5:
+        selected = _best_hard_bundle_with_eligible(
+            inventory,
+            predicate=vocab_target_is_polarity_scope_eligible,
+        )
+        if selected is None:
             return None
         selected_eligible_ids = tuple(span.id for span in selected if vocab_target_is_polarity_scope_eligible(span))
         return VocabHardBundle(
-            selected_spans=tuple(selected),
+            selected_spans=selected,
+            corruptible_span_ids=selected_eligible_ids,
+        )
+
+    if subtype_key == "contextual_vocab_error_1_among_5_collocation_5":
+        selected = _best_hard_bundle_with_eligible(
+            inventory,
+            predicate=vocab_target_is_collocation_eligible,
+        )
+        if selected is None:
+            return None
+        selected_eligible_ids = tuple(span.id for span in selected if vocab_target_is_collocation_eligible(span))
+        return VocabHardBundle(
+            selected_spans=selected,
             corruptible_span_ids=selected_eligible_ids,
         )
 
@@ -511,7 +524,28 @@ def vocab_hard_bundle(prepared_source: PreparedSource, subtype_key: str) -> Voca
                 return bundle
         return None
 
-    return VocabHardBundle(selected_spans=tuple(inventory[:5]))
+    if subtype_key == "contextual_vocab_correct_among_4_corrupted_5":
+        selected = _best_generic_hard_bundle(inventory)
+        if selected is None:
+            return None
+        return VocabHardBundle(
+            selected_spans=selected,
+            answer_span_id=_strongest_bundle_span_id(selected),
+        )
+
+    if subtype_key == "contextual_vocab_error_1_among_5_5":
+        selected = _best_generic_hard_bundle(inventory)
+        if selected is None:
+            return None
+        return VocabHardBundle(
+            selected_spans=selected,
+            answer_span_id=_strongest_bundle_span_id(selected),
+        )
+
+    selected = _best_generic_hard_bundle(inventory)
+    if selected is None:
+        return None
+    return VocabHardBundle(selected_spans=selected)
 
 
 def grammar_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
@@ -854,6 +888,11 @@ def vocab_target_strength(span: SpanUnit) -> tuple[int, int]:
     return (vocab_choice_target_cue_count(span), span.priority_score)
 
 
+def vocab_target_strength_score(span: SpanUnit) -> int:
+    cue_count, priority_score = vocab_target_strength(span)
+    return cue_count * 10 + priority_score
+
+
 def _dedupe_by_text(spans: Iterable[SpanUnit]) -> list[SpanUnit]:
     ordered = sorted(
         spans,
@@ -1099,6 +1138,15 @@ def _neighbor_first_token(text: str | None) -> str:
     if match is None:
         return ""
     return normalize_english_word(match.group(0))
+
+
+def _neighbor_last_token(text: str | None) -> str:
+    if not text:
+        return ""
+    matches = list(_TOKEN_RE.finditer(text))
+    if not matches:
+        return ""
+    return normalize_english_word(matches[-1].group(0))
 
 
 def _context_has_semantic_anchor(text: str | None) -> bool:
@@ -1353,19 +1401,107 @@ def vocab_target_is_antonym_invertible(span: SpanUnit) -> bool:
     return "antonym_invertible" in span.heuristic_tags
 
 
+def vocab_target_is_collocation_eligible(span: SpanUnit) -> bool:
+    tokens = _span_tokens(span.text)
+    if len(tokens) != 1:
+        return False
+    if vocab_target_is_polarity_scope_eligible(span):
+        return False
+
+    left_token = _neighbor_last_token(span.context_before)
+    right_token = _neighbor_first_token(span.context_after)
+    anchor_count = sum(
+        1
+        for token in (left_token, right_token)
+        if token and token not in _FUNCTION_WORDS and token not in _POLARITY_SCOPE_CUE_WORDS
+    )
+    if anchor_count < 1:
+        return False
+    return span.priority_score >= 6 and vocab_choice_target_cue_count(span) >= 2
+
+
+def _strongest_bundle_span_id(selected_spans: tuple[SpanUnit, ...]) -> str:
+    return max(
+        selected_spans,
+        key=lambda span: (vocab_target_strength_score(span), -span.char_start),
+    ).id
+
+
+def _hard_bundle_signature(span: SpanUnit) -> tuple[str, str]:
+    return (_neighbor_last_token(span.context_before), _neighbor_first_token(span.context_after))
+
+
+def _hard_bundle_window_score(selected_spans: list[SpanUnit]) -> tuple[int, int, int, int, int]:
+    strength_scores = [vocab_target_strength_score(span) for span in selected_spans]
+    distinct_sentences = len({span.sentence_unit_id for span in selected_spans if span.sentence_unit_id is not None})
+    repeated_signatures = len(selected_spans) - len({_hard_bundle_signature(span) for span in selected_spans})
+    repeated_surface_heads = len(selected_spans) - len({_span_tokens(span.text)[-1] for span in selected_spans if _span_tokens(span.text)})
+    char_spread = selected_spans[-1].char_start - selected_spans[0].char_start if len(selected_spans) > 1 else 0
+    return (
+        min(strength_scores),
+        distinct_sentences,
+        -repeated_signatures,
+        -repeated_surface_heads,
+        char_spread,
+    )
+
+
+def _bundle_is_stable_for_generic_hard_vocab(selected_spans: list[SpanUnit]) -> bool:
+    if len(selected_spans) < 5:
+        return False
+    distinct_sentences = len({span.sentence_unit_id for span in selected_spans if span.sentence_unit_id is not None})
+    repeated_signatures = len(selected_spans) - len({_hard_bundle_signature(span) for span in selected_spans})
+    repeated_surface_heads = len(selected_spans) - len({_span_tokens(span.text)[-1] for span in selected_spans if _span_tokens(span.text)})
+    return distinct_sentences >= 3 and repeated_signatures <= 1 and repeated_surface_heads <= 1
+
+
+def _best_generic_hard_bundle(inventory: list[SpanUnit]) -> tuple[SpanUnit, ...] | None:
+    if len(inventory) < 5:
+        return None
+    ranked = sorted(
+        [inventory[start : start + 5] for start in range(len(inventory) - 4)],
+        key=lambda spans: _hard_bundle_window_score(spans),
+        reverse=True,
+    )
+    for bundle in ranked:
+        if _bundle_is_stable_for_generic_hard_vocab(bundle):
+            return tuple(bundle)
+    return None
+
+
+def _best_hard_bundle_with_eligible(
+    inventory: list[SpanUnit],
+    *,
+    predicate,
+) -> tuple[SpanUnit, ...] | None:
+    if len(inventory) < 5:
+        return None
+    ranked = sorted(
+        [inventory[start : start + 5] for start in range(len(inventory) - 4)],
+        key=lambda spans: _hard_bundle_window_score(spans),
+        reverse=True,
+    )
+    for bundle in ranked:
+        if not _bundle_is_stable_for_generic_hard_vocab(bundle):
+            continue
+        if any(predicate(span) for span in bundle):
+            return tuple(bundle)
+    return None
+
+
 def _build_correct_among_3_bundle(selected_spans: list[SpanUnit]) -> VocabHardBundle | None:
     ranked = sorted(
         selected_spans,
-        key=lambda span: (vocab_target_strength(span), -span.char_start),
+        key=lambda span: (vocab_target_strength_score(span), -span.char_start),
         reverse=True,
     )
     if len(ranked) < 5:
         return None
-    if vocab_target_strength(ranked[0]) <= vocab_target_strength(ranked[1]):
+    if vocab_target_strength_score(ranked[0]) <= vocab_target_strength_score(ranked[1]) + 1:
         return None
     weakest = min(
         (span for span in selected_spans if span.id != ranked[0].id),
-        key=lambda span: (vocab_target_strength(span), span.char_start),
+        key=lambda span: (vocab_target_strength_score(span), span.char_start),
     )
     return VocabHardBundle(
         selected_spans=tuple(selected_spans),

@@ -425,10 +425,19 @@ def build_vocab_design(
             raise ValueError(
                 "Passage does not contain a five-target vocab bundle with a polarity/scope-eligible corruption anchor."
             )
+        if type_spec.subtype_key == "contextual_vocab_error_1_among_5_collocation_5":
+            raise ValueError(
+                "Passage does not contain a five-target vocab bundle with a collocation-eligible corruption anchor."
+            )
         if type_spec.subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
             raise ValueError(
                 "Passage does not contain a clear unique-survivor vocab bundle for contextual_vocab_correct_among_3_corrupted_5."
             )
+        if type_spec.subtype_key in {
+            "contextual_vocab_correct_among_4_corrupted_5",
+            "contextual_vocab_error_1_among_5_5",
+        }:
+            raise ValueError(f"Passage does not contain a stable five-target vocab bundle for {type_spec.subtype_key}.")
         raise ValueError(f"Passage does not contain five workable lexical-slot vocab targets for {type_spec.subtype_key}.")
     selected_spans = list(bundle.selected_spans)
     selected_by_id = {span.id: span for span in selected_spans}

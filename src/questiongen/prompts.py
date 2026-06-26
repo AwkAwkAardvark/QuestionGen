@@ -425,10 +425,11 @@ Selection reminders:
 - The deterministic design stage already locked the five targets.
 - Return hard-family corruptions as an ordered `corrupted_replacements` list of records with `span_id` and `replacement_text`, not as a free-form mapping.
 - Every corrupted replacement must stay readable in the same local slot, while becoming semantically wrong.
+- If a locked `answer_span_id` is shown above for this subtype, do not change it; build the corruption pattern around that fixed answer marker.
 - If the active subtype is `contextual_vocab_correct_among_4_corrupted_5`, exactly four items must be corrupted and exactly one item must remain clearly correct.
-- If the active subtype is `contextual_vocab_error_1_among_5_5`, exactly one item must be corrupted and the other four must remain unchanged.
+- If the active subtype is `contextual_vocab_error_1_among_5_5`, exactly one item must be corrupted and the other four must remain unchanged. If a locked `answer_span_id` is provided, that is the one item to corrupt.
 - If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must come from the locked polarity/scope-eligible subset and must fail specifically by polarity, degree, or scope drift.
-- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must fail by collocation or selectional mismatch, not by broad opposite meaning.
+- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must come from the locked collocation-eligible subset and must fail by collocation or selectional mismatch, not by broad opposite meaning.
 - If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, exactly three items must be corrupted and the only unchanged pair allowed is the locked `answer_span_id` plus the locked weaker untouched distractor.
 - If the subtype asks for the correct remaining item, make sure only one answer is defensible from the passage evidence.
 """.strip()

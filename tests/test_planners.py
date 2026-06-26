@@ -371,35 +371,56 @@ class _VocabPlanner:
             )
         if active_subtype == "contextual_vocab_error_1_among_5_collocation_5":
             target_ids, target_texts = zip(*targets[:5])
-            collocation_index = target_texts.index("ignore") if "ignore" in target_texts else len(target_ids) - 1
+            if locked_corruptible_ids:
+                collocation_target_id = locked_corruptible_ids[0]
+            else:
+                collocation_target_id = target_ids[target_texts.index("ignore")] if "ignore" in target_texts else target_ids[-1]
             return UnderlinedVocabPlan(
                 subtype="contextual_error_1_among_5_collocation",
                 target_span_ids=list(target_ids),
                 target_span_texts=list(target_texts),
                 corrupted_replacements=[
-                    {"span_id": target_ids[collocation_index], "replacement_text": "collect"},
+                    {"span_id": collocation_target_id, "replacement_text": "collect"},
                 ],
-                answer_span_id=target_ids[collocation_index],
+                answer_span_id=collocation_target_id,
                 selection_basis_ko="이 자리는 문맥상 자연스러운 어휘 결합과 선택 제약이 유지되어야 합니다",
                 supporting_evidence="Families ignore rumors during emergencies.",
                 explanation="문맥상 자연스러운 어휘 결합을 깨뜨린 표현을 골라야 합니다.",
             )
         if active_subtype == "contextual_vocab_correct_among_4_corrupted_5":
             target_ids, target_texts = zip(*targets[:5])
+            answer_span_id = locked_answer_id or target_ids[1]
             return UnderlinedVocabPlan(
                 subtype="contextual_correct_among_4_corrupted",
                 target_span_ids=list(target_ids),
                 target_span_texts=list(target_texts),
                 corrupted_replacements=[
-                    {"span_id": target_ids[0], "replacement_text": "weaken"},
-                    {"span_id": target_ids[2], "replacement_text": "ignore"},
-                    {"span_id": target_ids[3], "replacement_text": "delay"},
-                    {"span_id": target_ids[4], "replacement_text": "worsen"},
+                    {"span_id": span_id, "replacement_text": replacement}
+                    for span_id, replacement in zip(
+                        [span_id for span_id in target_ids if span_id != answer_span_id],
+                        ["weaken", "ignore", "delay", "worsen"],
+                        strict=False,
+                    )
                 ],
-                answer_span_id=target_ids[1],
+                answer_span_id=answer_span_id,
                 selection_basis_ko="이 자리는 원문이 유지한 효과를 가장 자연스럽게 이어 주는 표현이어야 합니다",
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
                 explanation="문맥상 하나만 원래 의미를 유지하고 나머지는 의미를 비틀고 있습니다.",
+            )
+        if active_subtype == "contextual_vocab_error_1_among_5_5":
+            target_ids, target_texts = zip(*targets[:5])
+            answer_span_id = locked_answer_id or target_ids[2]
+            return UnderlinedVocabPlan(
+                subtype="contextual_error_1_among_5",
+                target_span_ids=list(target_ids),
+                target_span_texts=list(target_texts),
+                corrupted_replacements=[
+                    {"span_id": answer_span_id, "replacement_text": "ignore"},
+                ],
+                answer_span_id=answer_span_id,
+                selection_basis_ko="이 자리는 원래 표현만 글의 핵심 의미를 유지합니다",
+                supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+                explanation="문맥상 하나의 표현만 의미를 어긋나게 만든 경우를 골라야 합니다.",
             )
         if active_subtype == "contextual_vocab_correct_among_3_corrupted_5":
             target_ids, target_texts = zip(*targets[:5])
@@ -1204,6 +1225,26 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Locked answer_span_id", prompt)
         self.assertIn("Locked weaker untouched distractor id", prompt)
         self.assertIn("only unchanged pair allowed", prompt)
+
+    def test_correct_among_4_prompt_exposes_locked_survivor(self) -> None:
+        prepared = prepare_source(self.mvp_source)
+        prompt = build_vocab_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+        )
+        self.assertIn("Locked answer_span_id", prompt)
+        self.assertIn("fixed answer marker", prompt)
+
+    def test_error_1_prompt_exposes_locked_corrupted_target(self) -> None:
+        prepared = prepare_source(self.mvp_source)
+        prompt = build_vocab_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_5"],
+        )
+        self.assertIn("Locked answer_span_id", prompt)
+        self.assertIn("that is the one item to corrupt", prompt)
 
     def test_graph_rewrites_best_paraphrase_explanation_as_non_restoration(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())

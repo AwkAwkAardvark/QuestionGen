@@ -231,6 +231,8 @@ Current recommendation on registry shape:
   - use the polarity/scope subtype only when the one corruption is specifically a direction, degree, or scope distortion
   - polarity/scope design now locks an explicit corruption-eligible subset inside the five-target bundle and rejects generic five-target passages that lack a real directional or scope-bearing anchor
   - use the collocation subtype only when the one corruption is specifically a natural-combination or selectional mismatch
+  - collocation design now locks an explicit corruption-eligible subset inside the five-target bundle and rejects generic five-target passages that lack a real local collocational anchor
+  - `contextual_vocab_correct_among_4_corrupted_5` and `contextual_vocab_error_1_among_5_5` now use a deterministic stable-bundle selector instead of blindly locking the first five clean hard candidates, and both subtypes lock their answer marker in design
   - `contextual_vocab_correct_among_3_corrupted_5` now locks both the answer span and the weaker untouched distractor during deterministic design and rejects flat-strength bundles rather than letting the planner improvise the survivor pair
   - keep all live subtypes single-answer exports under the broad family key
 - Current deterministic contract:
@@ -244,6 +246,8 @@ Current recommendation on registry shape:
   - fewer than 5 clean lexical-slot candidates in the broader hard-candidate inventory for hard subtypes
   - fewer than 1 strong lexical-slot target for the blank-choice subtype
   - no polarity/scope-eligible corruption anchor inside an otherwise generic five-target hard-vocab bundle
+  - no collocation-eligible corruption anchor inside an otherwise generic five-target hard-vocab bundle
+  - no stable five-target bundle with enough spread across context for the easier hard underlined subtypes
   - no clear deterministic unique-survivor margin for `contextual_vocab_correct_among_3_corrupted_5`
   - target cue count too weak for stable contextual recovery
   - extra untouched item not uniquely weaker in `contextual_vocab_correct_among_3_corrupted_5`

@@ -189,16 +189,18 @@ class _StubPlanner:
                 else "contextual_correct_among_3_corrupted"
             )
             if subtype == "contextual_correct_among_4_corrupted":
+                answer_span_id = locked_answer_id or target_ids[1]
                 replacements = {
-                    target_ids[0]: "weaken",
-                    target_ids[2]: "ignore",
-                    target_ids[3]: "delay",
-                    target_ids[4]: "worsen",
+                    span_id: replacement
+                    for span_id, replacement in zip(
+                        [span_id for span_id in target_ids if span_id != answer_span_id],
+                        ["weaken", "ignore", "delay", "worsen"],
+                        strict=False,
+                    )
                 }
-                answer_span_id = target_ids[1]
             elif subtype == "contextual_error_1_among_5":
-                replacements = {target_ids[2]: "ignore"}
-                answer_span_id = target_ids[2]
+                answer_span_id = locked_answer_id or target_ids[2]
+                replacements = {answer_span_id: "ignore"}
             elif subtype == "contextual_error_1_among_5_polarity_scope":
                 polarity_target_id = locked_corruptible_ids[0] if locked_corruptible_ids else target_ids[0]
                 polarity_text = target_text_by_id[polarity_target_id]
@@ -213,9 +215,11 @@ class _StubPlanner:
                 replacements = {polarity_target_id: polarity_replacement}
                 answer_span_id = polarity_target_id
             elif subtype == "contextual_error_1_among_5_collocation":
-                collocation_index = target_texts.index("ignore") if "ignore" in target_texts else len(target_ids) - 1
-                replacements = {target_ids[collocation_index]: "collect"}
-                answer_span_id = target_ids[collocation_index]
+                collocation_target_id = locked_corruptible_ids[0] if locked_corruptible_ids else (
+                    target_ids[target_texts.index("ignore")] if "ignore" in target_texts else target_ids[-1]
+                )
+                replacements = {collocation_target_id: "collect"}
+                answer_span_id = collocation_target_id
             else:
                 answer_span_id = locked_answer_id or target_ids[1]
                 untouched_id = locked_untouched_id or target_ids[0]
@@ -383,16 +387,24 @@ class _HardVocabAuditPlanner:
             selection_basis_ko = "문맥상 원래 표현의 방향이나 정도가 유지되어야 합니다"
         elif active_subtype == "contextual_vocab_error_1_among_5_collocation_5":
             corruption_index, replacement_text = self._pick_first_replacement(
-                target_texts,
+                tuple(
+                    info["text"]
+                    for info in target_infos
+                    if not locked_corruptible_ids or info["span_id"] in set(locked_corruptible_ids)
+                ),
                 _HARD_COLLOCATION_REPLACEMENTS,
                 _HARD_COLLOCATION_FALLBACKS,
                 fallback="collect",
             )
+            eligible_infos = [
+                info for info in target_infos if not locked_corruptible_ids or info["span_id"] in set(locked_corruptible_ids)
+            ]
+            corruption_target_id = str(eligible_infos[corruption_index]["span_id"])
             subtype = "contextual_error_1_among_5_collocation"
             replacements = [
-                {"span_id": target_ids[corruption_index], "replacement_text": replacement_text},
+                {"span_id": corruption_target_id, "replacement_text": replacement_text},
             ]
-            answer_span_id = target_ids[corruption_index]
+            answer_span_id = corruption_target_id
             selection_basis_ko = "문맥상 이 자리는 자연스러운 어휘 결합이 유지되어야 합니다"
         elif active_subtype == "contextual_vocab_error_1_among_5_5":
             corruption_index, replacement_text = self._pick_first_replacement(
@@ -402,10 +414,11 @@ class _HardVocabAuditPlanner:
                 fallback="worsen",
             )
             subtype = "contextual_error_1_among_5"
+            corruption_target_id = locked_answer_id or target_ids[corruption_index]
             replacements = [
-                {"span_id": target_ids[corruption_index], "replacement_text": replacement_text},
+                {"span_id": corruption_target_id, "replacement_text": replacement_text},
             ]
-            answer_span_id = target_ids[corruption_index]
+            answer_span_id = corruption_target_id
             selection_basis_ko = "문맥상 원래 표현만 글의 핵심 의미를 유지합니다"
         elif active_subtype == "contextual_vocab_correct_among_3_corrupted_5":
             subtype = "contextual_correct_among_3_corrupted"
@@ -435,6 +448,7 @@ class _HardVocabAuditPlanner:
         else:
             subtype = "contextual_correct_among_4_corrupted"
             used_replacements = []
+            answer_span_id = locked_answer_id or target_ids[0]
             replacements = [
                 {
                     "span_id": target_ids[index],
@@ -447,9 +461,9 @@ class _HardVocabAuditPlanner:
                         fallback="worsen",
                     ),
                 }
-                for index in (1, 2, 3, 4)
+                for index in range(len(target_ids))
+                if target_ids[index] != answer_span_id
             ]
-            answer_span_id = target_ids[0]
             selection_basis_ko = "문맥상 정답 표현만 원래 의미를 자연스럽게 유지합니다"
 
         return self.output_schema(
