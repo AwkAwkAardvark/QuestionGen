@@ -343,12 +343,7 @@ def _build_vocab_context(
             "contextual_meaning_ko": plan.contextual_meaning_ko,
         }
 
-    if isinstance(design, UnderlinedVocabDesign):
-        ordered_ids = list(design.target_span_ids)
-        answer_span_text = dict(zip(design.target_span_ids, design.target_span_texts, strict=False))[plan.answer_span_id]
-    else:
-        if prepared_source is None:
-            raise ValueError("PreparedSource is required for underlined vocab explanation fallback.")
+    if prepared_source is not None:
         span_map = {span.id: span for span in prepared_source.span_units}
         ordered_spans = sorted(
             [span_map[span_id] for span_id in plan.target_span_ids if span_id in span_map],
@@ -356,6 +351,11 @@ def _build_vocab_context(
         )
         ordered_ids = [span.id for span in ordered_spans]
         answer_span_text = span_map[plan.answer_span_id].text
+    elif isinstance(design, UnderlinedVocabDesign):
+        ordered_ids = list(design.target_span_ids)
+        answer_span_text = dict(zip(design.target_span_ids, design.target_span_texts, strict=False))[plan.answer_span_id]
+    else:
+        raise ValueError("PreparedSource is required for underlined vocab explanation fallback.")
     answer_marker = MARKER_CHOICES[ordered_ids.index(plan.answer_span_id)]
     replacement_by_span_id = plan.corrupted_replacement_map()
     wrong_markers = [

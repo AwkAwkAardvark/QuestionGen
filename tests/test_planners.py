@@ -41,6 +41,7 @@ from questiongen.schemas import (
     SentenceInsertionPlan,
     SourceUnit,
     SpanUnit,
+    UnderlinedVocabDesign,
     UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
 )
@@ -1428,6 +1429,86 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "validation_passed")
         explanation = result["generated"].explanation or ""
         self.assertIn("자연스럽게 결합", explanation)
+
+    def test_underlined_vocab_explanation_uses_rendered_source_order_marker(self) -> None:
+        source = (
+            "People's happiness depends on relative wealth. "
+            "Workers compare salaries with peers. "
+            "Inequality often brings discontent. "
+            "Satisfied employees stay longer. "
+            "Calmer teams cooperate better. "
+            "Managers review the pattern each year."
+        )
+        prepared = prepare_source(source)
+        span_map = {span.text: span for span in prepared.span_units}
+        targets = [
+            span_map["happiness"],
+            span_map["wealth"],
+            span_map["Inequality"],
+            span_map["discontent"],
+            span_map["Satisfied"],
+        ]
+        answer_span = span_map["Inequality"]
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_correct_among_4_corrupted",
+            target_span_ids=[targets[2].id, targets[0].id, targets[4].id, targets[1].id, targets[3].id],
+            target_span_texts=[targets[2].text, targets[0].text, targets[4].text, targets[1].text, targets[3].text],
+            corrupted_replacements=[
+                {"span_id": targets[0].id, "replacement_text": "productivity"},
+                {"span_id": targets[1].id, "replacement_text": "education"},
+                {"span_id": targets[3].id, "replacement_text": "contentment"},
+                {"span_id": targets[4].id, "replacement_text": "restless"},
+            ],
+            answer_span_id=answer_span.id,
+            selection_basis_ko="이 자리만 원래 맥락의 의미를 자연스럽게 유지합니다",
+            supporting_evidence="Inequality often brings discontent.",
+            explanation="초안입니다.",
+        )
+        design = UnderlinedVocabDesign(
+            family_key="vocab",
+            subtype_key="contextual_vocab_correct_among_4_corrupted_5",
+            subtype="contextual_correct_among_4_corrupted",
+            target_span_ids=plan.target_span_ids,
+            target_span_texts=plan.target_span_texts,
+            answer_span_id=plan.answer_span_id,
+        )
+        rendered = render_vocab(
+            {
+                **self.state,
+                "source_paragraph": source,
+                "QuestionTypeKey": "vocab",
+                "QuestionSubtypeKey": "contextual_vocab_correct_among_4_corrupted_5",
+                "QuestionFormatKey": "contextual_vocab_correct_among_4_corrupted_5",
+                "prepared_source": prepared,
+                "plan": plan,
+            },
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+        )
+        self.assertEqual(rendered["generated"].answer, "③")
+        context_result = build_explanation_context(
+            {
+                **self.state,
+                **rendered,
+                "prepared_source": prepared,
+                "plan": plan,
+                "design": design,
+                "QuestionTypeKey": "vocab",
+            }
+        )
+        rewrite_result = write_teacher_facing_explanation(
+            {
+                **self.state,
+                **rendered,
+                **context_result,
+                "prepared_source": prepared,
+                "plan": plan,
+                "design": design,
+                "QuestionTypeKey": "vocab",
+            }
+        )
+        explanation = rewrite_result["generated"].explanation or ""
+        self.assertIn("따라서 ③의'Inequality'만 문맥을 유지하고", explanation)
+        self.assertNotIn("따라서 ①의'Inequality'", explanation)
 
     def test_graph_rewrites_vocab_explanation_from_source_evidence(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabDriftPlanner())
