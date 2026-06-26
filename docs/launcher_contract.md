@@ -12,7 +12,7 @@ The launcher is responsible for runtime setup only. Reusable generation logic st
 - `notebooks/runner_ui.ipynb` mounts Drive, defines standard paths, loads secrets, exposes minimal settings plus Advanced Settings, defaults branch selection to stable `main` through a notebook-side allowlist, reuses or refreshes the selected allowlisted pushed branch, and launches `questiongen.ui.gradio_app.create_app()` immediately.
 - `notebooks/runner_ui.ipynb` does not run direct batch-generation cells before launching Gradio.
 - `notebooks/runner_debug.ipynb` is the batch/debug notebook.
-- `notebooks/runner_debug.ipynb` keeps direct `run_batch_files(...)`, output preview, and artifact inspection in notebook cells, with Gradio available only as an optional debugging add-on.
+- `notebooks/runner_debug.ipynb` keeps direct `run_batch_files(...)`, output preview, and artifact inspection in notebook cells, with Gradio available only as an optional debugging add-on kept commented out by default.
 - `notebooks/legacy/runner.ipynb` and `notebooks/legacy/runner_pending.ipynb` remain in the repo for archival reference only until a later cleanup pass removes them with explicit confirmation.
 - Archival notebooks are not part of the active compatibility contract and may lag behind current launcher rules or UI behavior.
 - Upload-vs-Drive-path selection belongs inside the Gradio UI, not in notebook-specific UI logic.
@@ -299,7 +299,8 @@ Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility sur
 6. Load repo code from `REPO_DIR / "src"` and apply the import guard.
 7. Run fresh-subprocess repo tests when branch validation is needed.
 8. Build the runner and run direct batch generation.
-9. Preview artifacts and optionally launch Gradio only as a debugging add-on.
+9. Preview JSON artifacts by default, while keeping CSV/Markdown preview and download snippets commented nearby for occasional use.
+10. Keep the optional Gradio add-on present only as a commented reference block unless it is intentionally being used for a debugging pass.
 
 Branch-selection notes:
 
@@ -320,3 +321,8 @@ The notebooks should not define:
 - graph internals
 - copied package logic
 - duplicate Gradio UI controls
+
+Navigation notes:
+
+- Each maintained code cell should begin with a commented copy of its section heading so notebook discussion can refer to a visible section label and cell number together.
+- `runner_debug.ipynb` should stay JSON-first for routine debugging: JSON preview and JSON download remain active, while CSV/Markdown preview or download lines may stay commented until explicitly needed.

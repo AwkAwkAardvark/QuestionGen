@@ -74,6 +74,7 @@
 - [x] Construct the structured LLM-backed runner from the notebook layer.
 - [x] Launch the primary staff notebook directly into Gradio without pre-running batch-generation cells.
 - [x] Keep direct batch generation, preview, and artifact inspection in the separate debug notebook.
+- [x] Keep the debug notebook JSON-first for routine inspection, with CSV/Markdown and optional Gradio helper code left commented nearby for occasional manual use.
 - [x] Keep `notebooks/legacy/runner.ipynb` and `notebooks/legacy/runner_pending.ipynb` as archival notebooks until a later confirmed removal pass.
 
 ### Separation guarantees

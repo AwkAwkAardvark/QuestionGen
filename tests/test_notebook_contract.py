@@ -17,6 +17,8 @@ class NotebookContractTests(unittest.TestCase):
     def test_runner_ui_validates_runtime_dependencies_before_app_launch(self) -> None:
         source = _notebook_source(REPO_ROOT / "notebooks" / "runner_ui.ipynb")
 
+        self.assertIn("# ## 1. Mount Drive And Define Standard Paths", source)
+        self.assertIn("# ## 5. Bootstrap, Refresh, And Launch Gradio", source)
         self.assertIn("langchain-openai", source)
         self.assertIn("from questiongen.config import ensure_runtime_dependencies", source)
         self.assertIn("ensure_runtime_dependencies(", source)
@@ -29,6 +31,12 @@ class NotebookContractTests(unittest.TestCase):
     def test_runner_debug_validates_runtime_dependencies_before_batch_and_ui_launch(self) -> None:
         source = _notebook_source(REPO_ROOT / "notebooks" / "runner_debug.ipynb")
 
+        self.assertIn("# ## 7. Run The Current Batch Pipeline", source)
+        self.assertIn("# ## 9. Optional Gradio Hook", source)
+        self.assertIn("# from questiongen.ui.gradio_app import create_app", source)
+        self.assertIn("# files.download(str(OUTPUT_CSV))", source)
+        self.assertIn("files.download(str(OUTPUT_JSON))", source)
+        self.assertIn("# print(OUTPUT_MD.read_text(encoding=\"utf-8\")[:3000])", source)
         self.assertIn("langchain-openai", source)
         self.assertIn("from questiongen.config import create_structured_llm, ensure_runtime_dependencies", source)
         self.assertGreaterEqual(source.count("ensure_runtime_dependencies("), 2)
