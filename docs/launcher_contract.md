@@ -83,6 +83,7 @@ Launcher responsibilities:
 - bootstrap third-party dependencies only when explicitly requested
 - clone or refresh the selected allowlisted pushed repo branch
 - prepend `REPO_DIR / "src"` to `sys.path` and invalidate import caches after clone or reuse
+- probe raw runtime modules such as `langchain_openai` and `gradio` before any `questiongen` import needed for batch or UI launch
 - validate required third-party runtime imports before batch execution or Gradio launch, and fail once with bootstrap guidance if they are missing
 - run fresh-subprocess repo tests for pushed-branch validation when requested
 - launch the Gradio UI from `runner_ui.ipynb`
@@ -176,8 +177,10 @@ Supported controls:
 Rules:
 
 - `BOOTSTRAP_ENV=True` installs third-party dependencies only. It should not be the normal rerun path.
+- When `BOOTSTRAP_ENV=True`, the setup cell should stop after dependency bootstrap and tell the user to set `BOOTSTRAP_ENV=False` before repo refresh, batch execution, or Gradio launch.
 - The normal rerun path should skip both third-party bootstrap and package reinstall.
 - Repo code should be loaded from `REPO_DIR / "src"` on `sys.path`, not by routine editable installs.
+- Missing runtime modules should be checked before importing `questiongen` itself, so a first-run dependency failure does not leave a partially imported package tree in the kernel.
 - `RESET_REPO=True` should remove the existing clone if present, then reclone the selected pushed branch cleanly.
 - `RESET_REPO=False` should still sync the existing clone to the latest remote commit on the selected pushed branch rather than blindly reusing a stale checkout.
 - The notebooks should always call `importlib.invalidate_caches()` after clone or reuse.
@@ -186,6 +189,7 @@ Rules:
 - If `questiongen` is already imported in the notebook kernel and the user requests `RESET_REPO=True` or `BOOTSTRAP_ENV=True`, the notebook should fail fast with a clear restart-required message rather than attempting package-tree reloads.
 - If the existing runtime clone advances to a newer commit on the selected branch, that repo update should also be treated as restart-required before any in-kernel `questiongen` execution continues.
 - That guard should explain that repo refresh succeeded, that fresh-subprocess tests can still validate the updated pushed branch, and that actual in-kernel app or pipeline execution needs a runtime restart for a clean import.
+- The restart-required state should persist across later notebook reruns in the same kernel until the runtime is actually restarted; simply turning `BOOTSTRAP_ENV` or `RESET_REPO` back to `False` must not silently allow stale imports to continue.
 - After the repo source path is prepared, the maintained notebooks and the Gradio batch path should verify required runtime imports such as `langchain_openai` before starting generation work.
 - Missing third-party runtime dependencies should fail once as launcher/setup errors with explicit `BOOTSTRAP_ENV=True` guidance, not degrade into dozens of exported per-row `planning_error` results.
 - Fresh-subprocess tests should set `PYTHONPATH` to `REPO_DIR / "src"` in the child process environment so pushed branch code is evaluated in a clean interpreter.
@@ -285,9 +289,10 @@ Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility sur
 2. Load secrets from `api_key.txt`.
 3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to stable `main`, default `REPO_BRANCH` to `main`, and default `BOOTSTRAP_ENV` plus `RESET_REPO` to `False`.
 4. Bootstrap third-party dependencies only when requested.
-5. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
-6. Load repo code from `REPO_DIR / "src"` and apply the import guard.
-7. Launch `questiongen.ui.gradio_app.create_app()` immediately.
+5. If `BOOTSTRAP_ENV=True`, stop after dependency install with a rerun message so the next pass can prepare repo source in a clean post-install kernel state.
+6. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+7. Load repo code from `REPO_DIR / "src"` and apply the import guard.
+8. Launch `questiongen.ui.gradio_app.create_app()` immediately.
 
 `runner_debug.ipynb` should be limited to these steps:
 
@@ -295,12 +300,13 @@ Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility sur
 2. Load secrets from `api_key.txt`.
 3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to stable `main`, default `REPO_BRANCH` to `main`, and default `BOOTSTRAP_ENV`, `RESET_REPO`, and `RUN_REPO_TESTS` to `False`.
 4. Bootstrap third-party dependencies only when requested.
-5. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
-6. Load repo code from `REPO_DIR / "src"` and apply the import guard.
-7. Run fresh-subprocess repo tests when branch validation is needed.
-8. Build the runner and run direct batch generation.
-9. Preview JSON artifacts by default, while keeping CSV/Markdown preview and download snippets commented nearby for occasional use.
-10. Keep the optional Gradio add-on present only as a commented reference block unless it is intentionally being used for a debugging pass.
+5. If `BOOTSTRAP_ENV=True`, stop after dependency install with a rerun message so the next pass can prepare repo source in a clean post-install kernel state.
+6. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+7. Load repo code from `REPO_DIR / "src"` and apply the import guard.
+8. Run fresh-subprocess repo tests when branch validation is needed.
+9. Build the runner and run direct batch generation.
+10. Preview JSON artifacts by default, while keeping CSV/Markdown preview and download snippets commented nearby for occasional use.
+11. Keep the optional Gradio add-on present only as a commented reference block unless it is intentionally being used for a debugging pass.
 
 Branch-selection notes:
 
