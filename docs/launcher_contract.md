@@ -179,9 +179,12 @@ Rules:
 - The normal rerun path should skip both third-party bootstrap and package reinstall.
 - Repo code should be loaded from `REPO_DIR / "src"` on `sys.path`, not by routine editable installs.
 - `RESET_REPO=True` should remove the existing clone if present, then reclone the selected pushed branch cleanly.
-- `RESET_REPO=False` should reuse the existing clone when it is already present.
+- `RESET_REPO=False` should still sync the existing clone to the latest remote commit on the selected pushed branch rather than blindly reusing a stale checkout.
 - The notebooks should always call `importlib.invalidate_caches()` after clone or reuse.
+- When syncing an existing clone, the notebooks should `git fetch origin`, `git checkout REPO_BRANCH`, and fast-forward to `origin/REPO_BRANCH`.
+- If the existing runtime clone cannot be fast-forwarded cleanly, the notebooks should stop with a clear message telling the user to rerun the setup cell with `RESET_REPO=True`.
 - If `questiongen` is already imported in the notebook kernel and the user requests `RESET_REPO=True` or `BOOTSTRAP_ENV=True`, the notebook should fail fast with a clear restart-required message rather than attempting package-tree reloads.
+- If the existing runtime clone advances to a newer commit on the selected branch, that repo update should also be treated as restart-required before any in-kernel `questiongen` execution continues.
 - That guard should explain that repo refresh succeeded, that fresh-subprocess tests can still validate the updated pushed branch, and that actual in-kernel app or pipeline execution needs a runtime restart for a clean import.
 - After the repo source path is prepared, the maintained notebooks and the Gradio batch path should verify required runtime imports such as `langchain_openai` before starting generation work.
 - Missing third-party runtime dependencies should fail once as launcher/setup errors with explicit `BOOTSTRAP_ENV=True` guidance, not degrade into dozens of exported per-row `planning_error` results.

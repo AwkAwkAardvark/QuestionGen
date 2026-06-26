@@ -21,6 +21,10 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("from questiongen.config import ensure_runtime_dependencies", source)
         self.assertIn("ensure_runtime_dependencies(", source)
         self.assertIn("BOOTSTRAP_ENV=True", source)
+        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"fetch\", \"origin\"]", source)
+        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", REPO_BRANCH]", source)
+        self.assertIn("\"merge\", \"--ff-only\", f\"origin/{REPO_BRANCH}\"", source)
+        self.assertIn("existing clone was already at the selected pushed commit", source)
 
     def test_runner_debug_validates_runtime_dependencies_before_batch_and_ui_launch(self) -> None:
         source = _notebook_source(REPO_ROOT / "notebooks" / "runner_debug.ipynb")
@@ -29,6 +33,10 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("from questiongen.config import create_structured_llm, ensure_runtime_dependencies", source)
         self.assertGreaterEqual(source.count("ensure_runtime_dependencies("), 2)
         self.assertIn("BOOTSTRAP_ENV=True", source)
+        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"fetch\", \"origin\"]", source)
+        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", REPO_BRANCH]", source)
+        self.assertIn("\"merge\", \"--ff-only\", f\"origin/{REPO_BRANCH}\"", source)
+        self.assertIn("RESET_REPO=True for a clean refresh", source)
 
 
 if __name__ == "__main__":

@@ -67,6 +67,7 @@
 - [x] Expose notebook-side `REPO_BRANCH_OPTIONS` under Advanced Settings, default `REPO_BRANCH` to `main`, validate the selection against the allowlist, and clone the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
 - [x] Add notebook-side `BOOTSTRAP_ENV`, `RESET_REPO`, and `RUN_REPO_TESTS` controls so routine reruns can skip package reinstall churn while branch validation can still refresh pushed code safely.
 - [x] Keep third-party dependency bootstrap separate from repo refresh, and keep local repo-code loading on `REPO_DIR / "src"` rather than on routine `%pip install -e ...` reruns.
+- [x] Sync an existing Colab runtime clone to the latest pushed commit on the selected branch instead of blindly reusing a stale `/content/QuestionGen` checkout.
 - [x] Fail fast with a restart-required message if the notebook kernel already imported `questiongen` and the user requests a repo refresh or environment bootstrap.
 - [x] Fail fast on missing third-party runtime imports such as `langchain_openai` before starting batch execution or Gradio launch, instead of exporting row-by-row `planning_error` noise.
 - [x] Provide a fresh-subprocess test path for pushed-branch validation in Colab, with `PYTHONPATH` pointed at `REPO_DIR / "src"`.
