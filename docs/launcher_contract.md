@@ -9,7 +9,7 @@ The launcher is responsible for runtime setup only. Reusable generation logic st
 ## Notebook Roles
 
 - `notebooks/runner_ui.ipynb` is the primary staff-facing launcher.
-- `notebooks/runner_ui.ipynb` mounts Drive, defines standard paths, loads secrets, exposes minimal settings plus Advanced Settings, defaults branch selection to `main` through a notebook-side allowlist, clones the selected allowlisted pushed branch, and launches `questiongen.ui.gradio_app.create_app()` immediately.
+- `notebooks/runner_ui.ipynb` mounts Drive, defines standard paths, loads secrets, exposes minimal settings plus Advanced Settings, defaults branch selection to stable `main` through a notebook-side allowlist, reuses or refreshes the selected allowlisted pushed branch, and launches `questiongen.ui.gradio_app.create_app()` immediately.
 - `notebooks/runner_ui.ipynb` does not run direct batch-generation cells before launching Gradio.
 - `notebooks/runner_debug.ipynb` is the batch/debug notebook.
 - `notebooks/runner_debug.ipynb` keeps direct `run_batch_files(...)`, output preview, and artifact inspection in notebook cells, with Gradio available only as an optional debugging add-on.
@@ -75,8 +75,15 @@ Launcher responsibilities:
 - define Drive paths
 - load `api_key.txt`
 - expose notebook-level minimal settings and Advanced Settings, including notebook-side `REPO_BRANCH_OPTIONS` plus `REPO_BRANCH`
-- validate the selected branch against that allowlist before clone/install
-- clone and install the selected allowlisted pushed repo branch
+- expose notebook-side runtime hygiene controls:
+  - `BOOTSTRAP_ENV`
+  - `RESET_REPO`
+  - `RUN_REPO_TESTS`
+- validate the selected branch against that allowlist before clone or refresh
+- bootstrap third-party dependencies only when explicitly requested
+- clone or refresh the selected allowlisted pushed repo branch
+- prepend `REPO_DIR / "src"` to `sys.path` and invalidate import caches after clone or reuse
+- run fresh-subprocess repo tests for pushed-branch validation when requested
 - launch the Gradio UI from `runner_ui.ipynb`
 - create the structured LLM-backed runner for batch/debug flows
 - derive the active question types
@@ -90,6 +97,14 @@ Hard constraints:
 - do not move file-based secret loading into `src/questiongen/`
 - do not duplicate package business logic inside notebook cells
 - do not duplicate Gradio UI behavior in notebook cells
+- do not rely on routine `%pip install -e ...` reruns to refresh local repo code in an already-running notebook kernel
+
+## Branch Workflow
+
+- `main` is the stable default branch and the default Colab target.
+- New implementation work must start on a feature branch rather than directly on `main`.
+- Colab can validate only branches that have already been pushed to the remote repository.
+- The notebook-side branch allowlist is intentionally conservative. Keep only `main` by default, and add a feature branch temporarily only when you intentionally want Colab to validate that pushed branch.
 
 ## Current Package Contract
 
@@ -138,6 +153,35 @@ Notes:
 - Launcher-derived defaults should include all of those broad families because the product direction is to run all registered families.
 - `mood_atmosphere` remains implemented in code as dormant future work, but it is intentionally excluded from `QUESTION_TYPES` and from launcher-derived default selections.
 - Subtype metadata is now part of the exported contract: `QuestionFormatKey`, `QuestionSubtypeKey`, and `QuestionSubtype`.
+
+## Notebook Runtime Hygiene
+
+The maintained notebooks now follow three distinct setup phases:
+
+1. dependency bootstrap
+2. repo refresh or reuse
+3. import guard plus optional fresh-subprocess tests
+
+Supported controls:
+
+- `REPO_BRANCH_OPTIONS`: notebook-side allowlist of pushed branches, defaulting to `["main"]`
+- `REPO_BRANCH`: selected pushed branch, defaulting to `main`
+- `BOOTSTRAP_ENV = False`: one-time or infrequent third-party dependency installation
+- `RESET_REPO = False`: delete and reclone the selected pushed branch
+- `RUN_REPO_TESTS = False`: run repo tests in a fresh subprocess
+
+Rules:
+
+- `BOOTSTRAP_ENV=True` installs third-party dependencies only. It should not be the normal rerun path.
+- The normal rerun path should skip both third-party bootstrap and package reinstall.
+- Repo code should be loaded from `REPO_DIR / "src"` on `sys.path`, not by routine editable installs.
+- `RESET_REPO=True` should remove the existing clone if present, then reclone the selected pushed branch cleanly.
+- `RESET_REPO=False` should reuse the existing clone when it is already present.
+- The notebooks should always call `importlib.invalidate_caches()` after clone or reuse.
+- If `questiongen` is already imported in the notebook kernel and the user requests `RESET_REPO=True` or `BOOTSTRAP_ENV=True`, the notebook should fail fast with a clear restart-required message rather than attempting package-tree reloads.
+- That guard should explain that repo refresh succeeded, that fresh-subprocess tests can still validate the updated pushed branch, and that actual in-kernel app or pipeline execution needs a runtime restart for a clean import.
+- Fresh-subprocess tests should set `PYTHONPATH` to `REPO_DIR / "src"` in the child process environment so pushed branch code is evaluated in a clean interpreter.
+- The old editable-install warnings came from mixing `%pip install -e ...` with same-kernel imports of `questiongen`; source-path loading plus subprocess tests is the supported hygiene pattern.
 
 ## Gradio UI Behavior
 
@@ -230,25 +274,32 @@ Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility sur
 
 1. Mount Drive and define standard paths.
 2. Load secrets from `api_key.txt`.
-3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to `main`, and default `REPO_BRANCH` to `main`.
-4. Validate `REPO_BRANCH` against that allowlist, then clone and install the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
-5. Launch `questiongen.ui.gradio_app.create_app()` immediately.
+3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to stable `main`, default `REPO_BRANCH` to `main`, and default `BOOTSTRAP_ENV` plus `RESET_REPO` to `False`.
+4. Bootstrap third-party dependencies only when requested.
+5. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+6. Load repo code from `REPO_DIR / "src"` and apply the import guard.
+7. Launch `questiongen.ui.gradio_app.create_app()` immediately.
 
 `runner_debug.ipynb` should be limited to these steps:
 
 1. Mount Drive and define standard paths.
 2. Load secrets from `api_key.txt`.
-3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to `main`, and default `REPO_BRANCH` to `main`.
-4. Validate `REPO_BRANCH` against that allowlist, then clone and install the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
-5. Build the runner and run direct batch generation.
-6. Preview artifacts and optionally launch Gradio only as a debugging add-on.
+3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to stable `main`, default `REPO_BRANCH` to `main`, and default `BOOTSTRAP_ENV`, `RESET_REPO`, and `RUN_REPO_TESTS` to `False`.
+4. Bootstrap third-party dependencies only when requested.
+5. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+6. Load repo code from `REPO_DIR / "src"` and apply the import guard.
+7. Run fresh-subprocess repo tests when branch validation is needed.
+8. Build the runner and run direct batch generation.
+9. Preview artifacts and optionally launch Gradio only as a debugging add-on.
 
 Branch-selection notes:
 
 - Colab can pull only branches that have already been pushed to the remote repository.
 - Colab cannot automatically pull unpushed local-only workspace changes.
+- `main` remains the stable default branch and default launcher target.
 - The active launcher notebooks currently expose only `main` through `REPO_BRANCH_OPTIONS`.
-- Expand that allowlist only when there is an intentional need to test another pushed branch from Colab.
+- Expand that allowlist only when there is an intentional need to test another pushed feature branch from Colab.
+- A typical branch-validation flow is: push the feature branch, temporarily add it to the allowlist, set `REPO_BRANCH`, set `RESET_REPO=True`, run fresh-subprocess tests, and restart the runtime only if you want in-kernel app or pipeline execution against that refreshed code.
 - Broad family selection still starts from `QUESTION_TYPES`, while actual execution expands into subtype rows underneath each selected family.
 
 The notebooks should not define:
