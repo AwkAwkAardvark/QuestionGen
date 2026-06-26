@@ -246,7 +246,7 @@
   - dormant policy: keep the implementation code in the repo, but keep `QUESTION_TYPES` and launcher/UI defaults focused on the other live families until their quality work stabilizes
   - reactivation policy: revisit this family only after the active families are hardened further and the user explicitly confirms that the affective family is worth reactivating
 
-## Deferred `v0.2.0` Work: Observability Before Shared Design Layer
+## Active `v0.2.0` Work: Shared Design Layer
 
 ### Planner observability and timeout hardening first
 
@@ -264,19 +264,24 @@ Landed hardening contract:
 - `QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS` now controls periodic "still running" planner logs and defaults to `30` seconds.
 - Planner timeouts now export readable `planning_error` rows instead of presenting as silent spinner stalls.
 
-### Shared intermediate design layer remains deferred
+### Shared intermediate design layer
 
-- [ ] Treat the future shared design layer as a `v0.2.0`-scale architectural change, not part of the current hardening pass.
-- [ ] Use the future shared graph shape:
-  - `prepare -> source gate -> design/candidate stage -> final planner -> deterministic plan check -> render -> explanation -> final validate`
-- [ ] Treat that design stage as a reusable family pattern rather than as a `vocab`-only special case.
-- [ ] First adopter when implementation starts: `vocab`.
-- [ ] First follow-on adopters after the pattern exists: `sentence_insertion` and `paragraph_ordering`.
-- [ ] Expect participating families to need new design-stage prompt surfaces plus slimmer revised final-planner prompts.
-- [ ] Start the eventual refactor only on a fresh branch cut from clean `main`, not from a dirty notebook-oriented worktree baseline.
-- [ ] Default subagent role during design or prep work: read-only helper for analysis and planning artifacts, not runtime integration.
-- [ ] If a subagent receives write scope during planning or prep, keep that scope limited to planning artifacts such as `question_types_pending.py`, `docs/question_types_pending.md`, and matching durable docs.
-- [ ] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
+- [x] Treat the shared design layer as a `v0.2.0`-scale internal architectural change.
+- [x] Use the internal graph shape:
+  - `prepare -> source gate -> design -> final planner -> deterministic plan check -> render -> explanation -> final validate`
+- [x] Keep the public batch/export/notebook interfaces unchanged while refactoring internal graph stages and planner contracts.
+- [x] Add first-class `QuestionState.design` and deterministic family-specific design builders.
+- [x] Split live-family planning into `design -> draft -> hydrate final plan`.
+- [x] Treat the design stage as a reusable family pattern across the live families rather than as a `vocab`-only special case.
+- [x] Migrate the live families in this order:
+  - `vocab`
+  - `sentence_insertion`
+  - `paragraph_ordering`
+  - `fill_in_the_blank`
+  - `underlined_phrase_meaning`
+  - `grammar`
+- [x] Move source-owned text selection out of LLM authority for the migrated live families.
+- [x] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
 
 ## Stable Workflow Commitments
 

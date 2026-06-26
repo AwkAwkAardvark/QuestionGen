@@ -328,13 +328,13 @@ The remaining workflow should be treated as:
 
 This is safer than thinking in terms of question-type names alone because the next real architectural boundary is no longer basic span preparation itself, but how far the live span contract can be pushed without breaking mixed-batch quality.
 
-## Deferred Shared Design Layer
+## Shared Design Layer
 
 Current planning stance:
 
-- do not implement the shared intermediate design layer in the current pass
-- planner observability and timeout hardening are now landed; treat them as the gate that must stay stable before that refactor starts
-- treat the architecture shift as a future `v0.2.0`-scale change rather than as incremental cleanup
+- the shared intermediate design layer is now the active internal `v0.2.0` contract
+- planner observability and timeout hardening remain in place as the diagnostics baseline around that refactor
+- the architecture shift is internal: batch/export/notebook interfaces stay stable while graph stages, planner inputs, and design-aware validation change underneath
 
 Current hardening knobs:
 
@@ -342,23 +342,27 @@ Current hardening knobs:
 - `QUESTIONGEN_PLANNER_TIMEOUT_SECONDS` defaults to `180` and now forces planner timeouts to export readable `planning_error` rows
 - `QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS` defaults to `30` and controls periodic "still running" planner logs
 
-Planned reusable graph shape:
+Active reusable graph shape:
 
-- `prepare -> source gate -> design/candidate stage -> final planner -> deterministic plan check -> render -> explanation -> final validate`
+- `prepare -> source gate -> design -> final planner -> deterministic plan check -> render -> explanation -> final validate`
 
-Reuse direction once that pattern exists:
+Live-family migration order for that pattern:
 
-- first adopter: `vocab`
-- first follow-on adopters: `sentence_insertion` and `paragraph_ordering`
+- `vocab`
+- `sentence_insertion`
+- `paragraph_ordering`
+- `fill_in_the_blank`
+- `underlined_phrase_meaning`
+- `grammar`
 
 Prompt implications to keep explicit:
 
-- the current subtype prompts are not enough for the future shared design layer
-- participating families will need new design-stage prompt surfaces
-- those same families will usually also need slimmer revised final-planner prompts
-- this prompt split is part of the architectural cost, not incidental cleanup
+- participating families now split responsibilities between deterministic design and slimmer final-planner drafts
+- design stage owns source-selected spans, gap bundles, paragraph partitions, locked target bundles, and other source-owned artifacts
+- final planner owns only the draft fields that should remain under LLM authority, such as answer choice wording, corruption wording, answer selection inside a locked bundle, and teacher-facing Korean explanation material
+- repair prompts should repair draft fields against the locked design rather than restarting source-target search
 
-Subagent role when this design work starts later:
+Subagent role during this design work:
 
 - keep subagents read-only by default while they prepare target ideas, candidate-veto heuristics, and prompt-split drafts
 - allow planning-artifact edits only if the lead agent explicitly scopes that write access

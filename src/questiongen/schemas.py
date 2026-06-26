@@ -109,6 +109,179 @@ class PreparedSource(BaseModel):
         return self
 
 
+class QuestionDesign(BaseModel):
+    family_key: str
+    subtype_key: str
+    design_kind: str
+    prompt_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class MoodAtmosphereDesign(QuestionDesign):
+    design_kind: Literal["mood_atmosphere"] = "mood_atmosphere"
+
+
+class SentenceInsertionDesign(QuestionDesign):
+    design_kind: Literal["sentence_insertion"] = "sentence_insertion"
+    target_unit_id: str
+    selected_gap_ids: list[str] = Field(default_factory=list)
+    correct_gap_id: str
+
+    @model_validator(mode="after")
+    def _validate_design(self) -> SentenceInsertionDesign:
+        if not self.target_unit_id:
+            raise ValueError("SentenceInsertionDesign target_unit_id is required.")
+        if len(self.selected_gap_ids) != 5:
+            raise ValueError("SentenceInsertionDesign requires exactly five selected_gap_ids.")
+        if len(set(self.selected_gap_ids)) != 5:
+            raise ValueError("SentenceInsertionDesign selected_gap_ids must be unique.")
+        if self.correct_gap_id not in self.selected_gap_ids:
+            raise ValueError("SentenceInsertionDesign correct_gap_id must be included in selected_gap_ids.")
+        return self
+
+
+class ParagraphOrderingDesign(QuestionDesign):
+    design_kind: Literal["paragraph_ordering"] = "paragraph_ordering"
+    intro_unit_ids: list[str] = Field(default_factory=list)
+    continuation_blocks: list[list[str]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_design(self) -> ParagraphOrderingDesign:
+        if not self.intro_unit_ids:
+            raise ValueError("ParagraphOrderingDesign intro_unit_ids are required.")
+        if len(self.continuation_blocks) != 3:
+            raise ValueError("ParagraphOrderingDesign requires exactly three continuation blocks.")
+        if any(not block for block in self.continuation_blocks):
+            raise ValueError("ParagraphOrderingDesign continuation blocks must all be non-empty.")
+        return self
+
+
+class UnderlinedPhraseMeaningDesign(QuestionDesign):
+    design_kind: Literal["underlined_phrase_meaning"] = "underlined_phrase_meaning"
+    selected_span_id: str
+    selected_span_text: str
+
+    @model_validator(mode="after")
+    def _validate_design(self) -> UnderlinedPhraseMeaningDesign:
+        if not self.selected_span_id:
+            raise ValueError("UnderlinedPhraseMeaningDesign selected_span_id is required.")
+        if not self.selected_span_text or not self.selected_span_text.strip():
+            raise ValueError("UnderlinedPhraseMeaningDesign selected_span_text is required.")
+        return self
+
+
+class FillInTheBlankDesign(QuestionDesign):
+    design_kind: Literal["fill_in_the_blank"] = "fill_in_the_blank"
+    subtype: Literal["proposition_inference", "connective_relation", "summary_completion"] = "proposition_inference"
+    selected_span_id: str
+    selected_span_text: str
+
+    @model_validator(mode="after")
+    def _validate_design(self) -> FillInTheBlankDesign:
+        if not self.selected_span_id:
+            raise ValueError("FillInTheBlankDesign selected_span_id is required.")
+        if not self.selected_span_text or not self.selected_span_text.strip():
+            raise ValueError("FillInTheBlankDesign selected_span_text is required.")
+        return self
+
+
+class VocabChoiceDesign(QuestionDesign):
+    design_kind: Literal["vocab_choice"] = "vocab_choice"
+    subtype: Literal[
+        "contextual_choice",
+        "contextual_best_paraphrase_choice",
+        "contextual_phrase_choice",
+    ] = "contextual_choice"
+    selected_span_id: str
+    selected_span_text: str
+
+    @model_validator(mode="after")
+    def _validate_design(self) -> VocabChoiceDesign:
+        if not self.selected_span_id:
+            raise ValueError("VocabChoiceDesign selected_span_id is required.")
+        if not self.selected_span_text or not self.selected_span_text.strip():
+            raise ValueError("VocabChoiceDesign selected_span_text is required.")
+        return self
+
+
+class UnderlinedVocabDesign(QuestionDesign):
+    design_kind: Literal["underlined_vocab"] = "underlined_vocab"
+    subtype: Literal[
+        "contextual_correct_among_4_corrupted",
+        "contextual_error_1_among_5",
+        "contextual_error_1_among_5_polarity_scope",
+        "contextual_error_1_among_5_collocation",
+        "contextual_correct_among_3_corrupted",
+    ]
+    target_span_ids: list[str] = Field(default_factory=list)
+    target_span_texts: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_design(self) -> UnderlinedVocabDesign:
+        if len(self.target_span_ids) != 5:
+            raise ValueError("UnderlinedVocabDesign requires exactly five target_span_ids.")
+        if len(set(self.target_span_ids)) != 5:
+            raise ValueError("UnderlinedVocabDesign target_span_ids must be unique.")
+        if len(self.target_span_texts) != 5:
+            raise ValueError("UnderlinedVocabDesign requires exactly five target_span_texts.")
+        return self
+
+
+class GrammarDesign(QuestionDesign):
+    design_kind: Literal["grammar"] = "grammar"
+    subtype: Literal[
+        "verb_form",
+        "subject_verb_agreement",
+        "finite_nonfinite",
+        "participle_voice",
+        "relative_clause",
+        "noun_clause_introducer",
+        "parallel_structure",
+        "conjunction_preposition",
+    ] = "verb_form"
+    target_span_ids: list[str] = Field(default_factory=list)
+    target_span_texts: list[str] = Field(default_factory=list)
+    corrupted_span_id: str
+
+    @model_validator(mode="after")
+    def _validate_design(self) -> GrammarDesign:
+        if len(self.target_span_ids) != 5:
+            raise ValueError("GrammarDesign requires exactly five target_span_ids.")
+        if len(set(self.target_span_ids)) != 5:
+            raise ValueError("GrammarDesign target_span_ids must be unique.")
+        if len(self.target_span_texts) != 5:
+            raise ValueError("GrammarDesign requires exactly five target_span_texts.")
+        if self.corrupted_span_id not in self.target_span_ids:
+            raise ValueError("GrammarDesign corrupted_span_id must be included in target_span_ids.")
+        return self
+
+
+class SentenceInsertionDraft(BaseModel):
+    correct_gap_id: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_draft(self) -> SentenceInsertionDraft:
+        if not self.correct_gap_id:
+            raise ValueError("SentenceInsertionDraft correct_gap_id is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("SentenceInsertionDraft explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("SentenceInsertionDraft explanation must contain Korean text.")
+        return self
+
+
+class ParagraphOrderingDraft(BaseModel):
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_draft(self) -> ParagraphOrderingDraft:
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("ParagraphOrderingDraft explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("ParagraphOrderingDraft explanation must contain Korean text.")
+        return self
+
+
 class SentenceInsertionPlan(BaseModel):
     target_unit_ids: list[str] = Field(default_factory=list)
     selected_gap_ids: list[str] = Field(default_factory=list)
@@ -292,6 +465,42 @@ class UnderlinedPhraseMeaningPlan(BaseModel):
         return self
 
 
+class UnderlinedPhraseMeaningDraft(BaseModel):
+    paraphrase_choices_ko: list[str] = Field(default_factory=list)
+    correct_choice: str
+    surface_meaning: str
+    contextual_meaning: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_draft(self) -> UnderlinedPhraseMeaningDraft:
+        if len(self.paraphrase_choices_ko) != 5:
+            raise ValueError("UnderlinedPhraseMeaningDraft requires exactly five paraphrase_choices_ko.")
+        normalized_choices = [" ".join(choice.split()) for choice in self.paraphrase_choices_ko]
+        if len(set(normalized_choices)) != 5:
+            raise ValueError("UnderlinedPhraseMeaningDraft paraphrase_choices_ko must be unique.")
+        if any(not _HANGUL_RE.search(choice) for choice in normalized_choices):
+            raise ValueError("UnderlinedPhraseMeaningDraft paraphrase_choices_ko must contain Korean text.")
+        if " ".join(self.correct_choice.split()) not in normalized_choices:
+            raise ValueError("UnderlinedPhraseMeaningDraft correct_choice must be included in paraphrase_choices_ko.")
+        if not self.surface_meaning or not self.surface_meaning.strip():
+            raise ValueError("UnderlinedPhraseMeaningDraft surface_meaning is required.")
+        if not _HANGUL_RE.search(self.surface_meaning):
+            raise ValueError("UnderlinedPhraseMeaningDraft surface_meaning must contain Korean text.")
+        if not self.contextual_meaning or not self.contextual_meaning.strip():
+            raise ValueError("UnderlinedPhraseMeaningDraft contextual_meaning is required.")
+        if not _HANGUL_RE.search(self.contextual_meaning):
+            raise ValueError("UnderlinedPhraseMeaningDraft contextual_meaning must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("UnderlinedPhraseMeaningDraft supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("UnderlinedPhraseMeaningDraft explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("UnderlinedPhraseMeaningDraft explanation must contain Korean text.")
+        return self
+
+
 class FillInTheBlankPlan(BaseModel):
     subtype: Literal["proposition_inference", "connective_relation", "summary_completion"] = "proposition_inference"
     selected_span_id: str
@@ -327,6 +536,37 @@ class FillInTheBlankPlan(BaseModel):
             raise ValueError("FillInTheBlankPlan explanation is required.")
         if not _HANGUL_RE.search(self.explanation):
             raise ValueError("FillInTheBlankPlan explanation must contain Korean text.")
+        return self
+
+
+class FillInTheBlankDraft(BaseModel):
+    completion_choices: list[str] = Field(default_factory=list)
+    correct_choice: str
+    contextual_meaning_ko: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_draft(self) -> FillInTheBlankDraft:
+        if len(self.completion_choices) != 5:
+            raise ValueError("FillInTheBlankDraft requires exactly five completion_choices.")
+        normalized_choices = [" ".join(choice.split()) for choice in self.completion_choices]
+        if len(set(normalized_choices)) != 5:
+            raise ValueError("FillInTheBlankDraft completion_choices must be unique.")
+        if any(_ENGLISH_CHOICE_RE.fullmatch(choice) is None for choice in normalized_choices):
+            raise ValueError("FillInTheBlankDraft completion_choices must be readable English text.")
+        if " ".join(self.correct_choice.split()) not in normalized_choices:
+            raise ValueError("FillInTheBlankDraft correct_choice must be included in completion_choices.")
+        if not self.contextual_meaning_ko or not self.contextual_meaning_ko.strip():
+            raise ValueError("FillInTheBlankDraft contextual_meaning_ko is required.")
+        if not _HANGUL_RE.search(self.contextual_meaning_ko):
+            raise ValueError("FillInTheBlankDraft contextual_meaning_ko must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("FillInTheBlankDraft supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("FillInTheBlankDraft explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("FillInTheBlankDraft explanation must contain Korean text.")
         return self
 
 
@@ -410,6 +650,38 @@ class ContextualVocabChoicePlan(BaseModel):
             raise ValueError("ContextualVocabChoicePlan explanation is required.")
         if not _HANGUL_RE.search(self.explanation):
             raise ValueError("ContextualVocabChoicePlan explanation must contain Korean text.")
+        return self
+
+
+class ContextualVocabChoiceDraft(BaseModel):
+    choice_words: list[str] = Field(default_factory=list)
+    correct_choice: str
+    contextual_meaning_ko: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_draft(self) -> ContextualVocabChoiceDraft:
+        if len(self.choice_words) != 5:
+            raise ValueError("ContextualVocabChoiceDraft requires exactly five choice_words.")
+        normalized_choices = [" ".join(text.split()).lower() for text in self.choice_words]
+        if len(set(normalized_choices)) != 5:
+            raise ValueError("ContextualVocabChoiceDraft choice_words must be unique.")
+        if any(not _is_short_english_lexical_choice(choice) for choice in self.choice_words):
+            raise ValueError("ContextualVocabChoiceDraft choice_words must be short readable English lexical choices.")
+        normalized_correct = " ".join(self.correct_choice.split()).lower()
+        if normalized_correct not in normalized_choices:
+            raise ValueError("ContextualVocabChoiceDraft correct_choice must be included in choice_words.")
+        if not self.contextual_meaning_ko or not self.contextual_meaning_ko.strip():
+            raise ValueError("ContextualVocabChoiceDraft contextual_meaning_ko is required.")
+        if not _HANGUL_RE.search(self.contextual_meaning_ko):
+            raise ValueError("ContextualVocabChoiceDraft contextual_meaning_ko must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("ContextualVocabChoiceDraft supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("ContextualVocabChoiceDraft explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("ContextualVocabChoiceDraft explanation must contain Korean text.")
         return self
 
 
@@ -518,6 +790,33 @@ class UnderlinedVocabPlan(BaseModel):
         return self
 
 
+class UnderlinedVocabDraft(BaseModel):
+    corrupted_replacements: list[UnderlinedVocabReplacement] = Field(default_factory=list)
+    answer_span_id: str
+    selection_basis_ko: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_draft(self) -> UnderlinedVocabDraft:
+        corrupted_ids = [replacement.span_id for replacement in self.corrupted_replacements]
+        if len(set(corrupted_ids)) != len(corrupted_ids):
+            raise ValueError("UnderlinedVocabDraft corrupted_replacements span_id values must be unique.")
+        if not self.answer_span_id:
+            raise ValueError("UnderlinedVocabDraft answer_span_id is required.")
+        if not self.selection_basis_ko or not self.selection_basis_ko.strip():
+            raise ValueError("UnderlinedVocabDraft selection_basis_ko is required.")
+        if not _HANGUL_RE.search(self.selection_basis_ko):
+            raise ValueError("UnderlinedVocabDraft selection_basis_ko must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("UnderlinedVocabDraft supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("UnderlinedVocabDraft explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("UnderlinedVocabDraft explanation must contain Korean text.")
+        return self
+
+
 class GrammarPlan(BaseModel):
     subtype: Literal[
         "verb_form",
@@ -564,6 +863,29 @@ class GrammarPlan(BaseModel):
             raise ValueError("GrammarPlan explanation is required.")
         if not _HANGUL_RE.search(self.explanation):
             raise ValueError("GrammarPlan explanation must contain Korean text.")
+        return self
+
+
+class GrammarDraft(BaseModel):
+    corrupted_word: str
+    correction_basis_ko: str
+    supporting_evidence: str
+    explanation: str
+
+    @model_validator(mode="after")
+    def _validate_draft(self) -> GrammarDraft:
+        if _ENGLISH_WORD_RE.fullmatch(self.corrupted_word.strip()) is None:
+            raise ValueError("GrammarDraft corrupted_word must be a single English word.")
+        if not self.correction_basis_ko or not self.correction_basis_ko.strip():
+            raise ValueError("GrammarDraft correction_basis_ko is required.")
+        if not _HANGUL_RE.search(self.correction_basis_ko):
+            raise ValueError("GrammarDraft correction_basis_ko must contain Korean text.")
+        if not self.supporting_evidence or not self.supporting_evidence.strip():
+            raise ValueError("GrammarDraft supporting_evidence is required.")
+        if not self.explanation or not self.explanation.strip():
+            raise ValueError("GrammarDraft explanation is required.")
+        if not _HANGUL_RE.search(self.explanation):
+            raise ValueError("GrammarDraft explanation must contain Korean text.")
         return self
 
 
@@ -625,6 +947,7 @@ class QuestionState(TypedDict):
     QuestionFormatKey: str | None
     QuestionSubtypeKey: str | None
     prepared_source: PreparedSource | None
+    design: BaseModel | None
     plan: BaseModel | None
     explanation_context: dict[str, object] | None
     generated: GeneratedQuestion | None
@@ -648,6 +971,7 @@ def make_initial_state(
         "QuestionFormatKey": question_format_key,
         "QuestionSubtypeKey": question_subtype_key,
         "prepared_source": None,
+        "design": None,
         "plan": None,
         "explanation_context": None,
         "generated": None,
@@ -657,4 +981,6 @@ def make_initial_state(
 
 
 def coerce_model(value: Any, schema: type[BaseModel]) -> BaseModel:
+    if isinstance(value, BaseModel) and not isinstance(value, schema):
+        return schema.model_validate(value.model_dump())
     return schema.model_validate(value)

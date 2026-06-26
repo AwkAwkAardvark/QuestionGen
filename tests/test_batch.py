@@ -15,12 +15,19 @@ from questiongen.parsers import prepare_source
 from questiongen.planners import PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR, PLANNER_QUOTA_EXHAUSTED_ERROR
 from questiongen.schemas import (
     BatchInputRow,
+    ContextualVocabChoiceDraft,
     ContextualVocabChoicePlan,
+    FillInTheBlankDraft,
     FillInTheBlankPlan,
+    GrammarDraft,
     GrammarPlan,
+    ParagraphOrderingDraft,
     ParagraphOrderingPlan,
+    SentenceInsertionDraft,
     SentenceInsertionPlan,
+    UnderlinedVocabDraft,
     UnderlinedVocabPlan,
+    UnderlinedPhraseMeaningDraft,
     UnderlinedPhraseMeaningPlan,
     VocabPlan,
 )
@@ -32,13 +39,20 @@ class _StubPlanner:
         self,
         output_schema: type[
             SentenceInsertionPlan
+            | SentenceInsertionDraft
             | ParagraphOrderingPlan
+            | ParagraphOrderingDraft
             | UnderlinedPhraseMeaningPlan
+            | UnderlinedPhraseMeaningDraft
             | FillInTheBlankPlan
+            | FillInTheBlankDraft
             | ContextualVocabChoicePlan
+            | ContextualVocabChoiceDraft
             | UnderlinedVocabPlan
+            | UnderlinedVocabDraft
             | VocabPlan
             | GrammarPlan
+            | GrammarDraft
         ],
     ) -> None:
         self.output_schema = output_schema
@@ -47,22 +61,29 @@ class _StubPlanner:
         self, prompt: str
     ) -> (
         SentenceInsertionPlan
+        | SentenceInsertionDraft
         | ParagraphOrderingPlan
+        | ParagraphOrderingDraft
         | UnderlinedPhraseMeaningPlan
+        | UnderlinedPhraseMeaningDraft
         | FillInTheBlankPlan
+        | FillInTheBlankDraft
         | ContextualVocabChoicePlan
+        | ContextualVocabChoiceDraft
         | UnderlinedVocabPlan
+        | UnderlinedVocabDraft
         | VocabPlan
         | GrammarPlan
+        | GrammarDraft
     ):
-        if self.output_schema is SentenceInsertionPlan:
+        if self.output_schema in {SentenceInsertionPlan, SentenceInsertionDraft}:
             return self.output_schema(
                 target_unit_ids=["S2"],
                 selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
                 correct_gap_id="G2",
                 explanation="문장 S2는 G2 위치에 들어가야 자연스럽습니다.",
             )
-        if self.output_schema is ParagraphOrderingPlan:
+        if self.output_schema in {ParagraphOrderingPlan, ParagraphOrderingDraft}:
             sentence_ids = re.findall(r"- (S\d+): text=", prompt)
             return self.output_schema(
                 intro_unit_ids=[sentence_ids[0]],
@@ -73,7 +94,7 @@ class _StubPlanner:
                 ],
                 explanation="도입부 다음에 원인과 결과가 이어지는 흐름입니다.",
             )
-        if self.output_schema is FillInTheBlankPlan:
+        if self.output_schema in {FillInTheBlankPlan, FillInTheBlankDraft}:
             match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
             selected_span_id = match.group(1) if match else "P0"
             selected_span_text = match.group(2) if match else "less electricity than the older"
@@ -92,7 +113,7 @@ class _StubPlanner:
                 supporting_evidence=selected_span_text,
                 explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
             )
-        if self.output_schema is ContextualVocabChoicePlan:
+        if self.output_schema in {ContextualVocabChoicePlan, ContextualVocabChoiceDraft}:
             match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
             selected_span_id = match.group(1) if match else "P0"
             selected_span_text = match.group(2) if match else "improve"
@@ -147,7 +168,7 @@ class _StubPlanner:
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
                 explanation="문맥상 이 자리는 안전을 더 높이는 방향의 표현이 와야 합니다.",
             )
-        if self.output_schema is UnderlinedVocabPlan:
+        if self.output_schema in {UnderlinedVocabPlan, UnderlinedVocabDraft}:
             targets = _extract_ranked_lexical_targets(prompt)
             target_ids, target_texts = zip(*targets[:5])
             subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
@@ -213,7 +234,7 @@ class _StubPlanner:
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
                 explanation="문맥상 정답만 원래 의미를 유지하고 나머지는 의미를 비틀고 있습니다.",
             )
-        if self.output_schema is GrammarPlan:
+        if self.output_schema in {GrammarPlan, GrammarDraft}:
             targets = _extract_ranked_single_word_targets(prompt)
             target_ids, target_texts = zip(*targets[:5])
             original_word = target_texts[1]
@@ -320,10 +341,10 @@ _HARD_COLLOCATION_FALLBACKS = {
 
 
 class _HardVocabAuditPlanner:
-    def __init__(self, output_schema: type[UnderlinedVocabPlan]) -> None:
+    def __init__(self, output_schema: type[UnderlinedVocabPlan | UnderlinedVocabDraft]) -> None:
         self.output_schema = output_schema
 
-    def invoke(self, prompt: str) -> UnderlinedVocabPlan:
+    def invoke(self, prompt: str) -> UnderlinedVocabPlan | UnderlinedVocabDraft:
         target_infos = _extract_ranked_lexical_target_infos(prompt)[:5]
         target_ids = tuple(info["span_id"] for info in target_infos)
         target_texts = tuple(info["text"] for info in target_infos)

@@ -30,17 +30,26 @@ from .renderers import (
     rendered_gap_positions,
 )
 from .schemas import (
+    BaseModel,
     ContextualVocabChoicePlan,
+    FillInTheBlankDesign,
     FillInTheBlankPlan,
+    GrammarDesign,
     GrammarPlan,
     GeneratedQuestion,
+    MoodAtmosphereDesign,
     MoodAtmospherePlan,
+    ParagraphOrderingDesign,
     ParagraphOrderingPlan,
     PreparedSource,
     QuestionState,
+    SentenceInsertionDesign,
     SentenceInsertionPlan,
+    UnderlinedPhraseMeaningDesign,
+    UnderlinedVocabDesign,
     UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabChoiceDesign,
     VocabPlan,
 )
 from .targeting import (
@@ -251,6 +260,7 @@ def source_check(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[str,
 
 def plan_check(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[str, Any]:
     prepared_source = state["prepared_source"]
+    design = state.get("design")
     plan = state["plan"]
 
     if prepared_source is None:
@@ -258,8 +268,20 @@ def plan_check(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[str, A
             "status": "planning_error",
             "errors": ["PreparedSource is required before deterministic plan checks."],
         }
+    if design is not None:
+        design_errors = validate_question_design(prepared_source, design, type_spec)
+        if design_errors:
+            return {
+                "status": "planning_error",
+                "errors": design_errors,
+            }
 
-    errors = validate_plan_against_prepared_source(prepared_source, plan, type_spec)
+    errors = validate_plan_against_prepared_source(
+        prepared_source,
+        plan,
+        type_spec,
+        design=design,
+    )
     if errors:
         return {
             "status": "planning_error",
@@ -388,22 +410,72 @@ def validate_plan_against_prepared_source(
     prepared_source: PreparedSource,
     plan: object,
     type_spec: QuestionTypeSpec,
+    design: BaseModel | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    if design is not None:
+        errors.extend(validate_plan_against_design(design, plan, type_spec))
+        if errors:
+            return errors
+    if type_spec.validator_key == "sentence_insertion":
+        return errors + _validate_sentence_insertion_plan(prepared_source, plan)
+    if type_spec.validator_key == "paragraph_ordering":
+        return errors + _validate_paragraph_ordering_plan(prepared_source, plan)
+    if type_spec.validator_key == "mood_atmosphere":
+        return errors + _validate_mood_atmosphere_plan(prepared_source, plan, type_spec)
+    if type_spec.validator_key == "underlined_phrase_meaning":
+        return errors + _validate_underlined_phrase_meaning_plan(prepared_source, plan)
+    if type_spec.validator_key == "fill_in_the_blank":
+        return errors + _validate_fill_in_the_blank_plan(prepared_source, plan, type_spec)
+    if type_spec.validator_key == "vocab":
+        return errors + _validate_vocab_plan(prepared_source, plan, type_spec)
+    if type_spec.validator_key == "grammar":
+        return errors + _validate_grammar_plan(prepared_source, plan, type_spec)
+    return errors + [f"No deterministic plan validator is registered for {type_spec.validator_key}."]
+
+
+def validate_question_design(
+    prepared_source: PreparedSource,
+    design: BaseModel,
+    type_spec: QuestionTypeSpec,
 ) -> list[str]:
     if type_spec.validator_key == "sentence_insertion":
-        return _validate_sentence_insertion_plan(prepared_source, plan)
+        return _validate_sentence_insertion_design(prepared_source, design)
     if type_spec.validator_key == "paragraph_ordering":
-        return _validate_paragraph_ordering_plan(prepared_source, plan)
+        return _validate_paragraph_ordering_design(prepared_source, design)
     if type_spec.validator_key == "mood_atmosphere":
-        return _validate_mood_atmosphere_plan(prepared_source, plan, type_spec)
+        return _validate_mood_atmosphere_design(prepared_source, design, type_spec)
     if type_spec.validator_key == "underlined_phrase_meaning":
-        return _validate_underlined_phrase_meaning_plan(prepared_source, plan)
+        return _validate_underlined_phrase_meaning_design(prepared_source, design)
     if type_spec.validator_key == "fill_in_the_blank":
-        return _validate_fill_in_the_blank_plan(prepared_source, plan, type_spec)
+        return _validate_fill_in_the_blank_design(prepared_source, design, type_spec)
     if type_spec.validator_key == "vocab":
-        return _validate_vocab_plan(prepared_source, plan, type_spec)
+        return _validate_vocab_design(prepared_source, design, type_spec)
     if type_spec.validator_key == "grammar":
-        return _validate_grammar_plan(prepared_source, plan, type_spec)
-    return [f"No deterministic plan validator is registered for {type_spec.validator_key}."]
+        return _validate_grammar_design(prepared_source, design, type_spec)
+    return [f"No design validator is registered for {type_spec.validator_key}."]
+
+
+def validate_plan_against_design(
+    design: BaseModel,
+    plan: object,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if type_spec.validator_key == "sentence_insertion":
+        return _validate_sentence_insertion_plan_against_design(design, plan)
+    if type_spec.validator_key == "paragraph_ordering":
+        return _validate_paragraph_ordering_plan_against_design(design, plan)
+    if type_spec.validator_key == "mood_atmosphere":
+        return _validate_mood_atmosphere_plan_against_design(design, plan)
+    if type_spec.validator_key == "underlined_phrase_meaning":
+        return _validate_underlined_phrase_meaning_plan_against_design(design, plan)
+    if type_spec.validator_key == "fill_in_the_blank":
+        return _validate_fill_in_the_blank_plan_against_design(design, plan)
+    if type_spec.validator_key == "vocab":
+        return _validate_vocab_plan_against_design(design, plan, type_spec)
+    if type_spec.validator_key == "grammar":
+        return _validate_grammar_plan_against_design(design, plan)
+    return [f"No design-aware plan validator is registered for {type_spec.validator_key}."]
 
 
 def validate_question_type_compatibility(
@@ -426,6 +498,38 @@ def validate_question_type_compatibility(
     if type_spec.validator_key == "grammar":
         return _validate_grammar_compatibility(prepared_source, type_spec)
     return []
+
+
+def _validate_sentence_insertion_design(prepared_source: PreparedSource, design: BaseModel) -> list[str]:
+    if not isinstance(design, SentenceInsertionDesign):
+        return ["SentenceInsertionDesign is missing for deterministic design checks."]
+    sentence_ids = [unit.id for unit in prepared_source.sentence_units]
+    if design.target_unit_id not in sentence_ids:
+        return [f"Unknown target sentence ID in design: {design.target_unit_id}"]
+    gap_ids = {gap.id for gap in prepared_source.gap_units}
+    unknown_gap_ids = [gap_id for gap_id in design.selected_gap_ids if gap_id not in gap_ids]
+    if unknown_gap_ids:
+        return [f"Unknown design gap IDs: {', '.join(unknown_gap_ids)}"]
+    rendered_positions = rendered_gap_positions(prepared_source, design.target_unit_id)
+    unique_positions = {rendered_positions[gap_id] for gap_id in design.selected_gap_ids}
+    if len(unique_positions) != len(design.selected_gap_ids):
+        return ["SentenceInsertionDesign selected_gap_ids collapse into duplicate rendered positions."]
+    return []
+
+
+def _validate_sentence_insertion_plan_against_design(design: BaseModel, plan: object) -> list[str]:
+    if not isinstance(design, SentenceInsertionDesign):
+        return ["SentenceInsertionDesign is missing for plan-against-design validation."]
+    if not isinstance(plan, SentenceInsertionPlan):
+        return ["SentenceInsertionPlan is missing for plan-against-design validation."]
+    errors: list[str] = []
+    if plan.target_unit_ids != [design.target_unit_id]:
+        errors.append("SentenceInsertionPlan target_unit_ids must come from the locked design target.")
+    if plan.selected_gap_ids != design.selected_gap_ids:
+        errors.append("SentenceInsertionPlan selected_gap_ids must match the locked design gap bundle.")
+    if plan.correct_gap_id != design.correct_gap_id:
+        errors.append("SentenceInsertionPlan correct_gap_id must match the locked design answer.")
+    return errors
 
 
 def _validate_sentence_insertion_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
@@ -516,6 +620,29 @@ def _validate_paragraph_ordering_plan(prepared_source: PreparedSource, plan: obj
     return []
 
 
+def _validate_paragraph_ordering_design(prepared_source: PreparedSource, design: BaseModel) -> list[str]:
+    if not isinstance(design, ParagraphOrderingDesign):
+        return ["ParagraphOrderingDesign is missing for deterministic design checks."]
+    sentence_ids = [unit.id for unit in prepared_source.sentence_units]
+    flattened = design.intro_unit_ids + [unit_id for block in design.continuation_blocks for unit_id in block]
+    if flattened != sentence_ids:
+        return ["ParagraphOrderingDesign must cover all sentence IDs exactly once in source order."]
+    return []
+
+
+def _validate_paragraph_ordering_plan_against_design(design: BaseModel, plan: object) -> list[str]:
+    if not isinstance(design, ParagraphOrderingDesign):
+        return ["ParagraphOrderingDesign is missing for plan-against-design validation."]
+    if not isinstance(plan, ParagraphOrderingPlan):
+        return ["ParagraphOrderingPlan is missing for plan-against-design validation."]
+    errors: list[str] = []
+    if plan.intro_unit_ids != design.intro_unit_ids:
+        errors.append("ParagraphOrderingPlan intro_unit_ids must match the locked design partition.")
+    if plan.continuation_blocks != design.continuation_blocks:
+        errors.append("ParagraphOrderingPlan continuation_blocks must match the locked design partition.")
+    return errors
+
+
 def _validate_mood_atmosphere_plan(
     prepared_source: PreparedSource,
     plan: object,
@@ -540,6 +667,24 @@ def _validate_mood_atmosphere_plan(
         if plan.atmosphere_evidence and normalize_text(plan.atmosphere_evidence) not in source_text:
             errors.append("MoodAtmospherePlan atmosphere_evidence must be copied from the source passage.")
     return errors
+
+
+def _validate_mood_atmosphere_design(
+    prepared_source: PreparedSource,
+    design: BaseModel,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if not isinstance(design, MoodAtmosphereDesign):
+        return ["MoodAtmosphereDesign is missing for deterministic design checks."]
+    return []
+
+
+def _validate_mood_atmosphere_plan_against_design(design: BaseModel, plan: object) -> list[str]:
+    if not isinstance(design, MoodAtmosphereDesign):
+        return ["MoodAtmosphereDesign is missing for plan-against-design validation."]
+    if not isinstance(plan, MoodAtmospherePlan):
+        return ["MoodAtmospherePlan is missing for plan-against-design validation."]
+    return []
 
 
 def _validate_mood_atmosphere_compatibility(
@@ -619,6 +764,31 @@ def _validate_paragraph_ordering_compatibility(prepared_source: PreparedSource) 
     return ["Passage does not contain strongly forced adjacency boundaries for a stable paragraph_ordering item."]
 
 
+def _validate_underlined_phrase_meaning_design(prepared_source: PreparedSource, design: BaseModel) -> list[str]:
+    if not isinstance(design, UnderlinedPhraseMeaningDesign):
+        return ["UnderlinedPhraseMeaningDesign is missing for deterministic design checks."]
+    span_map = {span.id: span for span in underlined_phrase_inventory(prepared_source)}
+    span = span_map.get(design.selected_span_id)
+    if span is None:
+        return [f"Unknown selected span ID in design: {design.selected_span_id}"]
+    if design.selected_span_text != span.text:
+        return ["UnderlinedPhraseMeaningDesign selected_span_text must exactly match the source span text."]
+    return []
+
+
+def _validate_underlined_phrase_meaning_plan_against_design(design: BaseModel, plan: object) -> list[str]:
+    if not isinstance(design, UnderlinedPhraseMeaningDesign):
+        return ["UnderlinedPhraseMeaningDesign is missing for plan-against-design validation."]
+    if not isinstance(plan, UnderlinedPhraseMeaningPlan):
+        return ["UnderlinedPhraseMeaningPlan is missing for plan-against-design validation."]
+    errors: list[str] = []
+    if plan.selected_span_id != design.selected_span_id:
+        errors.append("UnderlinedPhraseMeaningPlan selected_span_id must match the locked design target.")
+    if plan.selected_span_text != design.selected_span_text:
+        errors.append("UnderlinedPhraseMeaningPlan selected_span_text must match the locked design target.")
+    return errors
+
+
 def _validate_underlined_phrase_meaning_plan(prepared_source: PreparedSource, plan: object) -> list[str]:
     if not isinstance(plan, UnderlinedPhraseMeaningPlan):
         return ["UnderlinedPhraseMeaningPlan is missing for deterministic plan checks."]
@@ -684,6 +854,43 @@ def _validate_underlined_phrase_meaning_compatibility(prepared_source: PreparedS
     return []
 
 
+def _validate_fill_in_the_blank_design(
+    prepared_source: PreparedSource,
+    design: BaseModel,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if not isinstance(design, FillInTheBlankDesign):
+        return ["FillInTheBlankDesign is missing for deterministic design checks."]
+    if type_spec.subtype_key == "blank_connective_relation_5_choices":
+        inventory = fill_blank_connective_inventory(prepared_source)
+    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
+        inventory = fill_blank_summary_inventory(prepared_source)
+    else:
+        inventory = fill_blank_target_inventory(prepared_source)
+    span_map = {span.id: span for span in inventory}
+    span = span_map.get(design.selected_span_id)
+    if span is None:
+        return [f"Unknown selected span ID in design: {design.selected_span_id}"]
+    if design.selected_span_text != span.text:
+        return ["FillInTheBlankDesign selected_span_text must exactly match the source span text."]
+    return []
+
+
+def _validate_fill_in_the_blank_plan_against_design(design: BaseModel, plan: object) -> list[str]:
+    if not isinstance(design, FillInTheBlankDesign):
+        return ["FillInTheBlankDesign is missing for plan-against-design validation."]
+    if not isinstance(plan, FillInTheBlankPlan):
+        return ["FillInTheBlankPlan is missing for plan-against-design validation."]
+    errors: list[str] = []
+    if plan.subtype != design.subtype:
+        errors.append("FillInTheBlankPlan subtype must match the locked design subtype.")
+    if plan.selected_span_id != design.selected_span_id:
+        errors.append("FillInTheBlankPlan selected_span_id must match the locked design target.")
+    if plan.selected_span_text != design.selected_span_text:
+        errors.append("FillInTheBlankPlan selected_span_text must match the locked design target.")
+    return errors
+
+
 def _validate_fill_in_the_blank_plan(
     prepared_source: PreparedSource,
     plan: object,
@@ -742,6 +949,61 @@ def _validate_fill_in_the_blank_compatibility(
     if not viable_spans:
         return [f"Passage has no suitable contextual span for {type_spec.subtype_key}."]
     return []
+
+
+def _validate_vocab_design(
+    prepared_source: PreparedSource,
+    design: BaseModel,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if isinstance(design, VocabChoiceDesign):
+        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
+        span = inventory.get(design.selected_span_id)
+        if span is None:
+            return [f"Unknown selected span ID in design: {design.selected_span_id}"]
+        if design.selected_span_text != span.text:
+            return ["VocabChoiceDesign selected_span_text must exactly match the source span text."]
+        return []
+    if isinstance(design, UnderlinedVocabDesign):
+        inventory = {span.id: span for span in vocab_hard_candidate_inventory(prepared_source)}
+        missing_ids = [span_id for span_id in design.target_span_ids if span_id not in inventory]
+        if missing_ids:
+            return [f"Unknown target span IDs in design: {', '.join(missing_ids)}"]
+        expected_texts = [inventory[span_id].text for span_id in design.target_span_ids]
+        if design.target_span_texts != expected_texts:
+            return ["UnderlinedVocabDesign target_span_texts must exactly match the locked source texts."]
+        return []
+    return ["A vocab design is required for deterministic design checks."]
+
+
+def _validate_vocab_plan_against_design(
+    design: BaseModel,
+    plan: object,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if isinstance(design, VocabChoiceDesign):
+        if not isinstance(plan, ContextualVocabChoicePlan):
+            return ["ContextualVocabChoicePlan is missing for plan-against-design validation."]
+        errors: list[str] = []
+        if plan.subtype != design.subtype:
+            errors.append("ContextualVocabChoicePlan subtype must match the locked design subtype.")
+        if plan.selected_span_id != design.selected_span_id:
+            errors.append("ContextualVocabChoicePlan selected_span_id must match the locked design target.")
+        if plan.selected_span_text != design.selected_span_text:
+            errors.append("ContextualVocabChoicePlan selected_span_text must match the locked design target.")
+        return errors
+    if isinstance(design, UnderlinedVocabDesign):
+        if not isinstance(plan, UnderlinedVocabPlan):
+            return ["UnderlinedVocabPlan is missing for plan-against-design validation."]
+        errors: list[str] = []
+        if plan.subtype != design.subtype:
+            errors.append("UnderlinedVocabPlan subtype must match the locked design subtype.")
+        if plan.target_span_ids != design.target_span_ids:
+            errors.append("UnderlinedVocabPlan target_span_ids must match the locked design bundle.")
+        if plan.target_span_texts != design.target_span_texts:
+            errors.append("UnderlinedVocabPlan target_span_texts must match the locked design bundle.")
+        return errors
+    return ["A vocab design is required for plan-against-design validation."]
 
 
 def _validate_vocab_plan(
@@ -1006,6 +1268,42 @@ def _deterministically_shuffle_choices(
     seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
     random.Random(seed).shuffle(shuffled)
     return shuffled
+
+
+def _validate_grammar_design(
+    prepared_source: PreparedSource,
+    design: BaseModel,
+    type_spec: QuestionTypeSpec,
+) -> list[str]:
+    if not isinstance(design, GrammarDesign):
+        return ["GrammarDesign is missing for deterministic design checks."]
+    inventory = {span.id: span for span in grammar_subtype_inventory(prepared_source, type_spec.subtype_key)}
+    missing_ids = [span_id for span_id in design.target_span_ids if span_id not in inventory]
+    if missing_ids:
+        return [f"Unknown target span IDs in design: {', '.join(missing_ids)}"]
+    expected_texts = [inventory[span_id].text for span_id in design.target_span_ids]
+    if design.target_span_texts != expected_texts:
+        return ["GrammarDesign target_span_texts must exactly match the locked source texts."]
+    if design.corrupted_span_id not in design.target_span_ids:
+        return ["GrammarDesign corrupted_span_id must come from the locked target bundle."]
+    return []
+
+
+def _validate_grammar_plan_against_design(design: BaseModel, plan: object) -> list[str]:
+    if not isinstance(design, GrammarDesign):
+        return ["GrammarDesign is missing for plan-against-design validation."]
+    if not isinstance(plan, GrammarPlan):
+        return ["GrammarPlan is missing for plan-against-design validation."]
+    errors: list[str] = []
+    if plan.subtype != design.subtype:
+        errors.append("GrammarPlan subtype must match the locked design subtype.")
+    if plan.target_span_ids != design.target_span_ids:
+        errors.append("GrammarPlan target_span_ids must match the locked design bundle.")
+    if plan.target_span_texts != design.target_span_texts:
+        errors.append("GrammarPlan target_span_texts must match the locked design bundle.")
+    if plan.corrupted_span_id != design.corrupted_span_id:
+        errors.append("GrammarPlan corrupted_span_id must match the locked design corruption target.")
+    return errors
 
 
 def _validate_grammar_plan(

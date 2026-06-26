@@ -148,6 +148,8 @@ Notes:
 - Each selected broad family now expands into one or more live concrete subtype runs inside the batch layer.
 - Exported row counts therefore scale with `input rows x enabled subtype count`, not merely `input rows x broad family count`.
 - This preserves the current backend API while delivering the intended launcher behavior.
+- The public batch/export interface stays unchanged across the internal `v0.2.0` design-layer refactor.
+- Internally, live subtype execution now runs through a deterministic `design` stage before final planning.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
 - The live registry currently includes `sentence_insertion`, `paragraph_ordering`, `underlined_phrase_meaning`, `fill_in_the_blank`, `vocab`, and `grammar`.
 - Launcher-derived defaults should include all of those broad families because the product direction is to run all registered families.
@@ -226,6 +228,7 @@ Rules:
 - Expected incompatibility between a valid passage and a specific question type should surface as `qtype_incompatibility_error`, not be collapsed into generic source or planner failure.
 - `source_error` should be reserved for malformed inputs, failed source preparation, or broken deterministic prepared-source invariants.
 - Deterministic plan violations discovered after LLM planning but before rendering should surface as `planning_error`, not `rendering_error`.
+- For the live migrated families, source-owned target selection now happens in the deterministic design stage rather than in the final planner prompt.
 - Current `paragraph_ordering` policy is to reject passages before planning when no candidate four-block partition shows both strong adjacency and strong continuation-start signals; the planner prompt now receives ranked partition candidates rather than only raw boundary notes.
 - Upstream LLM service failures, including `insufficient_quota`, should remain `planning_error`; do not introduce a separate exported quota status.
 - After the first detected `insufficient_quota` failure in a batch, later row/type combinations may short-circuit to exported `planning_error` rows without further model calls, but the exported row count must still stay complete.
