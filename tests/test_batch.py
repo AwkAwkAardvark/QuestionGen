@@ -702,7 +702,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(by_subtype["contextual_vocab_correct_among_4_corrupted_5"].status, "validation_passed")
         self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_5"].status, "validation_passed")
         self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_polarity_scope_5"].status, "validation_passed")
-        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_collocation_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_collocation_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["contextual_vocab_correct_among_3_corrupted_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_verb_form_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_subject_verb_agreement_5"].status, "qtype_incompatibility_error")
@@ -744,6 +744,31 @@ class BatchTests(unittest.TestCase):
         polarity_result = by_row_and_subtype[("POL-01", "contextual_vocab_error_1_among_5_polarity_scope_5")]
         self.assertEqual(polarity_result.status, "qtype_incompatibility_error")
         self.assertNotEqual(polarity_result.status, "planning_error")
+
+    def test_correct_among_3_hardening_rejection_surfaces_as_qtype_incompatibility(self) -> None:
+        rows = [
+            BatchInputRow(
+                OriginalQuestionNumber="VOC-03",
+                BatchRowId=0,
+                source_paragraph=(
+                    "People's happiness depends on relative wealth. "
+                    "People are rarely satisfied once their neighbors pull ahead. "
+                    "But the resulting inequality brought only discontent. "
+                    "Communities discuss the pattern each year. "
+                    "Officials protect local services during downturns."
+                ),
+            ),
+        ]
+
+        results = run_batch_rows(rows, ["vocab"], self.runner)
+        by_row_and_subtype = {
+            (result.OriginalQuestionNumber, result.QuestionSubtypeKey): result
+            for result in results
+        }
+
+        correct3_result = by_row_and_subtype[("VOC-03", "contextual_vocab_correct_among_3_corrupted_5")]
+        self.assertEqual(correct3_result.status, "qtype_incompatibility_error")
+        self.assertNotEqual(correct3_result.status, "planning_error")
 
     def test_hard_vocab_subtypes_produce_passes_on_sample_reaudit(self) -> None:
         sample_path = Path("sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv")

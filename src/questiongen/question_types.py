@@ -322,12 +322,12 @@ VOCAB_ERROR_1_AMONG_5_COLLOCATION_PLANNER_PROMPT = """
 - Select exactly five unique target IDs from the provided lexical-slot vocab inventory.
 - The targets may be English words or short lexical phrases, but each must stay within a single lexical slot rather than a clause.
 - Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
-- Prefer targets whose original wording forms a natural local combination that can be made subtly wrong through collocation or selectional-restriction mismatch.
+- Prefer targets whose original wording forms a clear local phrase-frame or selectional pairing with a real neighboring lexical partner.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
 - Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly one of the five selected targets is corrupted.
 - Set `answer_span_id` to that one corrupted underlined item.
-- The corrupted replacement must remain grammatically readable and slot-compatible, but it must become wrong through collocation mismatch or selectional-restriction mismatch.
-- Do not use pure polarity reversal, broad semantic opposites, rare-word difficulty alone, or an ungrammatical replacement.
+- The corrupted replacement must remain grammatically readable and slot-compatible, but it must become wrong through a local phrase-frame or selectional-restriction mismatch.
+- Do not use pure polarity reversal, broad semantic opposites, broad near-domain substitutions, rare-word difficulty alone, or an ungrammatical replacement.
 - Keep the other four underlined items unchanged from the source.
 - Set `selection_basis_ko` to a short Korean teacher-facing note describing why the original wording is the only natural local combination in context.
 - Copy `supporting_evidence` as a short exact passage snippet that supports the diagnosis.
@@ -342,8 +342,9 @@ VOCAB_CORRECT_AMONG_3_CORRUPTED_PLANNER_PROMPT = """
 - Prefer high-centrality targets whose meaning is recoverable from at least two independent contextual cues.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
 - Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly three of the five selected targets are contextually corrupted.
-- Exactly two underlined items will remain uncorrupted; set `answer_span_id` to the one that is most strongly and uniquely supported by the passage.
-- Use the extra uncorrupted item only if it is clearly weaker or less central than the answer under the passage evidence.
+- Exactly two underlined items will remain uncorrupted; preserve the locked survivor pair and set `answer_span_id` to the locked item that is most strongly and uniquely supported by the passage.
+- Use the extra uncorrupted item only if it is clearly weaker and more secondary than the answer under the passage evidence.
+- Do not turn the extra untouched item into a second plausible correct answer.
 - Every corrupted replacement must stay locally readable and slot-compatible, while failing semantically by polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
 - Do not use near-synonyms, loose paraphrases, rare-word difficulty alone, or replacements that become ungrammatical instead of semantically wrong.
 - Set `selection_basis_ko` to a short Korean teacher-facing note describing why the answer item alone remains the best contextual fit.

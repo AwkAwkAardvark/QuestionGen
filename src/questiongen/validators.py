@@ -82,6 +82,7 @@ from .targeting import (
     vocab_collocation_candidate_inventory,
     vocab_corruption_is_collocation_like,
     vocab_corruption_is_polarity_scope_like,
+    vocab_correct_among_3_survivor_pair_error,
     vocab_choice_inventory,
     vocab_choice_target_cue_count,
     vocab_choice_target_quality_error,
@@ -1014,17 +1015,33 @@ def _validate_vocab_design(
                 return [
                     "UnderlinedVocabDesign contextual_correct_among_3_corrupted requires locked answer_span_id and untouched_distractor_span_id."
                 ]
+            if design.answer_span_id not in design.target_span_ids or design.untouched_distractor_span_id not in design.target_span_ids:
+                return [
+                    "UnderlinedVocabDesign contextual_correct_among_3_corrupted locked survivor pair must come from the locked target bundle."
+                ]
             selected_spans = [inventory[span_id] for span_id in design.target_span_ids]
             sorted_strengths = sorted((vocab_target_strength_score(span) for span in selected_spans), reverse=True)
             if len(sorted_strengths) < 2 or sorted_strengths[0] <= sorted_strengths[1] + 1:
                 return [
                     "UnderlinedVocabDesign contextual_correct_among_3_corrupted requires a bundle with a uniquely strongest survivor."
                 ]
-            answer_strength = vocab_target_strength_score(inventory[design.answer_span_id])
-            distractor_strength = vocab_target_strength_score(inventory[design.untouched_distractor_span_id])
-            if answer_strength <= distractor_strength + 1:
+            answer_span = inventory[design.answer_span_id]
+            strongest_span = max(
+                selected_spans,
+                key=lambda span: (vocab_target_strength_score(span), -span.char_start),
+            )
+            if strongest_span.id != design.answer_span_id:
                 return [
-                    "UnderlinedVocabDesign contextual_correct_among_3_corrupted must lock a stronger answer_span_id than the untouched distractor."
+                    "UnderlinedVocabDesign contextual_correct_among_3_corrupted must lock the uniquely strongest answer_span_id."
+                ]
+            pair_error = vocab_correct_among_3_survivor_pair_error(
+                answer_span,
+                inventory[design.untouched_distractor_span_id],
+            )
+            if pair_error is not None:
+                return [
+                    "UnderlinedVocabDesign contextual_correct_among_3_corrupted "
+                    + pair_error
                 ]
         return []
     return ["A vocab design is required for deterministic design checks."]
@@ -1328,9 +1345,9 @@ def _validate_underlined_vocab_plan(
                 errors.append(
                     "UnderlinedVocabPlan collocation subtype may corrupt only a target that already has a strong local collocational anchor."
                 )
-            elif not vocab_corruption_is_collocation_like(span.text, replacement):
+            elif not vocab_corruption_is_collocation_like(span, replacement):
                 errors.append(
-                    "UnderlinedVocabPlan collocation subtype requires a natural-looking collocation or selectional mismatch, not a polarity reversal."
+                    "UnderlinedVocabPlan collocation subtype requires a local phrase-frame or selectional mismatch, not a broad semantic substitution or polarity reversal."
                 )
 
     if len(set(rendered_texts)) != len(rendered_texts):
@@ -1357,11 +1374,10 @@ def _validate_underlined_vocab_plan(
         if len(untouched_spans) == 2:
             answer_span = inventory[plan.answer_span_id]
             alternate_span = next(span for span in untouched_spans if span.id != plan.answer_span_id)
-            answer_strength = vocab_target_strength_score(answer_span)
-            alternate_strength = vocab_target_strength_score(alternate_span)
-            if answer_strength <= alternate_strength + 1:
+            pair_error = vocab_correct_among_3_survivor_pair_error(answer_span, alternate_span)
+            if pair_error is not None:
                 errors.append(
-                    "UnderlinedVocabPlan contextual_correct_among_3_corrupted must leave one uniquely stronger correct item than the extra untouched distractor."
+                    "UnderlinedVocabPlan contextual_correct_among_3_corrupted " + pair_error
                 )
 
     return errors

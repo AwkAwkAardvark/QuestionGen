@@ -31,6 +31,7 @@ from questiongen.targeting import (
     render_numbered_span_edits,
     underlined_span_quality_error,
     vocab_hard_candidate_inventory,
+    vocab_hard_bundle,
     vocab_choice_inventory,
     vocab_choice_target_cue_count,
     vocab_choice_target_quality_error,
@@ -1553,7 +1554,14 @@ class ValidatorTests(unittest.TestCase):
             plan,
             QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
         )
-        self.assertTrue(any("uniquely stronger correct item" in error for error in errors))
+        self.assertTrue(
+            any(
+                "stronger contextual cue support" in error
+                or "stronger priority profile" in error
+                or "too central or answer-like" in error
+                for error in errors
+            )
+        )
 
     def test_vocab_validator_rejects_near_synonym_corruption(self) -> None:
         source = (
@@ -2240,7 +2248,20 @@ class ValidatorTests(unittest.TestCase):
             invalid_plan,
             QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
         )
-        self.assertTrue(any("collocation or selectional mismatch" in error for error in invalid_errors))
+        self.assertTrue(any("local phrase-frame or selectional mismatch" in error for error in invalid_errors))
+
+    def test_collocation_compatibility_rejects_broad_semantic_substitution_frame(self) -> None:
+        source = (
+            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
+            "to those around them. But the resulting inequality brought only discontent."
+        )
+        prepared = prepare_source(source)
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
+        )
+        self.assertTrue(any("collocation-eligible corruption anchor" in error for error in errors))
 
     def test_collocation_compatibility_rejects_generic_bundle_without_collocation_anchor(self) -> None:
         source = "Leaders reduce. Families support. Workers improve. Students discuss. Teachers ignore."
@@ -2468,22 +2489,53 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("clear unique-survivor vocab bundle" in error for error in errors))
 
-    def test_correct_among_3_plan_against_design_rejects_changed_survivor_pair(self) -> None:
+    def test_correct_among_3_compatibility_rejects_answer_like_extra_survivor(self) -> None:
         source = (
-            "Residents praise the durable signal each winter. "
-            "Planners discuss the updated route after dinner. "
-            "Workers reduce delays around town every week. "
-            "Students support the new shelter during storms. "
-            "Volunteers collect supplies near the station. "
-            "Teachers ignore gossip before exams."
+            "People's happiness depends on relative wealth. "
+            "People are rarely satisfied once their neighbors pull ahead. "
+            "But the resulting inequality brought only discontent. "
+            "Communities discuss the pattern each year. "
+            "Officials protect local services during downturns."
         )
         prepared = prepare_source(source)
-        targets = vocab_hard_candidate_inventory(prepared)[:5]
-        answer_span = max(targets, key=lambda span: (vocab_choice_target_cue_count(span), span.priority_score))
-        untouched_span = min(
-            (span for span in targets if span.id != answer_span.id),
-            key=lambda span: (vocab_choice_target_cue_count(span), span.priority_score, span.char_start),
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
         )
+        self.assertTrue(any("clear unique-survivor vocab bundle" in error for error in errors))
+
+    def test_correct_among_3_compatibility_accepts_clear_secondary_untouched_distractor(self) -> None:
+        source = (
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods. "
+            "Residents say the brighter crosswalks feel safer at night."
+        )
+        prepared = prepare_source(source)
+        self.assertEqual(
+            validate_question_type_compatibility(
+                source,
+                prepared,
+                QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
+            ),
+            [],
+        )
+        bundle = vocab_hard_bundle(prepared, "contextual_vocab_correct_among_3_corrupted_5")
+        self.assertIsNotNone(bundle)
+
+    def test_correct_among_3_plan_against_design_rejects_changed_survivor_pair(self) -> None:
+        source = (
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods. "
+            "Residents say the brighter crosswalks feel safer at night."
+        )
+        prepared = prepare_source(source)
+        bundle = vocab_hard_bundle(prepared, "contextual_vocab_correct_among_3_corrupted_5")
+        self.assertIsNotNone(bundle)
+        assert bundle is not None
+        targets = list(bundle.selected_spans)
+        answer_span = next(span for span in targets if span.id == bundle.answer_span_id)
+        untouched_span = next(span for span in targets if span.id == bundle.untouched_distractor_span_id)
         design = UnderlinedVocabDesign(
             family_key="vocab",
             subtype_key="contextual_vocab_correct_among_3_corrupted_5",

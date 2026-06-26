@@ -1382,16 +1382,57 @@ def vocab_corruption_is_polarity_scope_like(original_text: str, replacement_text
     return False
 
 
-def vocab_corruption_is_collocation_like(original_text: str, replacement_text: str) -> bool:
-    if vocab_corruption_is_polarity_scope_like(original_text, replacement_text):
+def _is_collocation_partner_token(token: str) -> bool:
+    return bool(token and token not in _FUNCTION_WORDS and token not in _POLARITY_SCOPE_CUE_WORDS)
+
+
+def _context_content_token_count(text: str | None) -> int:
+    return sum(1 for token in _span_tokens(text or "") if token not in _FUNCTION_WORDS)
+
+
+def _collocation_partner_count(span: SpanUnit) -> int:
+    return sum(
+        1
+        for token in (_neighbor_last_token(span.context_before), _neighbor_first_token(span.context_after))
+        if _is_collocation_partner_token(token)
+    )
+
+
+def _collocation_frame_support_score(span: SpanUnit) -> int:
+    tags = set(span.heuristic_tags)
+    score = _collocation_partner_count(span)
+    if _context_content_token_count(span.context_before) >= 2:
+        score += 1
+    if _context_content_token_count(span.context_after) >= 2:
+        score += 1
+    if "phrase_frame" in tags:
+        score += 2
+    if "antonym_invertible" in tags:
+        score += 1
+    if "claim_bearing" in tags:
+        score += 1
+    return score
+
+
+def vocab_corruption_is_collocation_like(span: SpanUnit, replacement_text: str) -> bool:
+    if not vocab_target_is_collocation_eligible(span):
         return False
-    original_tokens = _span_tokens(original_text)
+    if vocab_corruption_is_polarity_scope_like(span.text, replacement_text):
+        return False
+    if is_near_synonym_choice(span.text, replacement_text):
+        return False
+    original_tokens = _span_tokens(span.text)
     replacement_tokens = _span_tokens(replacement_text)
     if not original_tokens or not replacement_tokens:
         return False
     if len(original_tokens) != len(replacement_tokens):
         return False
     if len(original_tokens) == 1 and normalize_english_word(original_tokens[0]) == normalize_english_word(replacement_tokens[0]):
+        return False
+    tags = set(span.heuristic_tags)
+    if "abstract_term" in tags and not ({"phrase_frame", "claim_bearing", "antonym_invertible"} & tags):
+        return False
+    if _collocation_frame_support_score(span) < 4 and "phrase_frame" not in tags:
         return False
     return True
 
@@ -1407,17 +1448,59 @@ def vocab_target_is_collocation_eligible(span: SpanUnit) -> bool:
         return False
     if vocab_target_is_polarity_scope_eligible(span):
         return False
-
-    left_token = _neighbor_last_token(span.context_before)
-    right_token = _neighbor_first_token(span.context_after)
-    anchor_count = sum(
-        1
-        for token in (left_token, right_token)
-        if token and token not in _FUNCTION_WORDS and token not in _POLARITY_SCOPE_CUE_WORDS
-    )
-    if anchor_count < 1:
+    if span.priority_score < 6 or vocab_choice_target_cue_count(span) < 3:
         return False
-    return span.priority_score >= 6 and vocab_choice_target_cue_count(span) >= 2
+    tags = set(span.heuristic_tags)
+    if not ({"phrase_frame", "antonym_invertible", "claim_bearing"} & tags):
+        return False
+    partner_count = _collocation_partner_count(span)
+    if partner_count < 1:
+        return False
+    if partner_count == 1 and not ({"phrase_frame", "antonym_invertible", "claim_bearing"} & tags):
+        return False
+    if "abstract_term" in tags and partner_count < 2 and "phrase_frame" not in tags:
+        return False
+    return _collocation_frame_support_score(span) >= 3
+
+
+def _correct_among_3_answer_like_profile_count(span: SpanUnit) -> int:
+    tags = set(span.heuristic_tags)
+    cue_count = vocab_choice_target_cue_count(span)
+    profile_count = 0
+    if {"abstract_term", "claim_bearing"} & tags:
+        profile_count += 1
+    if "dense_lexis" in tags:
+        profile_count += 1
+    if cue_count >= 3:
+        profile_count += 1
+    if span.priority_score >= 8:
+        profile_count += 1
+    return profile_count
+
+
+def vocab_correct_among_3_survivor_pair_error(
+    answer_span: SpanUnit,
+    untouched_distractor_span: SpanUnit,
+) -> str | None:
+    answer_cues, _ = vocab_target_strength(answer_span)
+    distractor_cues, _ = vocab_target_strength(untouched_distractor_span)
+    if answer_cues <= distractor_cues:
+        return "must lock an answer_span_id with clearly stronger contextual cue support than the untouched distractor."
+    if answer_span.priority_score <= untouched_distractor_span.priority_score:
+        return "must lock an answer_span_id with a stronger priority profile than the untouched distractor."
+    if _correct_among_3_answer_like_profile_count(untouched_distractor_span) >= 2:
+        return "must not leave an extra untouched distractor that is still too central or answer-like under the passage heuristics."
+    return None
+
+
+def _correct_among_3_distractor_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
+    cue_count, _ = vocab_target_strength(span)
+    return (
+        _correct_among_3_answer_like_profile_count(span),
+        cue_count,
+        span.priority_score,
+        span.char_start,
+    )
 
 
 def _strongest_bundle_span_id(selected_spans: tuple[SpanUnit, ...]) -> str:
@@ -1499,12 +1582,16 @@ def _build_correct_among_3_bundle(selected_spans: list[SpanUnit]) -> VocabHardBu
         return None
     if vocab_target_strength_score(ranked[0]) <= vocab_target_strength_score(ranked[1]) + 1:
         return None
+    answer_span = ranked[0]
     weakest = min(
-        (span for span in selected_spans if span.id != ranked[0].id),
-        key=lambda span: (vocab_target_strength_score(span), span.char_start),
+        (span for span in selected_spans if span.id != answer_span.id),
+        key=_correct_among_3_distractor_sort_key,
     )
+    pair_error = vocab_correct_among_3_survivor_pair_error(answer_span, weakest)
+    if pair_error is not None:
+        return None
     return VocabHardBundle(
         selected_spans=tuple(selected_spans),
-        answer_span_id=ranked[0].id,
+        answer_span_id=answer_span.id,
         untouched_distractor_span_id=weakest.id,
     )

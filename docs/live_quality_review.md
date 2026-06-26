@@ -204,11 +204,13 @@ Resolved failure classes from the sample-driven rescue pass:
 - it now requires a five-target bundle with at least one explicit polarity/scope-eligible anchor and exports that eligible subset into design/prompt state
 - if a passage has five generic hard-vocab targets but none is genuinely directional, degree-bearing, or scope-bearing, the row should fail as `qtype_incompatibility_error` before planning
 - `contextual_vocab_error_1_among_5_collocation_5` now follows the same earlier-gate pattern with a locked collocation-eligible subset rather than letting any generic same-width replacement count as a collocation item
-- if a passage has five generic hard-vocab targets but none has a strong local collocational anchor, the row should fail as `qtype_incompatibility_error` before planning
+- phrase-choice rejection and polarity/scope directionality from `ResponseFeedbackDump` were healthy signals; keep using that dump as review evidence rather than as contract truth
+- if a passage has five generic hard-vocab targets but none has a strong local phrase-frame or selectional anchor, the row should fail as `qtype_incompatibility_error` before planning
+- semantic-frame-adjacent but still natural substitutions such as broad near-domain noun swaps should also fail this subtype as `qtype_incompatibility_error` rather than stretching collocation to cover them
 - `contextual_vocab_correct_among_4_corrupted_5` and `contextual_vocab_error_1_among_5_5` now use a deterministic stable-bundle selector instead of blindly locking the first five clean hard candidates
 - those easier hard subtypes now also lock their answer marker in design so the planner cannot silently drift to a different survivor or corrupted target
 - `contextual_vocab_correct_among_3_corrupted_5` now locks both the intended answer span and the weaker untouched distractor during design
-- flat-strength or near-flat bundles for that subtype should now fail as `qtype_incompatibility_error` instead of reaching late ambiguity or survivor-selection `planning_error`
+- flat-strength, near-flat, or answer-like extra-survivor bundles for that subtype should now fail as `qtype_incompatibility_error` instead of reaching late ambiguity or survivor-selection `planning_error`
 - `contextual_vocab_best_paraphrase_choice_5` now rejects weak grammar-heavy anchors earlier and reranks toward stronger content-bearing targets
 - `contextual_vocab_phrase_choice_5` remains intentionally narrow and now rejects fragmentary determiner-led phrase targets earlier
 

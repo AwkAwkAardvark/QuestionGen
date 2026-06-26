@@ -429,8 +429,9 @@ Selection reminders:
 - If the active subtype is `contextual_vocab_correct_among_4_corrupted_5`, exactly four items must be corrupted and exactly one item must remain clearly correct.
 - If the active subtype is `contextual_vocab_error_1_among_5_5`, exactly one item must be corrupted and the other four must remain unchanged. If a locked `answer_span_id` is provided, that is the one item to corrupt.
 - If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must come from the locked polarity/scope-eligible subset and must fail specifically by polarity, degree, or scope drift.
-- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must come from the locked collocation-eligible subset and must fail by collocation or selectional mismatch, not by broad opposite meaning.
+- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must come from the locked collocation-eligible subset and must fail by a local phrase-frame or selectional mismatch, not by a broad same-domain substitution or broad opposite meaning.
 - If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, exactly three items must be corrupted and the only unchanged pair allowed is the locked `answer_span_id` plus the locked weaker untouched distractor.
+- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, preserve that locked survivor pair exactly and do not invent a second plausible correct item.
 - If the subtype asks for the correct remaining item, make sure only one answer is defensible from the passage evidence.
 """.strip()
     return f"""
@@ -489,7 +490,8 @@ Repair rules:
 - If the active subtype is `contextual_vocab_phrase_choice_5`, re-check that `selected_span_text` and every option are multiword phrases with tight slot-width preservation.
 - If the active subtype is an underlined vocab item, do not change the locked target bundle; re-check the corruption count, whether `answer_span_id` matches the stem direction, and whether `corrupted_replacements` is an ordered list of `{{span_id, replacement_text}}` records.
 - If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, re-check that the one corruption is specifically a polarity, degree, or scope distortion.
-- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, re-check that the one corruption is a collocation or selectional mismatch rather than a broad opposite.
+- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, re-check that the one corruption is a local phrase-frame or selectional mismatch rather than a broad same-domain substitution or broad opposite.
+- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, preserve the locked answer span and locked weaker untouched distractor exactly; do not leave a second equally plausible survivor.
 - Re-check that every option stays in the same local slot and remains readable in context.
 - Re-check that the wrong options are semantically wrong, not merely rare, ungrammatical, or near-synonymous.
 - If the previous error mentions ambiguity or multiple defensible answers, rebuild all distractors from scratch around clearer polarity, scope, collocation, or discourse-role mismatches.

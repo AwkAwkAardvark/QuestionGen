@@ -231,9 +231,11 @@ Current recommendation on registry shape:
   - use the polarity/scope subtype only when the one corruption is specifically a direction, degree, or scope distortion
   - polarity/scope design now locks an explicit corruption-eligible subset inside the five-target bundle and rejects generic five-target passages that lack a real directional or scope-bearing anchor
   - use the collocation subtype only when the one corruption is specifically a natural-combination or selectional mismatch
-  - collocation design now locks an explicit corruption-eligible subset inside the five-target bundle and rejects generic five-target passages that lack a real local collocational anchor
+  - `ResponseFeedbackDump` is review evidence only: phrase-choice rejection and polarity/scope directionality looked healthy there, but collocation still needed a narrower deterministic boundary
+  - collocation design now locks an explicit corruption-eligible subset inside the five-target bundle and rejects generic five-target passages that lack a real local phrase-frame or selectional anchor
+  - collocation also now rejects semantic-frame-adjacent but still natural broad substitutions such as `wealth -> income` as `qtype_incompatibility_error` rather than stretching the subtype
   - `contextual_vocab_correct_among_4_corrupted_5` and `contextual_vocab_error_1_among_5_5` now use a deterministic stable-bundle selector instead of blindly locking the first five clean hard candidates, and both subtypes lock their answer marker in design
-  - `contextual_vocab_correct_among_3_corrupted_5` now locks both the answer span and the weaker untouched distractor during deterministic design and rejects flat-strength bundles rather than letting the planner improvise the survivor pair
+  - `contextual_vocab_correct_among_3_corrupted_5` now locks both the answer span and the weaker untouched distractor during deterministic design and rejects flat-strength or answer-like extra-survivor bundles rather than letting the planner improvise the survivor pair
   - keep all live subtypes single-answer exports under the broad family key
 - Current deterministic contract:
   - blank-choice vocab stores both original source wording and best-fit answer wording
@@ -250,7 +252,7 @@ Current recommendation on registry shape:
   - no stable five-target bundle with enough spread across context for the easier hard underlined subtypes
   - no clear deterministic unique-survivor margin for `contextual_vocab_correct_among_3_corrupted_5`
   - target cue count too weak for stable contextual recovery
-  - extra untouched item not uniquely weaker in `contextual_vocab_correct_among_3_corrupted_5`
+  - extra untouched item not uniquely weaker or still too answer-like in `contextual_vocab_correct_among_3_corrupted_5`
 - Current hard-family planning policy:
   - parser-derived scores, cue counts, and source anchors remain visible in the prompt as ranked hints
   - those parser hints should bias selection, but they are not a strict pre-planning veto once five clean lexical-slot candidates exist

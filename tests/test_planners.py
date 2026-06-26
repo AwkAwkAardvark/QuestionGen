@@ -1133,8 +1133,22 @@ class PlannerTests(unittest.TestCase):
             type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_polarity_scope_5"],
         )
         collocation_prompt = build_vocab_prompt(
-            source_paragraph=self.mvp_source,
-            prepared_source=prepared,
+            source_paragraph=(
+                "Leaders cease wasteful spending during droughts. "
+                "Engineers expand storage when demand rises. "
+                "Families ignore rumors during emergencies. "
+                "Stronger pumps reduce pressure loss across the valley. "
+                "Volunteers protect the main channel from damage. "
+                "Teachers discuss the results every Friday."
+            ),
+            prepared_source=prepare_source(
+                "Leaders cease wasteful spending during droughts. "
+                "Engineers expand storage when demand rises. "
+                "Families ignore rumors during emergencies. "
+                "Stronger pumps reduce pressure loss across the valley. "
+                "Volunteers protect the main channel from damage. "
+                "Teachers discuss the results every Friday."
+            ),
             type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
         )
         grammar_prompt = build_grammar_prompt(
@@ -1152,7 +1166,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("closest lexical restatement", best_paraphrase_prompt)
         self.assertIn("polarity, degree, or scope drift", polarity_prompt)
         self.assertIn("Polarity/scope-eligible subset", polarity_prompt)
-        self.assertIn("collocation or selectional mismatch", collocation_prompt)
+        self.assertIn("local phrase-frame or selectional mismatch", collocation_prompt)
         self.assertIn("Locked five-target bundle", grammar_prompt)
         self.assertIn("allowed_variants=", grammar_prompt)
         self.assertIn("real, standard English word", grammar_prompt)
@@ -1226,6 +1240,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Locked answer_span_id", prompt)
         self.assertIn("Locked weaker untouched distractor id", prompt)
         self.assertIn("only unchanged pair allowed", prompt)
+        self.assertIn("do not invent a second plausible correct item", prompt)
 
     def test_correct_among_4_prompt_exposes_locked_survivor(self) -> None:
         prepared = prepare_source(self.mvp_source)
