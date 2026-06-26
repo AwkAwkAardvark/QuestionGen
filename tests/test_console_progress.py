@@ -113,6 +113,36 @@ class ConsoleProgressRendererTests(unittest.TestCase):
         )
         self.assertIn("failed 1/2 | 10-03 | paragraph_ordering_4_blocks | Run failed: planning_error", output)
 
+    def test_live_spinner_renders_at_end_of_line(self) -> None:
+        stream = _TTYBuffer()
+        renderer = ConsoleProgressRenderer(
+            stream=stream,
+            heartbeat_interval_seconds=0.01,
+            live_updates=True,
+            spinner_frames=("X",),
+        )
+
+        renderer.start()
+        renderer.callback(
+            BatchProgressUpdate(
+                event="item_started",
+                completed_items=5,
+                total_items=22,
+                current_row_number="9-03",
+                batch_row_id=0,
+                question_type_key="fill_in_the_blank",
+                question_subtype_key="blank_summary_completion_5_choices",
+                status="running",
+            )
+        )
+        renderer.stop(success=True)
+
+        output = stream.getvalue()
+        self.assertIn(
+            "\r5/22 | 9-03 | blank_summary_completion_5_choices | running X",
+            output,
+        )
+
     def test_validation_passed_updates_do_not_create_stable_log_lines(self) -> None:
         stream = io.StringIO()
         renderer = ConsoleProgressRenderer(stream=stream, live_updates=False)
