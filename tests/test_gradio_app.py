@@ -11,6 +11,7 @@ from questiongen.batch import BatchProgressUpdate
 from questiongen.question_types import QUESTION_TYPES
 from questiongen.ui.gradio_app import (
     QUESTION_TYPE_CHECKLIST_CSS,
+    _run_from_ui,
     all_question_type_keys,
     create_app,
     default_api_key_path,
@@ -138,6 +139,16 @@ class GradioAppHelperTests(unittest.TestCase):
                     os.environ[key] = value
 
     def test_progress_log_filters_routine_success_updates(self) -> None:
+        started_item_update = BatchProgressUpdate(
+            event="item_started",
+            completed_items=0,
+            total_items=4,
+            current_row_number="10-03",
+            batch_row_id=0,
+            question_type_key="sentence_insertion",
+            question_subtype_key="sentence_insertion_basic",
+            status="running",
+        )
         passed_update = BatchProgressUpdate(
             event="item_completed",
             completed_items=1,
@@ -166,6 +177,7 @@ class GradioAppHelperTests(unittest.TestCase):
             message="Starting batch run.",
         )
 
+        self.assertFalse(_should_log_progress_update(started_item_update))
         self.assertFalse(_should_log_progress_update(passed_update))
         self.assertTrue(_should_log_progress_update(incompatible_update))
         self.assertTrue(_should_log_progress_update(started_update))
@@ -199,6 +211,105 @@ class GradioAppHelperTests(unittest.TestCase):
             sys.modules.pop("gradio", None)
             with self.assertRaises(ImportError):
                 create_app()
+
+    def test_run_from_ui_keeps_run_log_low_volume_and_finishes_normally(self) -> None:
+        class _FakeResult:
+            status = "validation_passed"
+
+            def model_dump(self):
+                return {
+                    "OriginalQuestionNumber": "10-03",
+                    "BatchRowId": 0,
+                    "QuestionTypeKey": "sentence_insertion",
+                    "QuestionSubtypeKey": "sentence_insertion_basic",
+                    "status": self.status,
+                }
+
+        def fake_run_batch_files(
+            input_csv,
+            output_csv,
+            question_type_keys,
+            runner,
+            output_markdown=None,
+            progress_callback=None,
+        ):
+            assert progress_callback is not None
+            progress_callback(
+                BatchProgressUpdate(
+                    event="started",
+                    completed_items=0,
+                    total_items=1,
+                    message="Starting batch run.",
+                )
+            )
+            progress_callback(
+                BatchProgressUpdate(
+                    event="item_started",
+                    completed_items=0,
+                    total_items=1,
+                    current_row_number="10-03",
+                    batch_row_id=0,
+                    question_type_key="sentence_insertion",
+                    question_subtype_key="sentence_insertion_basic",
+                    status="running",
+                )
+            )
+            progress_callback(
+                BatchProgressUpdate(
+                    event="item_completed",
+                    completed_items=1,
+                    total_items=1,
+                    current_row_number="10-03",
+                    batch_row_id=0,
+                    question_type_key="sentence_insertion",
+                    question_subtype_key="sentence_insertion_basic",
+                    status="validation_passed",
+                )
+            )
+            progress_callback(
+                BatchProgressUpdate(
+                    event="completed",
+                    completed_items=1,
+                    total_items=1,
+                    message="Completed batch run with 1 exported rows.",
+                )
+            )
+            Path(output_csv).write_text(
+                "OriginalQuestionNumber,BatchRowId,QuestionTypeKey,QuestionSubtypeKey,status\n"
+                "10-03,0,sentence_insertion,sentence_insertion_basic,validation_passed\n",
+                encoding="utf-8",
+            )
+            if output_markdown is not None:
+                Path(output_markdown).write_text("# Markdown Output\n", encoding="utf-8")
+            return [_FakeResult()]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "questions.csv"
+            csv_path.write_text("OriginalQuestionNumber,source_paragraph\n10-03,\"A. B. C. D. E.\"\n", encoding="utf-8")
+            key_path = Path(tmpdir) / "api_key.txt"
+            key_path.write_text("OPENAI_API_KEY=test-key\n", encoding="utf-8")
+
+            with mock.patch("questiongen.ui.gradio_app.compile_question_graph", return_value=object()):
+                with mock.patch("questiongen.ui.gradio_app.run_batch_files", side_effect=fake_run_batch_files):
+                    outputs = list(
+                        _run_from_ui(
+                            "Drive CSV Path",
+                            None,
+                            str(csv_path),
+                            str(key_path),
+                            tmpdir,
+                            "gpt-5-mini",
+                            0.0,
+                            ["sentence_insertion"],
+                            progress=None,
+                        )
+                    )
+
+        self.assertGreaterEqual(len(outputs), 3)
+        self.assertIn("## Run In Progress", outputs[0][0])
+        self.assertTrue(any("10-03 / sentence_insertion_basic: running" in output[0] for output in outputs[:-1]))
+        self.assertIn("## Run Complete", outputs[-1][0])
+        self.assertNotIn("validation_passed", outputs[-1][1])
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from .schemas import BatchInputRow, BatchResultRow, GeneratedQuestion, QuestionS
 
 @dataclass(frozen=True)
 class BatchProgressUpdate:
-    event: Literal["started", "item_completed", "completed"]
+    event: Literal["started", "item_started", "item_completed", "completed"]
     completed_items: int
     total_items: int
     current_row_number: str | None = None
@@ -70,6 +70,20 @@ def run_batch_rows(
 
     for input_row in validated_rows:
         for type_spec in concrete_specs:
+            _emit_progress(
+                progress_callback,
+                BatchProgressUpdate(
+                    event="item_started",
+                    completed_items=completed_items,
+                    total_items=total_items,
+                    current_row_number=input_row.OriginalQuestionNumber,
+                    batch_row_id=input_row.BatchRowId,
+                    question_type_key=type_spec.family_key,
+                    question_subtype_key=type_spec.subtype_key,
+                    status="running",
+                    message="Generating question.",
+                ),
+            )
             state = make_initial_state(
                 source_paragraph=input_row.source_paragraph,
                 original_question_number=input_row.OriginalQuestionNumber,
@@ -135,6 +149,19 @@ def run_batch_rows(
                 ),
             )
         for question_type_key in unknown_question_type_keys:
+            _emit_progress(
+                progress_callback,
+                BatchProgressUpdate(
+                    event="item_started",
+                    completed_items=completed_items,
+                    total_items=total_items,
+                    current_row_number=input_row.OriginalQuestionNumber,
+                    batch_row_id=input_row.BatchRowId,
+                    question_type_key=question_type_key,
+                    status="running",
+                    message="Validating requested question type.",
+                ),
+            )
             results.append(
                 _state_to_result_row(
                     {

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Sequence
 
 from ..batch import BatchProgressUpdate, run_batch_files
+from ..console_progress import ConsoleProgressRenderer, chain_progress_callbacks, is_notable_progress_update
 from ..config import create_structured_llm
 from ..graph import compile_question_graph
 from ..question_types import QUESTION_TYPE_SPECS_BY_FAMILY, QUESTION_TYPES
@@ -348,6 +349,7 @@ def _run_from_ui(
     question_type_keys: Sequence[str] | None,
     progress=None,
 ):
+    console_progress = ConsoleProgressRenderer()
     try:
         run_log_lines: list[str] = []
 
@@ -383,6 +385,7 @@ def _run_from_ui(
             run_log="",
         )
 
+        console_progress.start()
         runner = compile_question_graph(
             structured_llm_factory=lambda schema: create_structured_llm(
                 schema,
@@ -404,7 +407,7 @@ def _run_from_ui(
                     question_type_keys=selected_question_types,
                     runner=runner,
                     output_markdown=str(output_markdown),
-                    progress_callback=on_progress,
+                    progress_callback=chain_progress_callbacks(on_progress, console_progress.callback),
                 )
                 _write_json_results(results, output_json)
                 worker_state["results"] = results
@@ -428,6 +431,9 @@ def _run_from_ui(
                 line = update.message or "Batch run completed."
                 current_item = "Batch run complete."
                 latest_notable_event = line
+            elif update.event == "item_started":
+                line = _format_progress_line(update)
+                current_item = _current_progress_item(update)
             else:
                 line = _format_progress_line(update)
                 current_item = _current_progress_item(update)
@@ -437,7 +443,6 @@ def _run_from_ui(
                 run_log_lines.append(line)
                 if len(run_log_lines) > 200:
                     del run_log_lines[:-200]
-                print(line, flush=True)
 
             if progress is not None:
                 total = update.total_items or 1
@@ -469,6 +474,7 @@ def _run_from_ui(
         if results is None:
             raise RuntimeError("Batch run finished without results.")
         results = results  # help type checkers locally
+        console_progress.stop(success=True)
 
         status_counts = Counter(result.status for result in results)
         summary = "\n".join(
@@ -506,7 +512,7 @@ def _run_from_ui(
             str(output_markdown),
         )
     except Exception as exc:
-        print(f"Run failed: {exc}", flush=True)
+        console_progress.stop(success=False, message=f"Run failed: {exc}")
         yield (
             "## Run Failed\n\n"
             f"- Error: `{exc}`",
@@ -575,9 +581,7 @@ def _current_progress_item(update: BatchProgressUpdate) -> str:
 
 
 def _should_log_progress_update(update: BatchProgressUpdate) -> bool:
-    if update.event in {"started", "completed"}:
-        return True
-    return update.status != "validation_passed"
+    return is_notable_progress_update(update)
 
 
 def _ui_outputs(

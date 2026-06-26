@@ -5,9 +5,11 @@ import json
 import re
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 
 from questiongen.batch import BatchProgressUpdate, run_batch_dataframe, run_batch_files, run_batch_rows
+from questiongen.console_progress import ConsoleProgressRenderer, chain_progress_callbacks
 from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
 from questiongen.planners import PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR, PLANNER_QUOTA_EXHAUSTED_ERROR
@@ -818,14 +820,38 @@ class BatchTests(unittest.TestCase):
         self.assertGreaterEqual(len(updates), 3)
         self.assertEqual(updates[0].event, "started")
         self.assertEqual(updates[0].completed_items, 0)
-        self.assertEqual(updates[1].event, "item_completed")
-        self.assertEqual(updates[1].completed_items, 1)
+        self.assertEqual(updates[1].event, "item_started")
+        self.assertEqual(updates[1].completed_items, 0)
         self.assertEqual(updates[1].total_items, 1)
-        self.assertEqual(updates[1].status, "validation_passed")
+        self.assertEqual(updates[1].status, "running")
         self.assertEqual(updates[1].current_row_number, "8-Analysis")
+        self.assertEqual(updates[2].event, "item_completed")
+        self.assertEqual(updates[2].completed_items, 1)
+        self.assertEqual(updates[2].total_items, 1)
+        self.assertEqual(updates[2].status, "validation_passed")
+        self.assertEqual(updates[2].current_row_number, "8-Analysis")
         self.assertEqual(updates[-1].event, "completed")
         self.assertEqual(updates[-1].completed_items, 1)
         self.assertEqual(updates[-1].total_items, 1)
+
+    def test_console_progress_renderer_can_consume_batch_updates_unchanged(self) -> None:
+        stream = StringIO()
+        renderer = ConsoleProgressRenderer(stream=stream, live_updates=False)
+        updates: list[BatchProgressUpdate] = []
+
+        renderer.start()
+        results = run_batch_rows(
+            self.rows,
+            ["sentence_insertion"],
+            self.runner,
+            progress_callback=chain_progress_callbacks(updates.append, renderer.callback),
+        )
+        renderer.stop(success=True)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual([update.event for update in updates], ["started", "item_started", "item_completed", "completed"])
+        self.assertIn("Starting batch run", stream.getvalue())
+        self.assertIn("Completed batch run with 1 exported rows.", stream.getvalue())
 
     def test_invalid_runner_fails_clearly(self) -> None:
         with self.assertRaises(ValueError):
