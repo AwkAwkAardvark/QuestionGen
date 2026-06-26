@@ -7,11 +7,14 @@
 - [x] Keep model construction outside the batch layer through an injected runner.
 - [x] Treat Colab as the primary user-facing launcher surface.
 - [x] Treat Google Drive as the user-controlled storage layer for inputs, outputs, and `api_key.txt`.
+- [x] Keep `main` as the stable default branch, not as a live implementation branch.
+- [x] Start all new mutating work from a feature branch cut from `main`, and push that branch before using Colab to validate it.
 - [x] Keep `questiongen.ui.gradio_app` as the single source of truth for UI behavior while keeping notebooks thin launcher/debug surfaces.
 - [x] Design the user-facing flow around "run all registered question types" rather than manual type selection.
 - [x] Preserve failed type/passage combinations as exported results with readable `status` and `errors`.
 - [x] Treat question-type incompatibility as a first-class expected outcome rather than forcing it into generic planner/source failure labels.
 - [x] Use CSV and JSON as the primary debug artifacts once orchestration/export work is complete.
+- [x] Keep Colab repo-code loading separate from one-time third-party dependency bootstrap, and prefer source-path loading plus fresh-subprocess tests over repeated editable reinstalls in the same kernel.
 - [x] Ship one cheaper default model first: `gpt-5-mini`.
 - [x] Defer per-question-type model routing until after the live pipeline is stable.
 - [x] Keep the current batch execution path synchronous and serial; defer async or concurrent orchestration as a later performance-only track.
@@ -62,6 +65,10 @@
 - [x] Load `api_key.txt` from Drive and populate environment variables in the notebook layer only.
 - [x] Define notebook-level input and output Drive paths.
 - [x] Expose notebook-side `REPO_BRANCH_OPTIONS` under Advanced Settings, default `REPO_BRANCH` to `main`, validate the selection against the allowlist, and clone the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+- [x] Add notebook-side `BOOTSTRAP_ENV`, `RESET_REPO`, and `RUN_REPO_TESTS` controls so routine reruns can skip package reinstall churn while branch validation can still refresh pushed code safely.
+- [x] Keep third-party dependency bootstrap separate from repo refresh, and keep local repo-code loading on `REPO_DIR / "src"` rather than on routine `%pip install -e ...` reruns.
+- [x] Fail fast with a restart-required message if the notebook kernel already imported `questiongen` and the user requests a repo refresh or environment bootstrap.
+- [x] Provide a fresh-subprocess test path for pushed-branch validation in Colab, with `PYTHONPATH` pointed at `REPO_DIR / "src"`.
 - [x] Construct the structured LLM-backed runner from the notebook layer.
 - [x] Launch the primary staff notebook directly into Gradio without pre-running batch-generation cells.
 - [x] Keep direct batch generation, preview, and artifact inspection in the separate debug notebook.
@@ -270,6 +277,13 @@ Landed hardening contract:
 - [ ] Default subagent role during design or prep work: read-only helper for analysis and planning artifacts, not runtime integration.
 - [ ] If a subagent receives write scope during planning or prep, keep that scope limited to planning artifacts such as `question_types_pending.py`, `docs/question_types_pending.md`, and matching durable docs.
 - [ ] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
+
+## Stable Workflow Commitments
+
+- [x] `main` remains the stable default branch for notebooks, not the branch where new implementation work is performed.
+- [x] New implementation work starts on a feature branch before any mutating repo changes.
+- [x] Colab can validate only pushed branches; unpushed local workspace changes are never part of the Colab contract.
+- [x] Branch validation in Colab should prefer repo refresh plus fresh-subprocess tests over repeated editable package reinstalls in the active kernel.
 
 ## Acceptance Checklist
 
