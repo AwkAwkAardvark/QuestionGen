@@ -414,6 +414,12 @@ Source paragraph:
 Locked five-target bundle:
 {payload["target_bundle"]}
 
+Locked subtype structure:
+- If `corruptible_subset` is present below, only those locked target IDs may be corrupted.
+{f"- Polarity/scope-eligible subset:\\n{payload['corruptible_subset']}" if payload.get("corruptible_subset") else "- No extra corruption subset beyond the full locked bundle."}
+{f"- Locked answer_span_id: {payload['answer_span_id']}" if payload.get("answer_span_id") else ""}
+{f"- Locked weaker untouched distractor id: {payload['untouched_distractor_span_id']}" if payload.get("untouched_distractor_span_id") else ""}
+
 Selection reminders:
 - Follow the active subtype exactly and keep subtype identity explicit in the returned schema.
 - The deterministic design stage already locked the five targets.
@@ -421,9 +427,9 @@ Selection reminders:
 - Every corrupted replacement must stay readable in the same local slot, while becoming semantically wrong.
 - If the active subtype is `contextual_vocab_correct_among_4_corrupted_5`, exactly four items must be corrupted and exactly one item must remain clearly correct.
 - If the active subtype is `contextual_vocab_error_1_among_5_5`, exactly one item must be corrupted and the other four must remain unchanged.
-- If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must fail specifically by polarity, degree, or scope drift.
+- If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must come from the locked polarity/scope-eligible subset and must fail specifically by polarity, degree, or scope drift.
 - If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must fail by collocation or selectional mismatch, not by broad opposite meaning.
-- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, exactly three items must be corrupted, exactly two must remain unchanged, and only one unchanged item may remain the uniquely strongest answer.
+- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, exactly three items must be corrupted and the only unchanged pair allowed is the locked `answer_span_id` plus the locked weaker untouched distractor.
 - If the subtype asks for the correct remaining item, make sure only one answer is defensible from the passage evidence.
 """.strip()
     return f"""
@@ -443,7 +449,7 @@ Planning rules:
 Source paragraph:
 {payload["source_paragraph"]}
 
-Locked target:
+{payload.get("locked_target_label", "Locked target")}:
 {payload["selected_span_line"]}
 
 Selection reminders:
@@ -451,7 +457,9 @@ Selection reminders:
 - The deterministic design stage already locked the lexical slot.
 - Every option must stay readable in the same local slot.
 - `selected_span_text` is the locked original source wording, but `correct_choice` should be the best contextual fit and may differ from the source wording.
+- If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, frame the task as choosing the closest lexical restatement of the locked content target, not as grammar repair or source restoration.
 - If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, `correct_choice` must be a non-identical best paraphrase and the original wording must not appear in `choice_words`.
+- If the active subtype is `contextual_vocab_phrase_choice_5`, frame the task as replacing the locked phrase frame or collocational unit with the best phrase-level alternative, not as generic multiword paraphrase.
 - If the active subtype is `contextual_vocab_phrase_choice_5`, the selected target and every choice must stay phrase-level, never single-word, and should preserve phrase-slot width tightly.
 - Otherwise prefer a strong non-identical contextual replacement when one exists; exact source wording is allowed but not required.
 - The other four options must be contextually wrong, not near-synonymous or jointly defensible.

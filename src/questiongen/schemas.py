@@ -214,6 +214,9 @@ class UnderlinedVocabDesign(QuestionDesign):
     ]
     target_span_ids: list[str] = Field(default_factory=list)
     target_span_texts: list[str] = Field(default_factory=list)
+    corruptible_span_ids: list[str] = Field(default_factory=list)
+    answer_span_id: str | None = None
+    untouched_distractor_span_id: str | None = None
 
     @model_validator(mode="after")
     def _validate_design(self) -> UnderlinedVocabDesign:
@@ -223,6 +226,25 @@ class UnderlinedVocabDesign(QuestionDesign):
             raise ValueError("UnderlinedVocabDesign target_span_ids must be unique.")
         if len(self.target_span_texts) != 5:
             raise ValueError("UnderlinedVocabDesign requires exactly five target_span_texts.")
+        if self.corruptible_span_ids:
+            if len(set(self.corruptible_span_ids)) != len(self.corruptible_span_ids):
+                raise ValueError("UnderlinedVocabDesign corruptible_span_ids must be unique.")
+            unknown_ids = [span_id for span_id in self.corruptible_span_ids if span_id not in self.target_span_ids]
+            if unknown_ids:
+                raise ValueError("UnderlinedVocabDesign corruptible_span_ids must be included in target_span_ids.")
+        if self.answer_span_id is not None and self.answer_span_id not in self.target_span_ids:
+            raise ValueError("UnderlinedVocabDesign answer_span_id must be included in target_span_ids.")
+        if (
+            self.untouched_distractor_span_id is not None
+            and self.untouched_distractor_span_id not in self.target_span_ids
+        ):
+            raise ValueError("UnderlinedVocabDesign untouched_distractor_span_id must be included in target_span_ids.")
+        if (
+            self.answer_span_id is not None
+            and self.untouched_distractor_span_id is not None
+            and self.answer_span_id == self.untouched_distractor_span_id
+        ):
+            raise ValueError("UnderlinedVocabDesign answer_span_id and untouched_distractor_span_id must differ.")
         return self
 
 

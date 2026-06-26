@@ -201,6 +201,7 @@
     - `contextual_vocab_correct_among_3_corrupted_5`
   - shipped policy: broad-family runs now produce three blank-choice contextual substitution subtypes plus five underlined multi-target corruption/diagnosis subtypes
   - current hardening policy: the blank-choice branch now distinguishes baseline contextual substitution, strict non-restoration best-paraphrase selection, and phrase-only lexical substitution; renderer choice order remains deterministically shuffled from `BatchRowId` and subtype key; the hard family now uses structured-output-safe ordered `corrupted_replacements` records instead of a dict-shaped field; validators reject weak targets, unchanged-source best-paraphrase answers, phrase-width drift, wrong corruption class, near-synonym drift, rendered-underline collisions, and non-unique remaining answers
+  - current subtype-hardening pass: ambiguity control for four live vocab subtypes now happens earlier in deterministic design rather than relying on the planner to repair weak bundles later
   - current hard-family admission and prompting policy:
     - [x] keep all five hard underlined vocab subtypes live with the structured-output-safe ordered replacement-record collection
     - [x] update planner canonicalization, deterministic validators, renderers, explanation-context assembly, and tests together around that new replacement shape
@@ -208,6 +209,8 @@
     - [x] keep parser-derived scores, cue counts, and source anchors visible to the planner as ranked hints rather than as a hard admission veto
     - [x] keep subtype-specific post-plan checks strict: corruption counts, source-order uniqueness, slot compatibility, no near-synonym corruption, rendered uniqueness, one-best-answer behavior, polarity/scope-only checks, collocation-only checks, and uniquely stronger surviving-answer checks for `contextual_vocab_correct_among_3_corrupted_5`
     - [x] tighten the hard-vocab planner and repair prompts so retries explicitly react to insufficient distinct targets, ambiguity between surviving answers, wrong corruption class, slot-width drift, and duplicate rendered targets
+    - [x] for `contextual_vocab_error_1_among_5_polarity_scope_5`, lock a five-target bundle that includes an explicit polarity/scope-eligible corruption subset and fail early as `qtype_incompatibility_error` when no such anchor exists
+    - [x] for `contextual_vocab_correct_among_3_corrupted_5`, lock both the intended answer span and the weaker untouched distractor in design and reject flat-strength bundles as `qtype_incompatibility_error`
     - [x] clean exported `vocab` explanations in the same pass so they do not open with raw quoted English evidence and they strip duplicated Korean memo boilerplate such as repeated `이 자리에는 ...`
     - [x] keep regression coverage that re-audits checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv` source passages and requires every hard `vocab` subtype to produce at least some `validation_passed` rows with no schema-shaped `planning_error`
   - next quality-pass priorities on top of the hard-schema rescue:
@@ -216,8 +219,8 @@
     - [x] re-audit current deterministic compatibility on those same `34` checked-in `vocab` source passages to separate post-fix behavior from stale pre-fix CSV evidence
     - [ ] rerun a fresh live `vocab` sample export on current code so artifact review is no longer anchored to pre-fix planner output
     - [ ] prioritize hard underlined subtype pass/fail quality after the schema fix, especially whether accepted rows still feel exam-natural
-    - [ ] tighten blank-choice target quality against too-local / too-easy targets without regressing subtype coverage
-    - [ ] scrutinize ambiguity risk in `contextual_vocab_best_paraphrase_choice_5` and `contextual_vocab_correct_among_3_corrupted_5` before expanding confidence in those branches
+    - [x] tighten blank-choice target quality against too-local / too-easy targets without regressing subtype coverage
+    - [x] scrutinize ambiguity risk in `contextual_vocab_best_paraphrase_choice_5` and `contextual_vocab_correct_among_3_corrupted_5` by moving more rejection logic into deterministic design and compatibility gates
 - [x] `grammar`
   - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
   - live subtype set:
@@ -284,6 +287,7 @@ Landed hardening contract:
   - `underlined_phrase_meaning`
   - `grammar`
 - [x] Move source-owned text selection out of LLM authority for the migrated live families.
+- [x] Treat subtype-critical ambiguity control as design-stage state when a live family cannot safely rely on planner free choice.
 - [x] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
 
 ## Stable Workflow Commitments

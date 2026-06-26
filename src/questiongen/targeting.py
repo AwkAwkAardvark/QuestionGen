@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from typing import Iterable
 
@@ -168,6 +169,92 @@ _POLARITY_SCOPE_CUE_WORDS = {
     "very",
     "without",
 }
+_POLARITY_SCOPE_DIRECTIONAL_WORDS = {
+    "all",
+    "allow",
+    "always",
+    "cease",
+    "decrease",
+    "each",
+    "every",
+    "expand",
+    "few",
+    "fewer",
+    "higher",
+    "increase",
+    "largely",
+    "less",
+    "little",
+    "lower",
+    "many",
+    "more",
+    "most",
+    "much",
+    "narrow",
+    "never",
+    "no",
+    "none",
+    "not",
+    "only",
+    "partly",
+    "prevent",
+    "rarely",
+    "reduce",
+    "several",
+    "some",
+}
+_GRAMMARISH_SINGLE_WORDS = {
+    "how",
+    "like",
+    "more",
+    "most",
+    "rather",
+    "so",
+    "than",
+    "then",
+    "very",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "why",
+}
+_WEAK_PHRASE_LEADERS = {
+    "a",
+    "an",
+    "another",
+    "any",
+    "each",
+    "every",
+    "few",
+    "fewer",
+    "many",
+    "more",
+    "most",
+    "much",
+    "no",
+    "none",
+    "some",
+    "such",
+    "that",
+    "the",
+    "these",
+    "this",
+    "those",
+}
+_WEAK_PHRASE_HEADS = {
+    "area",
+    "change",
+    "issue",
+    "kind",
+    "part",
+    "sort",
+    "thing",
+    "type",
+    "way",
+}
 _BROAD_OPPOSITE_HINTS = {
     "accept": {"reject", "refuse"},
     "allow": {"block", "deny", "prevent"},
@@ -285,6 +372,14 @@ _IRREGULAR_VARIANTS = {
     "use": {"use", "used", "uses", "using"},
     "write": {"write", "writes", "writing", "written", "wrote"},
 }
+
+
+@dataclass(frozen=True)
+class VocabHardBundle:
+    selected_spans: tuple[SpanUnit, ...]
+    corruptible_span_ids: tuple[str, ...] = ()
+    answer_span_id: str | None = None
+    untouched_distractor_span_id: str | None = None
 _IRREGULAR_VARIANT_INDEX = {
     variant: base
     for base, variants in _IRREGULAR_VARIANTS.items()
@@ -348,13 +443,18 @@ def vocab_choice_inventory(
     prepared_source: PreparedSource,
     subtype_key: str = "contextual_vocab_choice_5",
 ) -> list[SpanUnit]:
+    sort_key = _vocab_choice_sort_key
+    if subtype_key == "contextual_vocab_best_paraphrase_choice_5":
+        sort_key = _vocab_best_paraphrase_sort_key
+    elif subtype_key == "contextual_vocab_phrase_choice_5":
+        sort_key = _vocab_phrase_choice_sort_key
     return sorted(
         _dedupe_by_text(
             span
             for span in prepared_source.span_units
             if vocab_choice_target_quality_error(span, subtype_key=subtype_key) is None
         ),
-        key=_vocab_choice_sort_key,
+        key=sort_key,
     )
 
 
@@ -367,6 +467,51 @@ def vocab_hard_candidate_inventory(prepared_source: PreparedSource) -> list[Span
         ),
         key=_vocab_choice_sort_key,
     )
+
+
+def vocab_polarity_scope_candidate_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
+    return [
+        span
+        for span in vocab_hard_candidate_inventory(prepared_source)
+        if vocab_target_is_polarity_scope_eligible(span)
+    ]
+
+
+def vocab_hard_bundle(prepared_source: PreparedSource, subtype_key: str) -> VocabHardBundle | None:
+    inventory = vocab_hard_candidate_inventory(prepared_source)
+    if len(inventory) < 5:
+        return None
+
+    if subtype_key == "contextual_vocab_error_1_among_5_polarity_scope_5":
+        eligible = vocab_polarity_scope_candidate_inventory(prepared_source)
+        if not eligible:
+            return None
+        selected: list[SpanUnit] = [eligible[0]]
+        selected_ids = {eligible[0].id}
+        for span in inventory:
+            if span.id in selected_ids:
+                continue
+            selected.append(span)
+            selected_ids.add(span.id)
+            if len(selected) == 5:
+                break
+        if len(selected) < 5:
+            return None
+        selected_eligible_ids = tuple(span.id for span in selected if vocab_target_is_polarity_scope_eligible(span))
+        return VocabHardBundle(
+            selected_spans=tuple(selected),
+            corruptible_span_ids=selected_eligible_ids,
+        )
+
+    if subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
+        for start in range(len(inventory) - 4):
+            candidate = inventory[start : start + 5]
+            bundle = _build_correct_among_3_bundle(candidate)
+            if bundle is not None:
+                return bundle
+        return None
+
+    return VocabHardBundle(selected_spans=tuple(inventory[:5]))
 
 
 def grammar_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
@@ -628,6 +773,12 @@ def vocab_choice_target_quality_error(
             and not ({"abstract_term", "contextual_cue", "antonym_invertible"} & tags)
         ):
             return "Selected span is a low-value factual term for vocab."
+        if (
+            subtype_key == "contextual_vocab_best_paraphrase_choice_5"
+            and _looks_grammarish_choice_text(span.text)
+            and not _has_strong_content_profile(tags)
+        ):
+            return "Selected span is a grammar-heavy anchor rather than a content-bearing paraphrase target."
     else:
         if content_count < 2:
             return "Selected span is too function-word heavy for vocab."
@@ -635,17 +786,72 @@ def vocab_choice_target_quality_error(
             return "Selected span is a fragmentary phrase rather than a clean lexical slot."
         if _has_clause_signal(span.text, tags) or _has_proposition_signal(span.text, tags):
             return "Selected span is clause-like rather than a short lexical phrase."
+        if subtype_key == "contextual_vocab_phrase_choice_5":
+            if _phrase_target_is_weak_fragment(span):
+                return "Selected span is a weak phrase fragment rather than a stable phrase-frame target."
+            if "phrase_frame" not in tags and "claim_bearing" not in tags and "abstract_term" not in tags:
+                return "Selected span is not structured enough for contextual_vocab_phrase_choice_5."
         if "embedded_phrase" in tags and not ({"abstract_term", "phrase_frame", "claim_bearing"} & tags):
             return "Selected span is too local to serve as a contextual vocab phrase target."
 
     if vocab_choice_target_cue_count(span) < 2:
         return "Selected span does not provide two independent contextual cues."
+    if subtype_key == "contextual_vocab_best_paraphrase_choice_5":
+        if not _has_strong_content_profile(tags) and span.priority_score < 6:
+            return "Selected span is not content-bearing enough for contextual_vocab_best_paraphrase_choice_5."
+        if token_count > 1 and "phrase_frame" in tags and "claim_bearing" not in tags and "abstract_term" not in tags:
+            return "Selected span is too frame-like and not content-bearing enough for contextual_vocab_best_paraphrase_choice_5."
+    if subtype_key == "contextual_vocab_phrase_choice_5" and span.priority_score < 6:
+        return "Selected span is too weak for contextual_vocab_phrase_choice_5."
     if (
         not ({"abstract_term", "claim_bearing", "contextual_cue", "phrase_frame", "antonym_invertible"} & tags)
         and span.priority_score < 5
     ):
         return "Selected span is not central enough to passage interpretation for vocab."
     return None
+
+
+def vocab_choice_option_quality_error(
+    value: str,
+    *,
+    subtype_key: str = "contextual_vocab_choice_5",
+) -> str | None:
+    normalized = " ".join(value.split())
+    if not is_short_english_lexical_choice(normalized):
+        return "Choice is not a short readable English lexical choice."
+    tokens = _span_tokens(normalized)
+    if not tokens:
+        return "Choice is empty."
+    if span_crosses_punctuation(normalized):
+        return "Choice crosses punctuation and is not a clean lexical option."
+
+    if subtype_key == "contextual_vocab_best_paraphrase_choice_5":
+        if _looks_grammarish_choice_text(normalized):
+            return "Choice is grammar-heavy rather than a content-bearing paraphrase candidate."
+        if _content_word_count(tokens) < 1:
+            return "Choice is too function-word heavy for a paraphrase candidate."
+
+    if subtype_key == "contextual_vocab_phrase_choice_5":
+        if len(tokens) < 2:
+            return "Choice is not multiword enough for a phrase-level option."
+        if _phrase_choice_text_is_weak(normalized):
+            return "Choice is not phrase-like enough semantically for contextual_vocab_phrase_choice_5."
+        if _content_word_count(tokens) < 2:
+            return "Choice is too function-word heavy for a phrase-level option."
+
+    return None
+
+
+def vocab_target_is_polarity_scope_eligible(span: SpanUnit) -> bool:
+    tokens = _span_tokens(span.text)
+    if not tokens:
+        return False
+    token_set = set(tokens)
+    return bool(token_set & (_POLARITY_SCOPE_CUE_WORDS | _POLARITY_SCOPE_DIRECTIONAL_WORDS))
+
+
+def vocab_target_strength(span: SpanUnit) -> tuple[int, int]:
+    return (vocab_choice_target_cue_count(span), span.priority_score)
 
 
 def _dedupe_by_text(spans: Iterable[SpanUnit]) -> list[SpanUnit]:
@@ -803,6 +1009,36 @@ def _vocab_choice_sort_key(span: SpanUnit) -> tuple[int, int, int, int, int]:
     return (-(span.priority_score + bonus), abs(token_count - 2), span.char_start, span.char_end - span.char_start, span.char_end)
 
 
+def _vocab_best_paraphrase_sort_key(span: SpanUnit) -> tuple[int, int, int, int, int]:
+    tags = set(span.heuristic_tags)
+    token_count = len(_span_tokens(span.text))
+    bonus = vocab_choice_target_cue_count(span)
+    if {"abstract_term", "claim_bearing"} & tags:
+        bonus += 4
+    if "antonym_invertible" in tags:
+        bonus += 2
+    if token_count == 1:
+        bonus += 2
+    if _looks_grammarish_choice_text(span.text):
+        bonus -= 6
+    return (-(span.priority_score + bonus), token_count - 1, span.char_start, span.char_end - span.char_start, span.char_end)
+
+
+def _vocab_phrase_choice_sort_key(span: SpanUnit) -> tuple[int, int, int, int, int]:
+    tags = set(span.heuristic_tags)
+    token_count = len(_span_tokens(span.text))
+    bonus = vocab_choice_target_cue_count(span)
+    if "phrase_frame" in tags:
+        bonus += 4
+    if {"claim_bearing", "abstract_term"} & tags:
+        bonus += 2
+    if "embedded_phrase" in tags:
+        bonus -= 2
+    if _phrase_target_is_weak_fragment(span):
+        bonus -= 6
+    return (-(span.priority_score + bonus), abs(token_count - 2), span.char_start, span.char_end - span.char_start, span.char_end)
+
+
 def _span_tokens(text: str) -> list[str]:
     return [normalize_english_word(match.group(0)) for match in _TOKEN_RE.finditer(text)]
 
@@ -873,6 +1109,47 @@ def _context_has_semantic_anchor(text: str | None) -> bool:
     if len(content_tokens) >= 2:
         return True
     return any(token in _DISCOURSE_CUE_WORDS for token in tokens)
+
+
+def _has_strong_content_profile(tags: set[str]) -> bool:
+    return bool({"abstract_term", "claim_bearing", "antonym_invertible"} & tags)
+
+
+def _looks_grammarish_choice_text(text: str) -> bool:
+    tokens = _span_tokens(text)
+    if len(tokens) != 1:
+        return False
+    token = tokens[0]
+    return token in _GRAMMARISH_SINGLE_WORDS or token in _DISCOURSE_CUE_WORDS or token in _PROPOSITION_CUE_WORDS
+
+
+def _phrase_target_is_weak_fragment(span: SpanUnit) -> bool:
+    tokens = _span_tokens(span.text)
+    if len(tokens) < 2:
+        return True
+    first_token = tokens[0]
+    if first_token in _WEAK_PHRASE_LEADERS:
+        return True
+    if tokens[-1] in _INCOMPLETE_EDGE_WORDS:
+        return True
+    if tokens[0] in _FUNCTION_WORDS and "phrase_frame" not in span.heuristic_tags:
+        return True
+    if tokens[-1] in _WEAK_PHRASE_HEADS and "claim_bearing" not in span.heuristic_tags:
+        return True
+    return False
+
+
+def _phrase_choice_text_is_weak(text: str) -> bool:
+    tokens = _span_tokens(text)
+    if len(tokens) < 2:
+        return True
+    if tokens[0] in _WEAK_PHRASE_LEADERS:
+        return True
+    if tokens[-1] in _INCOMPLETE_EDGE_WORDS:
+        return True
+    if tokens[-1] in _WEAK_PHRASE_HEADS:
+        return True
+    return False
 
 
 def _looks_proper_nounish_span(span: SpanUnit) -> bool:
@@ -1074,3 +1351,24 @@ def vocab_corruption_is_collocation_like(original_text: str, replacement_text: s
 def vocab_target_is_antonym_invertible(span: SpanUnit) -> bool:
     """Return True if the span carries the ``antonym_invertible`` heuristic tag."""
     return "antonym_invertible" in span.heuristic_tags
+
+
+def _build_correct_among_3_bundle(selected_spans: list[SpanUnit]) -> VocabHardBundle | None:
+    ranked = sorted(
+        selected_spans,
+        key=lambda span: (vocab_target_strength(span), -span.char_start),
+        reverse=True,
+    )
+    if len(ranked) < 5:
+        return None
+    if vocab_target_strength(ranked[0]) <= vocab_target_strength(ranked[1]):
+        return None
+    weakest = min(
+        (span for span in selected_spans if span.id != ranked[0].id),
+        key=lambda span: (vocab_target_strength(span), span.char_start),
+    )
+    return VocabHardBundle(
+        selected_spans=tuple(selected_spans),
+        answer_span_id=ranked[0].id,
+        untouched_distractor_span_id=weakest.id,
+    )

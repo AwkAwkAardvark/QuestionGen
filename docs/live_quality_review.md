@@ -86,6 +86,7 @@ Repo-truth takeaways that still survive from that dump:
 - `contextual_vocab_correct_among_3_corrupted_5` is still the most ambiguity-prone subtype and should receive extra scrutiny before it earns long-term confidence
 - blank-choice target quality still needs pressure against too-local or too-easy targets
 - `best_paraphrase` and `correct_among_3_corrupted` remain the biggest ambiguity-risk branches inside the current live `vocab` set
+- current runtime policy is now to resolve more of that ambiguity in deterministic design rather than by hoping the planner picks the right survivor or corruption anchor later
 
 Specific ideas worth preserving from the dump:
 
@@ -197,7 +198,17 @@ Resolved failure classes from the sample-driven rescue pass:
 - all five hard subtypes now admit passages whenever at least five clean lexical-slot candidates exist in the broader hard-candidate inventory
 - parser-derived scores, cue counts, and anchors remain visible to the planner as ranked hints and source anchors rather than as the primary admission veto
 
-3. Explanation export quality still needs deterministic cleanup on the `vocab` branch
+3. Follow-up subtype hardening moved ambiguity control earlier into deterministic design
+
+- `contextual_vocab_error_1_among_5_polarity_scope_5` no longer reuses a generic five-target bundle unchanged
+- it now requires a five-target bundle with at least one explicit polarity/scope-eligible anchor and exports that eligible subset into design/prompt state
+- if a passage has five generic hard-vocab targets but none is genuinely directional, degree-bearing, or scope-bearing, the row should fail as `qtype_incompatibility_error` before planning
+- `contextual_vocab_correct_among_3_corrupted_5` now locks both the intended answer span and the weaker untouched distractor during design
+- flat-strength bundles for that subtype should now fail as `qtype_incompatibility_error` instead of reaching late ambiguity or survivor-selection `planning_error`
+- `contextual_vocab_best_paraphrase_choice_5` now rejects weak grammar-heavy anchors earlier and reranks toward stronger content-bearing targets
+- `contextual_vocab_phrase_choice_5` remains intentionally narrow and now rejects fragmentary determiner-led phrase targets earlier
+
+4. Explanation export quality still needs deterministic cleanup on the `vocab` branch
 
 - exported explanations no longer open with raw quoted English evidence as the first move
 - awkward Korean memo fragments such as duplicated `이 자리에는` phrasing are now cleaned deterministically before export

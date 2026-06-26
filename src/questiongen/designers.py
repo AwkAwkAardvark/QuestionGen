@@ -41,10 +41,10 @@ from .targeting import (
     fill_blank_summary_inventory,
     fill_blank_target_inventory,
     grammar_subtype_inventory,
+    vocab_hard_bundle,
     underlined_phrase_inventory,
     vocab_choice_inventory,
     vocab_choice_target_cue_count,
-    vocab_hard_candidate_inventory,
 )
 
 DesignBuilder = Callable[[str, PreparedSource, QuestionTypeSpec], QuestionDesign]
@@ -387,8 +387,17 @@ def build_vocab_design(
     if type_spec.plan_schema is ContextualVocabChoicePlan:
         inventory = vocab_choice_inventory(prepared_source, type_spec.subtype_key)
         if not inventory:
+            if type_spec.subtype_key == "contextual_vocab_phrase_choice_5":
+                raise ValueError(
+                    "Passage does not contain a workable phrase-frame or collocational vocab target for contextual_vocab_phrase_choice_5."
+                )
             raise ValueError(f"Passage does not contain a workable lexical-slot vocab target for {type_spec.subtype_key}.")
         span = inventory[0]
+        locked_target_label = "Locked phrase-frame target"
+        if type_spec.subtype_key == "contextual_vocab_best_paraphrase_choice_5":
+            locked_target_label = "Locked content target"
+        elif type_spec.subtype_key == "contextual_vocab_choice_5":
+            locked_target_label = "Locked target"
         return VocabChoiceDesign(
             family_key=type_spec.renderer_key,
             subtype_key=type_spec.subtype_key,
@@ -404,21 +413,42 @@ def build_vocab_design(
                     f"- rank 1: {span.id}; score={span.priority_score}; cues={vocab_choice_target_cue_count(span)}; "
                     f"text={span.text!r}; tags={','.join(span.heuristic_tags) or 'none'}; context={_span_context(span)}"
                 ),
+                "locked_target_label": locked_target_label,
                 "support_context": _span_context(span),
                 "tags": ", ".join(span.heuristic_tags) or "none",
             },
         )
 
-    inventory = vocab_hard_candidate_inventory(prepared_source)
-    if len(inventory) < 5:
+    bundle = vocab_hard_bundle(prepared_source, type_spec.subtype_key)
+    if bundle is None:
+        if type_spec.subtype_key == "contextual_vocab_error_1_among_5_polarity_scope_5":
+            raise ValueError(
+                "Passage does not contain a five-target vocab bundle with a polarity/scope-eligible corruption anchor."
+            )
+        if type_spec.subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
+            raise ValueError(
+                "Passage does not contain a clear unique-survivor vocab bundle for contextual_vocab_correct_among_3_corrupted_5."
+            )
         raise ValueError(f"Passage does not contain five workable lexical-slot vocab targets for {type_spec.subtype_key}.")
-    selected_spans = inventory[:5]
+    selected_spans = list(bundle.selected_spans)
+    selected_by_id = {span.id: span for span in selected_spans}
+    eligible_lines = "\n".join(
+        (
+            f"- {span_id}: {selected_by_id[span_id].text!r}; cues={vocab_choice_target_cue_count(selected_by_id[span_id])}; "
+            f"context={_span_context(selected_by_id[span_id])}"
+        )
+        for span_id in bundle.corruptible_span_ids
+        if span_id in selected_by_id
+    )
     return UnderlinedVocabDesign(
         family_key=type_spec.renderer_key,
         subtype_key=type_spec.subtype_key,
         subtype=_UNDERLINED_VOCAB_SUBTYPE_BY_KEY[type_spec.subtype_key],
         target_span_ids=[span.id for span in selected_spans],
         target_span_texts=[span.text for span in selected_spans],
+        corruptible_span_ids=list(bundle.corruptible_span_ids),
+        answer_span_id=bundle.answer_span_id,
+        untouched_distractor_span_id=bundle.untouched_distractor_span_id,
         prompt_payload={
             "source_paragraph": source_paragraph,
             "target_bundle": "\n".join(
@@ -428,6 +458,9 @@ def build_vocab_design(
                 )
                 for rank, span in enumerate(selected_spans, start=1)
             ),
+            "corruptible_subset": eligible_lines,
+            "answer_span_id": bundle.answer_span_id or "",
+            "untouched_distractor_span_id": bundle.untouched_distractor_span_id or "",
         },
     )
 

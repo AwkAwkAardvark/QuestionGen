@@ -14,7 +14,9 @@ from questiongen.schemas import (
     ParagraphOrderingPlan,
     PreparedSource,
     SpanUnit,
+    UnderlinedVocabDesign,
     UnderlinedVocabPlan,
+    VocabChoiceDesign,
     VocabPlan,
     SentenceInsertionPlan,
     SourceUnit,
@@ -1736,6 +1738,27 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any("non-identical correct_choice" in error for error in errors))
         self.assertTrue(any("must not include the unchanged source wording" in error for error in errors))
 
+    def test_best_paraphrase_target_quality_rejects_grammarish_anchors(self) -> None:
+        for token in ("what", "which", "like", "more"):
+            span = SpanUnit(
+                id="P0",
+                text=token,
+                normalized_text=token,
+                char_start=0,
+                char_end=len(token),
+                sentence_unit_id="S0",
+                sentence_index=0,
+                context_before="People felt ",
+                context_after=" secure after the change.",
+                heuristic_tags=["single_word", "contextual_cue", "vocab_candidate"],
+                priority_score=7,
+            )
+            error = vocab_choice_target_quality_error(
+                span,
+                subtype_key="contextual_vocab_best_paraphrase_choice_5",
+            ) or ""
+            self.assertIn("grammar-heavy anchor", error)
+
     def test_phrase_choice_validator_rejects_non_phrase_options_and_slot_drift(self) -> None:
         source = "The report carries moral force in this debate. Repeated exceptions weaken the rule for everyone."
         span_text = "moral force"
@@ -1784,6 +1807,64 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("phrase-level options" in error for error in errors))
         self.assertTrue(any("preserve phrase-slot width exactly" in error for error in errors))
+
+    def test_phrase_choice_target_quality_rejects_weak_fragment(self) -> None:
+        span = SpanUnit(
+            id="P0",
+            text="some change",
+            normalized_text="some change",
+            char_start=0,
+            char_end=len("some change"),
+            sentence_unit_id="S0",
+            sentence_index=0,
+            context_before="The committee described ",
+            context_after=" as a temporary response.",
+            heuristic_tags=["embedded_phrase", "contextual_cue"],
+            priority_score=7,
+        )
+        error = vocab_choice_target_quality_error(
+            span,
+            subtype_key="contextual_vocab_phrase_choice_5",
+        ) or ""
+        self.assertIn("weak phrase fragment", error)
+
+    def test_phrase_choice_compatibility_rejects_only_weak_embedded_phrase(self) -> None:
+        source = "The committee described some change as a temporary response. Observers remained cautious."
+        phrase_text = "some change"
+        phrase_start = source.index(phrase_text)
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The committee described some change as a temporary response.", index=0),
+                SourceUnit(id="S1", text="Observers remained cautious.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text=phrase_text,
+                    normalized_text=phrase_text,
+                    char_start=phrase_start,
+                    char_end=phrase_start + len(phrase_text),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="The committee described ",
+                    context_after=" as a temporary response.",
+                    heuristic_tags=["embedded_phrase", "contextual_cue"],
+                    priority_score=7,
+                )
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_phrase_choice_5"],
+        )
+        self.assertTrue(any("phrase-frame or collocational vocab target" in error for error in errors))
 
     def test_vocab_choice_validator_allows_contextual_replacement_answer(self) -> None:
         source = (
@@ -1991,6 +2072,118 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("direction, degree, or scope" in error for error in invalid_errors))
 
+    def test_polarity_scope_compatibility_rejects_generic_bundle_without_anchor(self) -> None:
+        source = "Teachers support. Families discuss. Leaders protect. Workers improve. Students ignore."
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id=f"S{index}", text=text, index=index)
+                for index, text in enumerate(
+                    [
+                        "Teachers support.",
+                        "Families discuss.",
+                        "Leaders protect.",
+                        "Workers improve.",
+                        "Students ignore.",
+                    ]
+                )
+            ],
+            gap_units=[
+                GapUnit(id=f"G{index}", index=index, before_unit_id=None if index == 0 else f"S{index - 1}", after_unit_id=f"S{index}" if index < 5 else None)
+                for index in range(6)
+            ],
+            span_units=[
+                SpanUnit(
+                    id=f"P{index}",
+                    text=text,
+                    normalized_text=text,
+                    char_start=index * 10,
+                    char_end=index * 10 + len(text),
+                    sentence_unit_id=f"S{index}",
+                    sentence_index=index,
+                    context_before="Context before ",
+                    context_after=" context after.",
+                    heuristic_tags=["single_word", "abstract_term", "contextual_cue", "vocab_candidate"],
+                    priority_score=7,
+                )
+                for index, text in enumerate(["support", "discuss", "protect", "improve", "ignore"])
+            ],
+        )
+        self.assertGreaterEqual(len(vocab_hard_candidate_inventory(prepared)), 5)
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_polarity_scope_5"],
+        )
+        self.assertTrue(any("none is polarity/scope-eligible" in error for error in errors))
+
+    def test_polarity_scope_plan_against_design_rejects_noneligible_corruption(self) -> None:
+        source = "Leaders cease. Families support. Workers improve. Students discuss. Teachers ignore."
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id=f"S{index}", text=text, index=index)
+                for index, text in enumerate(
+                    [
+                        "Leaders cease.",
+                        "Families support.",
+                        "Workers improve.",
+                        "Students discuss.",
+                        "Teachers ignore.",
+                    ]
+                )
+            ],
+            gap_units=[
+                GapUnit(id=f"G{index}", index=index, before_unit_id=None if index == 0 else f"S{index - 1}", after_unit_id=f"S{index}" if index < 5 else None)
+                for index in range(6)
+            ],
+            span_units=[
+                SpanUnit(
+                    id=f"P{index}",
+                    text=text,
+                    normalized_text=text,
+                    char_start=index * 10,
+                    char_end=index * 10 + len(text),
+                    sentence_unit_id=f"S{index}",
+                    sentence_index=index,
+                    context_before="Context before ",
+                    context_after=" context after.",
+                    heuristic_tags=["single_word", "abstract_term", "contextual_cue", "vocab_candidate"],
+                    priority_score=7,
+                )
+                for index, text in enumerate(["cease", "support", "improve", "discuss", "ignore"])
+            ],
+        )
+        inventory = vocab_hard_candidate_inventory(prepared)[:5]
+        eligible_span = next(span for span in inventory if span.text == "cease")
+        noneligible_span = next(span for span in inventory if span.id != eligible_span.id)
+        design = UnderlinedVocabDesign(
+            family_key="vocab",
+            subtype_key="contextual_vocab_error_1_among_5_polarity_scope_5",
+            subtype="contextual_error_1_among_5_polarity_scope",
+            target_span_ids=[span.id for span in inventory],
+            target_span_texts=[span.text for span in inventory],
+            corruptible_span_ids=[eligible_span.id],
+            prompt_payload={},
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_error_1_among_5_polarity_scope",
+            target_span_ids=design.target_span_ids,
+            target_span_texts=design.target_span_texts,
+            corrupted_replacements=[{"span_id": noneligible_span.id, "replacement_text": "never"}],
+            answer_span_id=noneligible_span.id,
+            selection_basis_ko="이 자리는 방향과 범위가 유지되어야 합니다",
+            supporting_evidence="Leaders cease wasteful spending during droughts.",
+            explanation="문맥상 방향과 범위를 어긋나게 만든 표현입니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_polarity_scope_5"],
+            design=design,
+        )
+        self.assertTrue(any("locked design corruptible subset" in error for error in errors))
+
     def test_underlined_vocab_collocation_validator_accepts_collocation_mismatch_and_rejects_pure_opposite(self) -> None:
         source = (
             "Leaders cease wasteful spending during droughts. "
@@ -2043,6 +2236,115 @@ class ValidatorTests(unittest.TestCase):
             QUESTION_SUBTYPE_SPECS["contextual_vocab_error_1_among_5_collocation_5"],
         )
         self.assertTrue(any("collocation or selectional mismatch" in error for error in invalid_errors))
+
+    def test_correct_among_3_compatibility_rejects_flat_strength_bundle(self) -> None:
+        source = (
+            "The city faces moral pressure during the debate. "
+            "The committee carries social pressure into the review. "
+            "The report adds ethical pressure to the discussion. "
+            "The ruling creates public pressure around the case. "
+            "The appeal brings civic pressure into focus. "
+            "Observers note the repeated pattern."
+        )
+        pressure_start = source.index("moral pressure")
+        phrases = [
+            ("P0", "moral pressure", pressure_start),
+            ("P1", "social pressure", source.index("social pressure")),
+            ("P2", "ethical pressure", source.index("ethical pressure")),
+            ("P3", "public pressure", source.index("public pressure")),
+            ("P4", "civic pressure", source.index("civic pressure")),
+        ]
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The city faces moral pressure during the debate.", index=0),
+                SourceUnit(id="S1", text="The committee carries social pressure into the review.", index=1),
+                SourceUnit(id="S2", text="The report adds ethical pressure to the discussion.", index=2),
+                SourceUnit(id="S3", text="The ruling creates public pressure around the case.", index=3),
+                SourceUnit(id="S4", text="The appeal brings civic pressure into focus.", index=4),
+                SourceUnit(id="S5", text="Observers note the repeated pattern.", index=5),
+            ],
+            gap_units=[
+                GapUnit(id=f"G{index}", index=index, before_unit_id=None if index == 0 else f"S{index - 1}", after_unit_id=f"S{index}" if index < 6 else None)
+                for index in range(7)
+            ],
+            span_units=[
+                SpanUnit(
+                    id=span_id,
+                    text=text,
+                    normalized_text=text,
+                    char_start=start,
+                    char_end=start + len(text),
+                    sentence_unit_id=f"S{index}",
+                    sentence_index=index,
+                    context_before="The ",
+                    context_after=" during the passage.",
+                    heuristic_tags=["abstract_term", "phrase_frame", "contextual_cue"],
+                    priority_score=7,
+                )
+                for index, (span_id, text, start) in enumerate(phrases)
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
+        )
+        self.assertTrue(any("clear unique-survivor vocab bundle" in error for error in errors))
+
+    def test_correct_among_3_plan_against_design_rejects_changed_survivor_pair(self) -> None:
+        source = (
+            "Residents praise the durable signal each winter. "
+            "Planners discuss the updated route after dinner. "
+            "Workers reduce delays around town every week. "
+            "Students support the new shelter during storms. "
+            "Volunteers collect supplies near the station. "
+            "Teachers ignore gossip before exams."
+        )
+        prepared = prepare_source(source)
+        targets = vocab_hard_candidate_inventory(prepared)[:5]
+        answer_span = max(targets, key=lambda span: (vocab_choice_target_cue_count(span), span.priority_score))
+        untouched_span = min(
+            (span for span in targets if span.id != answer_span.id),
+            key=lambda span: (vocab_choice_target_cue_count(span), span.priority_score, span.char_start),
+        )
+        design = UnderlinedVocabDesign(
+            family_key="vocab",
+            subtype_key="contextual_vocab_correct_among_3_corrupted_5",
+            subtype="contextual_correct_among_3_corrupted",
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            answer_span_id=answer_span.id,
+            untouched_distractor_span_id=untouched_span.id,
+            prompt_payload={},
+        )
+        alternate_untouched = next(
+            span for span in targets if span.id not in {answer_span.id, untouched_span.id}
+        )
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_correct_among_3_corrupted",
+            target_span_ids=design.target_span_ids,
+            target_span_texts=design.target_span_texts,
+            corrupted_replacements=[
+                {"span_id": span.id, "replacement_text": replacement}
+                for span, replacement in zip(
+                    [span for span in targets if span.id not in {answer_span.id, alternate_untouched.id}],
+                    ["weaken", "delay", "worsen"],
+                    strict=False,
+                )
+            ],
+            answer_span_id=answer_span.id,
+            selection_basis_ko="정답만 가장 강하게 원래 의미를 유지합니다",
+            supporting_evidence="Residents praise the durable signal each winter.",
+            explanation="문맥상 정답만 가장 강하게 원래 의미를 유지합니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
+            design=design,
+        )
+        self.assertTrue(any("locked untouched survivor pair" in error for error in errors))
 
     def test_grammar_validator_accepts_valid_output(self) -> None:
         source = (

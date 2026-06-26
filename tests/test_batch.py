@@ -171,6 +171,10 @@ class _StubPlanner:
         if self.output_schema in {UnderlinedVocabPlan, UnderlinedVocabDraft}:
             targets = _extract_ranked_lexical_targets(prompt)
             target_ids, target_texts = zip(*targets[:5])
+            target_text_by_id = dict(zip(target_ids, target_texts, strict=False))
+            locked_corruptible_ids = _extract_locked_corruptible_ids(prompt)
+            locked_answer_id = _extract_locked_answer_span_id(prompt)
+            locked_untouched_id = _extract_locked_untouched_distractor_id(prompt)
             subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
             active_subtype = subtype_match.group(1) if subtype_match else ""
             subtype = (
@@ -196,31 +200,33 @@ class _StubPlanner:
                 replacements = {target_ids[2]: "ignore"}
                 answer_span_id = target_ids[2]
             elif subtype == "contextual_error_1_among_5_polarity_scope":
-                if "cease" in target_texts:
-                    polarity_index = target_texts.index("cease")
+                polarity_target_id = locked_corruptible_ids[0] if locked_corruptible_ids else target_ids[0]
+                polarity_text = target_text_by_id[polarity_target_id]
+                if polarity_text == "cease":
                     polarity_replacement = "continue"
-                elif "expand" in target_texts:
-                    polarity_index = target_texts.index("expand")
+                elif polarity_text == "expand":
                     polarity_replacement = "reduce"
-                elif "less" in target_texts:
-                    polarity_index = target_texts.index("less")
+                elif polarity_text == "less":
                     polarity_replacement = "more"
                 else:
-                    polarity_index = 0
-                    polarity_replacement = "less"
-                replacements = {target_ids[polarity_index]: polarity_replacement}
-                answer_span_id = target_ids[polarity_index]
+                    polarity_replacement = "never"
+                replacements = {polarity_target_id: polarity_replacement}
+                answer_span_id = polarity_target_id
             elif subtype == "contextual_error_1_among_5_collocation":
                 collocation_index = target_texts.index("ignore") if "ignore" in target_texts else len(target_ids) - 1
                 replacements = {target_ids[collocation_index]: "collect"}
                 answer_span_id = target_ids[collocation_index]
             else:
+                answer_span_id = locked_answer_id or target_ids[1]
+                untouched_id = locked_untouched_id or target_ids[0]
                 replacements = {
-                    target_ids[0]: "weaken",
-                    target_ids[3]: "delay",
-                    target_ids[4]: "worsen",
+                    span_id: replacement
+                    for span_id, replacement in zip(
+                        [span_id for span_id in target_ids if span_id not in {answer_span_id, untouched_id}],
+                        ["weaken", "delay", "worsen"],
+                        strict=False,
+                    )
                 }
-                answer_span_id = target_ids[1]
             return self.output_schema(
                 subtype=subtype,
                 target_span_ids=list(target_ids),
@@ -348,21 +354,32 @@ class _HardVocabAuditPlanner:
         target_infos = _extract_ranked_lexical_target_infos(prompt)[:5]
         target_ids = tuple(info["span_id"] for info in target_infos)
         target_texts = tuple(info["text"] for info in target_infos)
+        locked_corruptible_ids = _extract_locked_corruptible_ids(prompt)
+        locked_answer_id = _extract_locked_answer_span_id(prompt)
+        locked_untouched_id = _extract_locked_untouched_distractor_id(prompt)
         subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
         active_subtype = subtype_match.group(1) if subtype_match else ""
 
         if active_subtype == "contextual_vocab_error_1_among_5_polarity_scope_5":
             corruption_index, replacement_text = self._pick_first_replacement(
-                target_texts,
+                tuple(
+                    info["text"]
+                    for info in target_infos
+                    if not locked_corruptible_ids or info["span_id"] in set(locked_corruptible_ids)
+                ),
                 _HARD_POLARITY_REPLACEMENTS,
                 _HARD_POLARITY_FALLBACKS,
                 fallback="more",
             )
+            eligible_infos = [
+                info for info in target_infos if not locked_corruptible_ids or info["span_id"] in set(locked_corruptible_ids)
+            ]
+            corruption_target_id = str(eligible_infos[corruption_index]["span_id"])
             subtype = "contextual_error_1_among_5_polarity_scope"
             replacements = [
-                {"span_id": target_ids[corruption_index], "replacement_text": replacement_text},
+                {"span_id": corruption_target_id, "replacement_text": replacement_text},
             ]
-            answer_span_id = target_ids[corruption_index]
+            answer_span_id = corruption_target_id
             selection_basis_ko = "문맥상 원래 표현의 방향이나 정도가 유지되어야 합니다"
         elif active_subtype == "contextual_vocab_error_1_among_5_collocation_5":
             corruption_index, replacement_text = self._pick_first_replacement(
@@ -392,7 +409,11 @@ class _HardVocabAuditPlanner:
             selection_basis_ko = "문맥상 원래 표현만 글의 핵심 의미를 유지합니다"
         elif active_subtype == "contextual_vocab_correct_among_3_corrupted_5":
             subtype = "contextual_correct_among_3_corrupted"
-            answer_index, untouched_index = self._pick_strongest_and_weakest_indices(target_infos)
+            if locked_answer_id is not None and locked_untouched_id is not None:
+                answer_index = target_ids.index(locked_answer_id)
+                untouched_index = target_ids.index(locked_untouched_id)
+            else:
+                answer_index, untouched_index = self._pick_strongest_and_weakest_indices(target_infos)
             used_replacements: list[str] = []
             replacements = [
                 {
@@ -537,6 +558,20 @@ def _extract_ranked_lexical_target_infos(prompt: str) -> list[dict[str, int | st
     ]
 
 
+def _extract_locked_corruptible_ids(prompt: str) -> list[str]:
+    return re.findall(r"^- (P\d+): ", prompt, re.MULTILINE)
+
+
+def _extract_locked_answer_span_id(prompt: str) -> str | None:
+    match = re.search(r"- Locked answer_span_id: (P\d+)", prompt)
+    return match.group(1) if match else None
+
+
+def _extract_locked_untouched_distractor_id(prompt: str) -> str | None:
+    match = re.search(r"- Locked weaker untouched distractor id: (P\d+)", prompt)
+    return match.group(1) if match else None
+
+
 def _normalize_lexical_text(text: str) -> str:
     return " ".join(text.lower().split())
 
@@ -670,8 +705,36 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(results[0].status, "qtype_incompatibility_error")
         self.assertTrue(any("not suitable" in error for error in results[0].errors))
 
+    def test_vocab_hardening_rejections_surface_as_qtype_incompatibility(self) -> None:
+        rows = [
+            BatchInputRow(
+                OriginalQuestionNumber="POL-01",
+                BatchRowId=0,
+                source_paragraph=(
+                    "Teachers support the plan every year. "
+                    "Families discuss the route after dinner. "
+                    "Leaders protect the park during storms. "
+                    "Workers improve service around town. "
+                    "Students ignore gossip before exams. "
+                    "Volunteers collect supplies near the station."
+                ),
+            ),
+        ]
+
+        results = run_batch_rows(rows, ["vocab"], self.runner)
+        by_row_and_subtype = {
+            (result.OriginalQuestionNumber, result.QuestionSubtypeKey): result
+            for result in results
+        }
+
+        polarity_result = by_row_and_subtype[("POL-01", "contextual_vocab_error_1_among_5_polarity_scope_5")]
+        self.assertEqual(polarity_result.status, "qtype_incompatibility_error")
+        self.assertNotEqual(polarity_result.status, "planning_error")
+
     def test_hard_vocab_subtypes_produce_passes_on_sample_reaudit(self) -> None:
         sample_path = Path("sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv")
+        if not sample_path.exists():
+            self.skipTest(f"Missing local sample fixture: {sample_path}")
         with sample_path.open("r", encoding="utf-8-sig", newline="") as handle:
             sample_rows = list(csv.DictReader(handle))
 

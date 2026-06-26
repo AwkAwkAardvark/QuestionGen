@@ -76,12 +76,17 @@ from .targeting import (
     render_numbered_span_edits,
     underlined_phrase_inventory,
     underlined_span_quality_error,
+    vocab_choice_option_quality_error,
     vocab_hard_candidate_inventory,
+    vocab_hard_bundle,
     vocab_corruption_is_collocation_like,
     vocab_corruption_is_polarity_scope_like,
     vocab_choice_inventory,
     vocab_choice_target_cue_count,
     vocab_choice_target_quality_error,
+    vocab_polarity_scope_candidate_inventory,
+    vocab_target_is_polarity_scope_eligible,
+    vocab_target_strength,
     vocab_target_inventory,
 )
 
@@ -972,6 +977,37 @@ def _validate_vocab_design(
         expected_texts = [inventory[span_id].text for span_id in design.target_span_ids]
         if design.target_span_texts != expected_texts:
             return ["UnderlinedVocabDesign target_span_texts must exactly match the locked source texts."]
+        if design.corruptible_span_ids:
+            unknown_corruptible_ids = [span_id for span_id in design.corruptible_span_ids if span_id not in design.target_span_ids]
+            if unknown_corruptible_ids:
+                return ["UnderlinedVocabDesign corruptible_span_ids must come from the locked target bundle."]
+        if type_spec.subtype_key == "contextual_vocab_error_1_among_5_polarity_scope_5":
+            if not design.corruptible_span_ids:
+                return ["UnderlinedVocabDesign polarity/scope subtype requires a locked corruptible subset."]
+            invalid_ids = [
+                span_id
+                for span_id in design.corruptible_span_ids
+                if not vocab_target_is_polarity_scope_eligible(inventory[span_id])
+            ]
+            if invalid_ids:
+                return ["UnderlinedVocabDesign polarity/scope subset must contain only polarity/scope-eligible targets."]
+        if type_spec.subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
+            if design.answer_span_id is None or design.untouched_distractor_span_id is None:
+                return [
+                    "UnderlinedVocabDesign contextual_correct_among_3_corrupted requires locked answer_span_id and untouched_distractor_span_id."
+                ]
+            selected_spans = [inventory[span_id] for span_id in design.target_span_ids]
+            sorted_strengths = sorted((vocab_target_strength(span) for span in selected_spans), reverse=True)
+            if len(sorted_strengths) < 2 or sorted_strengths[0] <= sorted_strengths[1]:
+                return [
+                    "UnderlinedVocabDesign contextual_correct_among_3_corrupted requires a bundle with a uniquely strongest survivor."
+                ]
+            answer_strength = vocab_target_strength(inventory[design.answer_span_id])
+            distractor_strength = vocab_target_strength(inventory[design.untouched_distractor_span_id])
+            if answer_strength <= distractor_strength:
+                return [
+                    "UnderlinedVocabDesign contextual_correct_among_3_corrupted must lock a stronger answer_span_id than the untouched distractor."
+                ]
         return []
     return ["A vocab design is required for deterministic design checks."]
 
@@ -1002,6 +1038,21 @@ def _validate_vocab_plan_against_design(
             errors.append("UnderlinedVocabPlan target_span_ids must match the locked design bundle.")
         if plan.target_span_texts != design.target_span_texts:
             errors.append("UnderlinedVocabPlan target_span_texts must match the locked design bundle.")
+        if design.corruptible_span_ids:
+            corrupted_ids = set(plan.corrupted_replacement_map())
+            if not corrupted_ids <= set(design.corruptible_span_ids):
+                errors.append("UnderlinedVocabPlan may corrupt only the locked design corruptible subset.")
+        if type_spec.subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
+            corrupted_ids = set(plan.corrupted_replacement_map())
+            locked_untouched_ids = {
+                span_id
+                for span_id in (design.answer_span_id, design.untouched_distractor_span_id)
+                if span_id is not None
+            }
+            if plan.answer_span_id != design.answer_span_id:
+                errors.append("UnderlinedVocabPlan answer_span_id must match the locked design survivor.")
+            if corrupted_ids != set(design.target_span_ids) - locked_untouched_ids:
+                errors.append("UnderlinedVocabPlan must preserve the locked untouched survivor pair exactly.")
         return errors
     return ["A vocab design is required for plan-against-design validation."]
 
@@ -1070,11 +1121,25 @@ def _validate_vocab_compatibility(
     if type_spec.plan_schema is ContextualVocabChoicePlan:
         if len(vocab_choice_inventory(prepared_source, type_spec.subtype_key)) < 1:
             if type_spec.subtype_key == "contextual_vocab_phrase_choice_5":
-                return ["Passage does not contain a workable phrase-only lexical-slot vocab target for contextual_vocab_phrase_choice_5."]
+                return [
+                    "Passage does not contain a workable phrase-frame or collocational vocab target for contextual_vocab_phrase_choice_5."
+                ]
             return [f"Passage does not contain a workable lexical-slot vocab target for {type_spec.subtype_key}."]
         return []
     if type_spec.plan_schema is UnderlinedVocabPlan:
-        if len(vocab_hard_candidate_inventory(prepared_source)) < 5:
+        if vocab_hard_bundle(prepared_source, type_spec.subtype_key) is None:
+            if type_spec.subtype_key == "contextual_vocab_error_1_among_5_polarity_scope_5":
+                if len(vocab_hard_candidate_inventory(prepared_source)) >= 5 and not vocab_polarity_scope_candidate_inventory(prepared_source):
+                    return [
+                        "Passage has five workable lexical-slot vocab targets, but none is polarity/scope-eligible for contextual_vocab_error_1_among_5_polarity_scope_5."
+                    ]
+                return [
+                    "Passage does not contain a five-target vocab bundle with a polarity/scope-eligible corruption anchor."
+                ]
+            if type_spec.subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
+                return [
+                    "Passage does not contain a clear unique-survivor vocab bundle for contextual_vocab_correct_among_3_corrupted_5."
+                ]
             return [f"Passage does not contain five workable lexical-slot vocab targets for {type_spec.subtype_key}."]
         return []
     if len(vocab_target_inventory(prepared_source)) < 5:
@@ -1116,6 +1181,10 @@ def _validate_vocab_choice_options(
         if subtype_key == "contextual_vocab_phrase_choice_5" and not is_phrase_level_lexical_choice(choice):
             errors.append(f"ContextualVocabChoicePlan phrase-choice subtype requires phrase-level options; '{choice}' is not multiword.")
             continue
+        choice_quality_error = vocab_choice_option_quality_error(choice, subtype_key=subtype_key)
+        if choice_quality_error is not None:
+            errors.append(f"ContextualVocabChoicePlan choice '{choice}' {choice_quality_error.lower()}")
+            continue
         errors.extend(
             _validate_vocab_slot_compatibility(
                 selected_span_text,
@@ -1129,6 +1198,9 @@ def _validate_vocab_choice_options(
             continue
         if is_near_synonym_choice(correct_choice, choice) or is_near_synonym_choice(selected_span_text, choice):
             errors.append("ContextualVocabChoicePlan distractors must not be near-synonyms of the correct answer.")
+    correct_choice_quality_error = vocab_choice_option_quality_error(correct_choice, subtype_key=subtype_key)
+    if correct_choice_quality_error is not None:
+        errors.append(f"ContextualVocabChoicePlan correct_choice {correct_choice_quality_error.lower()}")
     if selected_token_count and len(set(normalized_choices)) != len(normalized_choices):
         errors.append("ContextualVocabChoicePlan choice_words must remain unique after normalization.")
     return errors
@@ -1198,10 +1270,15 @@ def _validate_underlined_vocab_plan(
         )
         if is_near_synonym_choice(span.text, replacement):
             errors.append("UnderlinedVocabPlan corrupted replacements must not be near-synonyms of the source wording.")
-        if plan.subtype == "contextual_error_1_among_5_polarity_scope" and not vocab_corruption_is_polarity_scope_like(span.text, replacement):
-            errors.append(
-                "UnderlinedVocabPlan polarity/scope subtype requires a corruption that changes direction, degree, or scope."
-            )
+        if plan.subtype == "contextual_error_1_among_5_polarity_scope":
+            if not vocab_target_is_polarity_scope_eligible(span):
+                errors.append(
+                    "UnderlinedVocabPlan polarity/scope subtype may corrupt only a target that is already directional, degree-bearing, or scope-bearing."
+                )
+            elif not vocab_corruption_is_polarity_scope_like(span.text, replacement):
+                errors.append(
+                    "UnderlinedVocabPlan polarity/scope subtype requires a corruption that changes direction, degree, or scope."
+                )
         if plan.subtype == "contextual_error_1_among_5_collocation" and not vocab_corruption_is_collocation_like(span.text, replacement):
             errors.append(
                 "UnderlinedVocabPlan collocation subtype requires a natural-looking collocation or selectional mismatch, not a polarity reversal."
@@ -1223,11 +1300,16 @@ def _validate_underlined_vocab_plan(
 
     if plan.subtype == "contextual_correct_among_3_corrupted":
         untouched_spans = [span for span in ordered_spans if span.id not in corrupted_ids]
+        strength_table = sorted((vocab_target_strength(span) for span in ordered_spans), reverse=True)
+        if len(strength_table) >= 2 and strength_table[0] <= strength_table[1]:
+            errors.append(
+                "UnderlinedVocabPlan contextual_correct_among_3_corrupted requires a bundle with a uniquely strongest survivor, not a flat-strength bundle."
+            )
         if len(untouched_spans) == 2:
             answer_span = inventory[plan.answer_span_id]
             alternate_span = next(span for span in untouched_spans if span.id != plan.answer_span_id)
-            answer_strength = (vocab_choice_target_cue_count(answer_span), answer_span.priority_score)
-            alternate_strength = (vocab_choice_target_cue_count(alternate_span), alternate_span.priority_score)
+            answer_strength = vocab_target_strength(answer_span)
+            alternate_strength = vocab_target_strength(alternate_span)
             if answer_strength <= alternate_strength:
                 errors.append(
                     "UnderlinedVocabPlan contextual_correct_among_3_corrupted must leave one uniquely stronger correct item than the extra untouched distractor."

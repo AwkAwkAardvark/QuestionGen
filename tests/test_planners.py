@@ -341,19 +341,30 @@ class _FillInTheBlankPlanner:
 class _VocabPlanner:
     def invoke(self, prompt: str) -> ContextualVocabChoicePlan | UnderlinedVocabPlan:
         targets = re.findall(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+        target_text_by_id = dict(targets[:5])
+        locked_corruptible_ids = _extract_locked_corruptible_ids(prompt)
+        locked_answer_id = _extract_locked_answer_span_id(prompt)
+        locked_untouched_id = _extract_locked_untouched_distractor_id(prompt)
         subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
         active_subtype = subtype_match.group(1) if subtype_match else ""
         if active_subtype == "contextual_vocab_error_1_among_5_polarity_scope_5":
             target_ids, target_texts = zip(*targets[:5])
-            polarity_index = target_texts.index("cease") if "cease" in target_texts else 0
+            if locked_corruptible_ids:
+                polarity_target_id = locked_corruptible_ids[0]
+            elif "cease" in target_texts:
+                polarity_target_id = target_ids[target_texts.index("cease")]
+            else:
+                polarity_target_id = target_ids[0]
+            polarity_text = target_text_by_id[polarity_target_id]
+            polarity_replacement = "continue" if polarity_text == "cease" else "reduce" if polarity_text == "expand" else "more"
             return UnderlinedVocabPlan(
                 subtype="contextual_error_1_among_5_polarity_scope",
                 target_span_ids=list(target_ids),
                 target_span_texts=list(target_texts),
                 corrupted_replacements=[
-                    {"span_id": target_ids[polarity_index], "replacement_text": "continue"},
+                    {"span_id": polarity_target_id, "replacement_text": polarity_replacement},
                 ],
-                answer_span_id=target_ids[polarity_index],
+                answer_span_id=polarity_target_id,
                 selection_basis_ko="이 자리는 멈춤이나 축소처럼 방향과 범위가 분명히 제한되어야 합니다",
                 supporting_evidence="Leaders cease wasteful spending during droughts.",
                 explanation="문맥상 방향과 범위를 어긋나게 만든 하나의 표현을 골라야 합니다.",
@@ -389,6 +400,27 @@ class _VocabPlanner:
                 selection_basis_ko="이 자리는 원문이 유지한 효과를 가장 자연스럽게 이어 주는 표현이어야 합니다",
                 supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
                 explanation="문맥상 하나만 원래 의미를 유지하고 나머지는 의미를 비틀고 있습니다.",
+            )
+        if active_subtype == "contextual_vocab_correct_among_3_corrupted_5":
+            target_ids, target_texts = zip(*targets[:5])
+            answer_span_id = locked_answer_id or target_ids[1]
+            untouched_id = locked_untouched_id or target_ids[0]
+            return UnderlinedVocabPlan(
+                subtype="contextual_correct_among_3_corrupted",
+                target_span_ids=list(target_ids),
+                target_span_texts=list(target_texts),
+                corrupted_replacements=[
+                    {"span_id": span_id, "replacement_text": replacement}
+                    for span_id, replacement in zip(
+                        [span_id for span_id in target_ids if span_id not in {answer_span_id, untouched_id}],
+                        ["weaken", "delay", "worsen"],
+                        strict=False,
+                    )
+                ],
+                answer_span_id=answer_span_id,
+                selection_basis_ko="문맥상 정답 표현만 가장 강하게 원래 의미를 유지합니다",
+                supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+                explanation="문맥상 정답만 가장 강하게 원래 의미를 유지합니다.",
             )
         if active_subtype == "contextual_vocab_best_paraphrase_choice_5":
             selected_span_id = targets[0][0] if targets else "P0"
@@ -467,6 +499,20 @@ class _VocabDriftPlanner:
             "supporting_evidence": "Residents say the brighter crosswalks feel safer at night.",
             "explanation": "문맥상 해당 표현의 쓰임이 맞지 않습니다.",
         }
+
+
+def _extract_locked_corruptible_ids(prompt: str) -> list[str]:
+    return re.findall(r"^- (P\d+): ", prompt, re.MULTILINE)
+
+
+def _extract_locked_answer_span_id(prompt: str) -> str | None:
+    match = re.search(r"- Locked answer_span_id: (P\d+)", prompt)
+    return match.group(1) if match else None
+
+
+def _extract_locked_untouched_distractor_id(prompt: str) -> str | None:
+    match = re.search(r"- Locked weaker untouched distractor id: (P\d+)", prompt)
+    return match.group(1) if match else None
 
 
 class _GrammarPlanner:
@@ -1053,7 +1099,7 @@ class PlannerTests(unittest.TestCase):
             prepared_source=prepared,
             type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_best_paraphrase_choice_5"],
         )
-        with self.assertRaisesRegex(ValueError, "workable lexical-slot vocab target"):
+        with self.assertRaisesRegex(ValueError, "phrase-frame or collocational vocab target"):
             build_vocab_prompt(
                 source_paragraph=self.phrase_choice_source,
                 prepared_source=prepare_source(self.phrase_choice_source),
@@ -1081,7 +1127,9 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("correct_choice` should be the best contextual fit", vocab_prompt)
         self.assertIn("must be a non-identical best paraphrase", best_paraphrase_prompt)
         self.assertIn("must not appear in `choice_words`", best_paraphrase_prompt)
+        self.assertIn("closest lexical restatement", best_paraphrase_prompt)
         self.assertIn("polarity, degree, or scope drift", polarity_prompt)
+        self.assertIn("Polarity/scope-eligible subset", polarity_prompt)
         self.assertIn("collocation or selectional mismatch", collocation_prompt)
         self.assertIn("Locked five-target bundle", grammar_prompt)
         self.assertIn("allowed_variants=", grammar_prompt)
@@ -1089,6 +1137,73 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn("role=", grammar_prompt)
         self.assertNotIn("preposition[", grammar_prompt)
         self.assertNotIn("conjunction[", grammar_prompt)
+
+    def test_best_paraphrase_design_prefers_content_target_over_grammarish_candidate(self) -> None:
+        source = "Residents felt what support meant after the winter drive. Teachers discuss the safety map every week."
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="Residents felt what support meant after the winter drive.", index=0),
+                SourceUnit(id="S1", text="Teachers discuss the safety map every week.", index=1),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text="what",
+                    normalized_text="what",
+                    char_start=source.index("what"),
+                    char_end=source.index("what") + len("what"),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="Residents felt ",
+                    context_after=" support meant after the winter drive.",
+                    heuristic_tags=["single_word", "contextual_cue", "vocab_candidate"],
+                    priority_score=9,
+                ),
+                SpanUnit(
+                    id="P1",
+                    text="support",
+                    normalized_text="support",
+                    char_start=source.index("support"),
+                    char_end=source.index("support") + len("support"),
+                    sentence_unit_id="S0",
+                    sentence_index=0,
+                    context_before="Residents felt what ",
+                    context_after=" meant after the winter drive.",
+                    heuristic_tags=["single_word", "abstract_term", "contextual_cue", "vocab_candidate"],
+                    priority_score=7,
+                ),
+            ],
+        )
+        result = build_design(
+            {
+                **self.state,
+                "source_paragraph": source,
+                "QuestionTypeKey": "vocab",
+                "QuestionSubtypeKey": "contextual_vocab_best_paraphrase_choice_5",
+                "QuestionFormatKey": "contextual_vocab_best_paraphrase_choice_5",
+                "prepared_source": prepared,
+            },
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_best_paraphrase_choice_5"],
+        )
+        self.assertEqual(result["status"], "source_passed")
+        self.assertEqual(result["design"].selected_span_id, "P1")
+
+    def test_correct_among_3_prompt_exposes_locked_survivor_pair(self) -> None:
+        prepared = prepare_source(self.mvp_source)
+        prompt = build_vocab_prompt(
+            source_paragraph=self.mvp_source,
+            prepared_source=prepared,
+            type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
+        )
+        self.assertIn("Locked answer_span_id", prompt)
+        self.assertIn("Locked weaker untouched distractor id", prompt)
+        self.assertIn("only unchanged pair allowed", prompt)
 
     def test_graph_rewrites_best_paraphrase_explanation_as_non_restoration(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
