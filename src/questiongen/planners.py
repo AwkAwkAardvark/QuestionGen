@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any, Callable, Iterable, Literal
 
 from .prompts import (
@@ -39,6 +41,7 @@ from .targeting import (
 from .validators import validate_plan_against_prepared_source
 
 StructuredLLMFactory = Callable[[type[BaseModel]], Any]
+RuntimeEventLogger = Callable[[str], None]
 MAX_PLANNER_ATTEMPTS = 2
 PLANNER_QUOTA_EXHAUSTED_ERROR = "Planner service failed: upstream LLM quota exhausted (insufficient_quota)."
 PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR = (
@@ -58,6 +61,17 @@ _PLANNER_SERVICE_ERROR_MARKERS = (
 )
 
 
+class PlannerTimeoutError(TimeoutError):
+    def __init__(self, *, timeout_seconds: float, context_label: str, attempt_number: int) -> None:
+        self.timeout_seconds = timeout_seconds
+        self.context_label = context_label
+        self.attempt_number = attempt_number
+        super().__init__(
+            f"Planner timed out after {timeout_seconds:.1f}s for {context_label} "
+            f"on attempt {attempt_number}."
+        )
+
+
 def classify_planner_error(exc: BaseException) -> Literal["service_quota", "service", "planner"]:
     error_text = _normalized_exception_text(exc).lower()
     if "insufficient_quota" in error_text:
@@ -68,6 +82,8 @@ def classify_planner_error(exc: BaseException) -> Literal["service_quota", "serv
 
 
 def normalize_planner_error(exc: BaseException) -> str:
+    if isinstance(exc, PlannerTimeoutError):
+        return str(exc)
     failure_kind = classify_planner_error(exc)
     if failure_kind == "service_quota":
         return PLANNER_QUOTA_EXHAUSTED_ERROR
@@ -105,14 +121,34 @@ def _run_planner_with_repair(
     structured_llm_factory: StructuredLLMFactory | None,
     base_prompt: str,
     repair_prompt_builder: Callable[..., str],
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     planner = structured_llm_factory(type_spec.plan_schema)
     current_prompt = base_prompt
     last_exc: Exception | None = None
+    context_label = _planner_context_label(state, type_spec)
 
     for attempt in range(MAX_PLANNER_ATTEMPTS):
+        attempt_number = attempt + 1
+        prompt_kind = "repair" if attempt > 0 else "initial"
+        _log_runtime_event(
+            runtime_logger,
+            f"[planner] {context_label} | attempt {attempt_number}/{MAX_PLANNER_ATTEMPTS} start ({prompt_kind})",
+        )
+        attempt_started_at = time.monotonic()
         try:
-            raw_plan = planner.invoke(current_prompt)
+            raw_plan = _invoke_planner_with_timeout(
+                planner=planner,
+                prompt=current_prompt,
+                timeout_seconds=planner_timeout_seconds,
+                elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
+                runtime_logger=runtime_logger,
+                context_label=context_label,
+                attempt_number=attempt_number,
+            )
+            attempt_elapsed = time.monotonic() - attempt_started_at
             plan = coerce_model(raw_plan, type_spec.plan_schema)
             prepared_source = state["prepared_source"]
             if prepared_source is not None:
@@ -120,13 +156,29 @@ def _run_planner_with_repair(
                 deterministic_errors = validate_plan_against_prepared_source(prepared_source, plan, type_spec)
                 if deterministic_errors:
                     last_exc = RuntimeError("; ".join(deterministic_errors))
+                    _log_runtime_event(
+                        runtime_logger,
+                        f"[planner] {context_label} | attempt {attempt_number}/{MAX_PLANNER_ATTEMPTS} "
+                        f"failed deterministic plan check in {attempt_elapsed:.1f}s: "
+                        f"{_single_line_summary('; '.join(deterministic_errors))}",
+                    )
                     if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
                         break
+                    _log_runtime_event(
+                        runtime_logger,
+                        f"[planner] {context_label} | retrying with repair prompt after attempt "
+                        f"{attempt_number}/{MAX_PLANNER_ATTEMPTS}",
+                    )
                     current_prompt = repair_prompt_builder(
                         base_prompt=base_prompt,
                         previous_error="; ".join(deterministic_errors),
                     )
                     continue
+            _log_runtime_event(
+                runtime_logger,
+                f"[planner] {context_label} | attempt {attempt_number}/{MAX_PLANNER_ATTEMPTS} "
+                f"finished in {attempt_elapsed:.1f}s",
+            )
             return {
                 "plan": plan,
                 "status": "planned",
@@ -134,8 +186,26 @@ def _run_planner_with_repair(
             }
         except Exception as exc:
             last_exc = exc
+            attempt_elapsed = time.monotonic() - attempt_started_at
+            if isinstance(exc, PlannerTimeoutError):
+                _log_runtime_event(
+                    runtime_logger,
+                    f"[planner] {context_label} | attempt {attempt_number}/{MAX_PLANNER_ATTEMPTS} "
+                    f"timed out after {attempt_elapsed:.1f}s",
+                )
+                break
+            _log_runtime_event(
+                runtime_logger,
+                f"[planner] {context_label} | attempt {attempt_number}/{MAX_PLANNER_ATTEMPTS} "
+                f"failed in {attempt_elapsed:.1f}s: {_single_line_summary(_normalized_exception_text(exc))}",
+            )
             if attempt + 1 >= MAX_PLANNER_ATTEMPTS:
                 break
+            _log_runtime_event(
+                runtime_logger,
+                f"[planner] {context_label} | retrying with repair prompt after attempt "
+                f"{attempt_number}/{MAX_PLANNER_ATTEMPTS}",
+            )
             current_prompt = repair_prompt_builder(
                 base_prompt=base_prompt,
                 previous_error=str(exc),
@@ -145,6 +215,85 @@ def _run_planner_with_repair(
         "status": "planning_error",
         "errors": [normalize_planner_error(last_exc or RuntimeError("Planner failed without an exception."))],
     }
+
+
+def _invoke_planner_with_timeout(
+    *,
+    planner: Any,
+    prompt: str,
+    timeout_seconds: float | None,
+    elapsed_log_interval_seconds: float,
+    runtime_logger: RuntimeEventLogger | None,
+    context_label: str,
+    attempt_number: int,
+) -> Any:
+    result_holder: dict[str, Any] = {}
+    error_holder: dict[str, BaseException] = {}
+    finished = threading.Event()
+
+    def invoke() -> None:
+        try:
+            result_holder["value"] = planner.invoke(prompt)
+        except BaseException as exc:  # pragma: no cover - exercised through caller
+            error_holder["error"] = exc
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=invoke, daemon=True)
+    worker.start()
+
+    started_at = time.monotonic()
+    next_elapsed_log_at = elapsed_log_interval_seconds if runtime_logger is not None else None
+
+    while True:
+        if finished.is_set():
+            break
+        elapsed = time.monotonic() - started_at
+        wait_for = 0.1
+        if timeout_seconds is not None:
+            wait_for = min(wait_for, max(timeout_seconds - elapsed, 0.0))
+        if next_elapsed_log_at is not None:
+            wait_for = min(wait_for, max(next_elapsed_log_at - elapsed, 0.0))
+        finished.wait(max(wait_for, 0.01))
+        elapsed = time.monotonic() - started_at
+        if finished.is_set():
+            break
+        if next_elapsed_log_at is not None and elapsed >= next_elapsed_log_at:
+            _log_runtime_event(
+                runtime_logger,
+                f"[planner] {context_label} | attempt {attempt_number}/{MAX_PLANNER_ATTEMPTS} "
+                f"still running after {elapsed:.1f}s",
+            )
+            next_elapsed_log_at += elapsed_log_interval_seconds
+        if timeout_seconds is not None and elapsed >= timeout_seconds:
+            raise PlannerTimeoutError(
+                timeout_seconds=timeout_seconds,
+                context_label=context_label,
+                attempt_number=attempt_number,
+            )
+
+    if "error" in error_holder:
+        raise error_holder["error"]
+    return result_holder["value"]
+
+
+def _planner_context_label(state: QuestionState, type_spec: QuestionTypeSpec) -> str:
+    row_label = state["OriginalQuestionNumber"] or f"row {state['BatchRowId']}"
+    subtype_label = type_spec.subtype_key or type_spec.family_key
+    return f"{row_label} / {subtype_label}"
+
+
+def _log_runtime_event(runtime_logger: RuntimeEventLogger | None, message: str) -> None:
+    if runtime_logger is None:
+        return
+    runtime_logger(message)
+
+
+def _single_line_summary(message: str, *, limit: int = 240) -> str:
+    collapsed = " ".join(message.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 3] + "..."
 
 
 def _canonicalize_source_owned_plan(
@@ -200,6 +349,9 @@ def plan_sentence_insertion(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
     structured_llm_factory: StructuredLLMFactory | None,
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     if state["prepared_source"] is None:
         return {
@@ -223,6 +375,9 @@ def plan_sentence_insertion(
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
         repair_prompt_builder=build_sentence_insertion_repair_prompt,
+        runtime_logger=runtime_logger,
+        planner_timeout_seconds=planner_timeout_seconds,
+        planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
     )
 
 
@@ -230,6 +385,9 @@ def plan_paragraph_ordering(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
     structured_llm_factory: StructuredLLMFactory | None,
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     if state["prepared_source"] is None:
         return {
@@ -253,6 +411,9 @@ def plan_paragraph_ordering(
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
         repair_prompt_builder=build_paragraph_ordering_repair_prompt,
+        runtime_logger=runtime_logger,
+        planner_timeout_seconds=planner_timeout_seconds,
+        planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
     )
 
 
@@ -260,6 +421,9 @@ def plan_mood_atmosphere(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
     structured_llm_factory: StructuredLLMFactory | None,
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     if state["prepared_source"] is None:
         return {
@@ -283,6 +447,9 @@ def plan_mood_atmosphere(
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
         repair_prompt_builder=build_mood_atmosphere_repair_prompt,
+        runtime_logger=runtime_logger,
+        planner_timeout_seconds=planner_timeout_seconds,
+        planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
     )
 
 
@@ -290,6 +457,9 @@ def plan_underlined_phrase_meaning(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
     structured_llm_factory: StructuredLLMFactory | None,
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     if state["prepared_source"] is None:
         return {
@@ -313,6 +483,9 @@ def plan_underlined_phrase_meaning(
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
         repair_prompt_builder=build_underlined_phrase_meaning_repair_prompt,
+        runtime_logger=runtime_logger,
+        planner_timeout_seconds=planner_timeout_seconds,
+        planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
     )
 
 
@@ -320,6 +493,9 @@ def plan_fill_in_the_blank(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
     structured_llm_factory: StructuredLLMFactory | None,
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     if state["prepared_source"] is None:
         return {
@@ -343,6 +519,9 @@ def plan_fill_in_the_blank(
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
         repair_prompt_builder=build_fill_in_the_blank_repair_prompt,
+        runtime_logger=runtime_logger,
+        planner_timeout_seconds=planner_timeout_seconds,
+        planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
     )
 
 
@@ -350,6 +529,9 @@ def plan_vocab(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
     structured_llm_factory: StructuredLLMFactory | None,
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     if state["prepared_source"] is None:
         return {
@@ -373,6 +555,9 @@ def plan_vocab(
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
         repair_prompt_builder=build_vocab_repair_prompt,
+        runtime_logger=runtime_logger,
+        planner_timeout_seconds=planner_timeout_seconds,
+        planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
     )
 
 
@@ -380,6 +565,9 @@ def plan_grammar(
     state: QuestionState,
     type_spec: QuestionTypeSpec,
     structured_llm_factory: StructuredLLMFactory | None,
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     if state["prepared_source"] is None:
         return {
@@ -403,10 +591,26 @@ def plan_grammar(
         structured_llm_factory=structured_llm_factory,
         base_prompt=prompt,
         repair_prompt_builder=build_grammar_repair_prompt,
+        runtime_logger=runtime_logger,
+        planner_timeout_seconds=planner_timeout_seconds,
+        planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
     )
 
 
-PLANNERS: dict[str, Callable[[QuestionState, QuestionTypeSpec, StructuredLLMFactory | None], dict[str, Any]]] = {
+PLANNERS: dict[
+    str,
+    Callable[
+        [
+            QuestionState,
+            QuestionTypeSpec,
+            StructuredLLMFactory | None,
+            RuntimeEventLogger | None,
+            float | None,
+            float,
+        ],
+        dict[str, Any],
+    ],
+] = {
     "sentence_insertion": plan_sentence_insertion,
     "paragraph_ordering": plan_paragraph_ordering,
     "mood_atmosphere": plan_mood_atmosphere,

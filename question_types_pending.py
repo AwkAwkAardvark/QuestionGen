@@ -61,8 +61,9 @@ PLANNING_CONTEXT = {
         "review and prioritization evidence, but not runtime-contract truth."
     ),
     "next_architecture_gate": (
-        "Land planner-stage observability and timeout hardening before starting "
-        "the deferred shared intermediate design-layer refactor."
+        "Planner-stage observability and timeout hardening are now landed; keep "
+        "the shared intermediate design-layer refactor deferred until the new "
+        "logging and timeout behavior has stabilized."
     ),
     "deferred_graph_shape": (
         "prepare -> source gate -> design/candidate stage -> final planner -> "
@@ -113,7 +114,7 @@ PLANNING_FAMILIES: tuple[PlanningFamilySpec, ...] = (
         quality_risks=(
             "Planner may still overvalue local connector cues instead of two-sided coherence repair evidence.",
             "Accepted explanations can still sound templated even after internal-ID cleanup.",
-            "Future candidate-design layering should not start before planner observability and timeout hardening land.",
+            "Future candidate-design layering should stay deferred until the new planner logging and timeout signals prove stable.",
         ),
         notes=(
             "Treat the family as coherence repair rather than connector matching.",
@@ -136,7 +137,7 @@ PLANNING_FAMILIES: tuple[PlanningFamilySpec, ...] = (
         quality_risks=(
             "Planner may still overaccept mechanically contiguous block splits that are structurally legal but weak as exam items.",
             "Accepted explanations may summarize the passage instead of proving each adjacency edge.",
-            "Without better planner logs, long or repeated planning attempts are hard to diagnose from the UI spinner alone.",
+            "Long or repeated planning attempts are now diagnosable in verbose logs, but the family still needs quality-focused gating beyond observability.",
         ),
         notes=(
             "Treat the family as adjacency reconstruction rather than topic matching.",

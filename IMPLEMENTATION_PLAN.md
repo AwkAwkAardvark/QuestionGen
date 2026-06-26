@@ -243,11 +243,19 @@
 
 ### Planner observability and timeout hardening first
 
-- [ ] Add verbose planner-stage lifecycle logging before any shared graph refactor.
-- [ ] Log planner attempt start, finish, retry, and elapsed time with subtype-aware context so a single stuck row is traceable in Colab and Gradio server logs.
-- [ ] Add planner-call timeout policy that surfaces readable exported `planning_error` rows instead of opaque hangs.
-- [ ] Document clearly that the current spinner/progress surfaces are not sufficient to diagnose a single long or stuck planner call.
-- [ ] Keep timeout failures as explicit exported errors rather than silent stalls or hidden retries.
+- [x] Add verbose planner-stage lifecycle logging before any shared graph refactor.
+- [x] Log planner attempt start, finish, retry, and elapsed time with subtype-aware context so a single stuck row is traceable in Colab and Gradio server logs.
+- [x] Add planner-call timeout policy that surfaces readable exported `planning_error` rows instead of opaque hangs.
+- [x] Document clearly that the current spinner/progress surfaces are not sufficient to diagnose a single long or stuck planner call.
+- [x] Keep timeout failures as explicit exported errors rather than silent stalls or hidden retries.
+
+Landed hardening contract:
+
+- `QUESTIONGEN_PLANNER_TIMEOUT_SECONDS` now defaults to `180` seconds if unset.
+- The same timeout is applied both to `ChatOpenAI(request_timeout=...)` construction and to a local planner-attempt watchdog so a single stuck call cannot block the batch indefinitely.
+- `QUESTIONGEN_VERBOSE_PLANNER=1` now enables subtype-aware graph-stage and planner-attempt logs on launcher stdout.
+- `QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS` now controls periodic "still running" planner logs and defaults to `30` seconds.
+- Planner timeouts now export readable `planning_error` rows instead of presenting as silent spinner stalls.
 
 ### Shared intermediate design layer remains deferred
 

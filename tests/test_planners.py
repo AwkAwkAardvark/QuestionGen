@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 import unittest
 
 from questiongen.explanations import build_explanation_context, write_teacher_facing_explanation
@@ -74,6 +75,22 @@ class _QuotaPlanner:
 class _GenericServicePlanner:
     def invoke(self, prompt: str) -> dict[str, object]:
         raise RuntimeError("Error code: 500 - {'error': {'message': 'Internal server error.'}}")
+
+
+class _SleepingPlanner:
+    def __init__(self, sleep_seconds: float) -> None:
+        self.sleep_seconds = sleep_seconds
+        self.invocations = 0
+
+    def invoke(self, prompt: str) -> SentenceInsertionPlan:
+        self.invocations += 1
+        time.sleep(self.sleep_seconds)
+        return SentenceInsertionPlan(
+            target_unit_ids=["S2"],
+            selected_gap_ids=["G0", "G1", "G2", "G4", "G5"],
+            correct_gap_id="G2",
+            explanation="문맥상 이 위치가 가장 자연스럽습니다.",
+        )
 
 
 class _RetryPlanner:
@@ -590,6 +607,20 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(result["errors"][0].startswith("Planner service failed:"))
         self.assertNotIn("insufficient_quota", result["errors"][0])
 
+    def test_planner_timeout_surfaces_readable_planning_error(self) -> None:
+        planner = _SleepingPlanner(0.05)
+        result = plan_sentence_insertion(
+            self.state,
+            self.type_spec,
+            structured_llm_factory=lambda schema: planner,
+            planner_timeout_seconds=0.01,
+        )
+        self.assertEqual(result["status"], "planning_error")
+        self.assertEqual(planner.invocations, 1)
+        self.assertTrue(result["errors"])
+        self.assertIn("timed out after 0.0s", result["errors"][0])
+        self.assertIn("8-Analysis / sentence_insertion_5_gaps", result["errors"][0])
+
     def test_planner_retries_once_after_schema_failure(self) -> None:
         planner = _RetryPlanner()
         result = plan_sentence_insertion(
@@ -611,6 +642,35 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "planned")
         self.assertEqual(planner.invocations, 2)
         self.assertIn("collapsed rendered positions", planner.last_prompt)
+
+    def test_verbose_planner_logging_reports_start_elapsed_and_finish(self) -> None:
+        planner = _SleepingPlanner(0.03)
+        logs: list[str] = []
+        result = plan_sentence_insertion(
+            self.state,
+            self.type_spec,
+            structured_llm_factory=lambda schema: planner,
+            runtime_logger=logs.append,
+            planner_timeout_seconds=0.2,
+            planner_elapsed_log_interval_seconds=0.01,
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertTrue(any("attempt 1/2 start (initial)" in message for message in logs))
+        self.assertTrue(any("still running after" in message for message in logs))
+        self.assertTrue(any("attempt 1/2 finished in" in message for message in logs))
+
+    def test_graph_verbose_logging_marks_stage_boundaries(self) -> None:
+        logs: list[str] = []
+        runner = compile_question_graph(
+            structured_llm_factory=lambda schema: _ValidPlanner(),
+            runtime_logger=logs.append,
+        )
+        result = runner.invoke(self.state)
+        self.assertEqual(result["status"], "validation_passed")
+        self.assertTrue(any("| input_check start |" in message for message in logs))
+        self.assertTrue(any("| planner finish | status=planned" in message for message in logs))
+        self.assertTrue(any("| render finish | status=rendered" in message for message in logs))
+        self.assertTrue(any("| validate_generated_question finish | status=validation_passed" in message for message in logs))
 
     def test_sentence_insertion_prompt_exposes_ranked_target_hints(self) -> None:
         prompt = build_sentence_insertion_prompt(

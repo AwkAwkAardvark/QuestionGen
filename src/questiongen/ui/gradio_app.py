@@ -12,7 +12,12 @@ from typing import Sequence
 
 from ..batch import BatchProgressUpdate, run_batch_files
 from ..console_progress import ConsoleProgressRenderer, chain_progress_callbacks, is_notable_progress_update
-from ..config import create_structured_llm
+from ..config import (
+    create_structured_llm,
+    resolve_planner_elapsed_log_interval_seconds,
+    resolve_planner_timeout_seconds,
+    resolve_verbose_planner_logging,
+)
 from ..graph import compile_question_graph
 from ..question_types import QUESTION_TYPE_SPECS_BY_FAMILY, QUESTION_TYPES
 
@@ -385,13 +390,21 @@ def _run_from_ui(
             run_log="",
         )
 
+        verbose_planner_logging = resolve_verbose_planner_logging()
+        planner_timeout_seconds = resolve_planner_timeout_seconds()
+        planner_elapsed_log_interval_seconds = resolve_planner_elapsed_log_interval_seconds()
         console_progress.start()
         runner = compile_question_graph(
             structured_llm_factory=lambda schema: create_structured_llm(
                 schema,
                 model_name=model_name.strip() or None,
                 temperature=float(temperature),
-            )
+                request_timeout_seconds=planner_timeout_seconds,
+            ),
+            runtime_logger=console_progress.log_message if verbose_planner_logging else None,
+            verbose_runtime=verbose_planner_logging,
+            planner_timeout_seconds=planner_timeout_seconds,
+            planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
         )
         progress_queue: queue.Queue[BatchProgressUpdate] = queue.Queue()
         worker_state: dict[str, object] = {"results": None, "error": None}

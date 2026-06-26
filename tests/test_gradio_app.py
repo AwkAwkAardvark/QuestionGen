@@ -311,6 +311,107 @@ class GradioAppHelperTests(unittest.TestCase):
         self.assertIn("## Run Complete", outputs[-1][0])
         self.assertNotIn("validation_passed", outputs[-1][1])
 
+    def test_run_from_ui_passes_verbose_planner_runtime_settings(self) -> None:
+        class _FakeResult:
+            status = "validation_passed"
+
+            def model_dump(self):
+                return {
+                    "OriginalQuestionNumber": "10-03",
+                    "BatchRowId": 0,
+                    "QuestionTypeKey": "sentence_insertion",
+                    "QuestionSubtypeKey": "sentence_insertion_basic",
+                    "status": self.status,
+                }
+
+        captured_kwargs: dict[str, object] = {}
+
+        def fake_compile_question_graph(**kwargs):
+            captured_kwargs.update(kwargs)
+            return object()
+
+        def fake_run_batch_files(
+            input_csv,
+            output_csv,
+            question_type_keys,
+            runner,
+            output_markdown=None,
+            progress_callback=None,
+        ):
+            assert progress_callback is not None
+            progress_callback(
+                BatchProgressUpdate(
+                    event="started",
+                    completed_items=0,
+                    total_items=1,
+                    message="Starting batch run.",
+                )
+            )
+            progress_callback(
+                BatchProgressUpdate(
+                    event="completed",
+                    completed_items=1,
+                    total_items=1,
+                    message="Completed batch run with 1 exported rows.",
+                )
+            )
+            Path(output_csv).write_text(
+                "OriginalQuestionNumber,BatchRowId,QuestionTypeKey,QuestionSubtypeKey,status\n"
+                "10-03,0,sentence_insertion,sentence_insertion_basic,validation_passed\n",
+                encoding="utf-8",
+            )
+            if output_markdown is not None:
+                Path(output_markdown).write_text("# Markdown Output\n", encoding="utf-8")
+            return [_FakeResult()]
+
+        previous_env = {
+            key: os.environ.get(key)
+            for key in [
+                "QUESTIONGEN_VERBOSE_PLANNER",
+                "QUESTIONGEN_PLANNER_TIMEOUT_SECONDS",
+                "QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS",
+            ]
+        }
+        try:
+            os.environ["QUESTIONGEN_VERBOSE_PLANNER"] = "1"
+            os.environ["QUESTIONGEN_PLANNER_TIMEOUT_SECONDS"] = "12.5"
+            os.environ["QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS"] = "3"
+            with tempfile.TemporaryDirectory() as tmpdir:
+                csv_path = Path(tmpdir) / "questions.csv"
+                csv_path.write_text(
+                    "OriginalQuestionNumber,source_paragraph\n10-03,\"A. B. C. D. E.\"\n",
+                    encoding="utf-8",
+                )
+                key_path = Path(tmpdir) / "api_key.txt"
+                key_path.write_text("OPENAI_API_KEY=test-key\n", encoding="utf-8")
+
+                with mock.patch("questiongen.ui.gradio_app.compile_question_graph", side_effect=fake_compile_question_graph):
+                    with mock.patch("questiongen.ui.gradio_app.run_batch_files", side_effect=fake_run_batch_files):
+                        list(
+                            _run_from_ui(
+                                "Drive CSV Path",
+                                None,
+                                str(csv_path),
+                                str(key_path),
+                                tmpdir,
+                                "gpt-5-mini",
+                                0.0,
+                                ["sentence_insertion"],
+                                progress=None,
+                            )
+                        )
+        finally:
+            for key, value in previous_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertTrue(captured_kwargs["verbose_runtime"])
+        self.assertIsNotNone(captured_kwargs["runtime_logger"])
+        self.assertEqual(captured_kwargs["planner_timeout_seconds"], 12.5)
+        self.assertEqual(captured_kwargs["planner_elapsed_log_interval_seconds"], 3.0)
+
 
 if __name__ == "__main__":
     unittest.main()

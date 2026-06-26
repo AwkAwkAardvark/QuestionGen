@@ -333,8 +333,14 @@ This is safer than thinking in terms of question-type names alone because the ne
 Current planning stance:
 
 - do not implement the shared intermediate design layer in the current pass
-- treat planner observability and timeout hardening as the prerequisite task before that refactor
+- planner observability and timeout hardening are now landed; treat them as the gate that must stay stable before that refactor starts
 - treat the architecture shift as a future `v0.2.0`-scale change rather than as incremental cleanup
+
+Current hardening knobs:
+
+- `QUESTIONGEN_VERBOSE_PLANNER=1` enables subtype-aware graph-stage and planner-attempt logs on notebook and Gradio server stdout
+- `QUESTIONGEN_PLANNER_TIMEOUT_SECONDS` defaults to `180` and now forces planner timeouts to export readable `planning_error` rows
+- `QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS` defaults to `30` and controls periodic "still running" planner logs
 
 Planned reusable graph shape:
 

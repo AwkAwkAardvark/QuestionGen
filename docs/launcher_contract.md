@@ -147,10 +147,12 @@ Notes:
 - Gradio's progress bar is the primary live progress surface.
 - The summary panel should stay compact and focus on progress, the current item, and the latest notable event.
 - The run log should be lower-volume: keep start/completion, errors, and notable incompatibility or planning failures, but do not mirror every routine successful subtype completion.
-- Current limitation to document explicitly: the existing spinner/progress surface can appear stuck on one running item without showing whether the delay is in planning, retry, rendering, or validation.
-- Before the deferred shared-design-layer refactor, launcher-visible hardening should add an opt-in verbose mode that emits planner-stage lifecycle logs with subtype-aware context to notebook output and Gradio server stdout.
-- That verbose mode should log planner attempt start, finish, retry, notable elapsed time, and timeout so a single long planner call is diagnosable outside the UI spinner alone.
-- Planner timeouts should surface as readable exported `planning_error` rows rather than as silent stalls.
+- The spinner/progress surface alone is still intentionally compact; use verbose planner logging when a single running item needs deeper diagnosis.
+- `QUESTIONGEN_VERBOSE_PLANNER=1` now enables subtype-aware graph-stage and planner-attempt logs on notebook stdout and Gradio server stdout.
+- Verbose planner logging now records graph-stage boundaries plus planner attempt start, finish, retry, periodic elapsed-time updates, and timeout.
+- `QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS` controls the periodic elapsed log cadence and defaults to `30`.
+- `QUESTIONGEN_PLANNER_TIMEOUT_SECONDS` now defaults to `180` and is applied both to provider request timeout and to the local planner-attempt watchdog.
+- Planner timeouts now surface as readable exported `planning_error` rows rather than as silent stalls.
 
 ## Deferred Batch Modes
 
