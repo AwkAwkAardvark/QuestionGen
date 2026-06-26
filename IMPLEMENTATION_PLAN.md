@@ -68,6 +68,7 @@
 - [x] Add notebook-side `BOOTSTRAP_ENV`, `RESET_REPO`, and `RUN_REPO_TESTS` controls so routine reruns can skip package reinstall churn while branch validation can still refresh pushed code safely.
 - [x] Keep third-party dependency bootstrap separate from repo refresh, and keep local repo-code loading on `REPO_DIR / "src"` rather than on routine `%pip install -e ...` reruns.
 - [x] Fail fast with a restart-required message if the notebook kernel already imported `questiongen` and the user requests a repo refresh or environment bootstrap.
+- [x] Fail fast on missing third-party runtime imports such as `langchain_openai` before starting batch execution or Gradio launch, instead of exporting row-by-row `planning_error` noise.
 - [x] Provide a fresh-subprocess test path for pushed-branch validation in Colab, with `PYTHONPATH` pointed at `REPO_DIR / "src"`.
 - [x] Construct the structured LLM-backed runner from the notebook layer.
 - [x] Launch the primary staff notebook directly into Gradio without pre-running batch-generation cells.

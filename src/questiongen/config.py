@@ -6,6 +6,9 @@ from typing import Any
 DEFAULT_PLANNER_TIMEOUT_SECONDS = 180.0
 DEFAULT_PLANNER_ELAPSED_LOG_INTERVAL_SECONDS = 30.0
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+_RUNTIME_DEPENDENCIES = (
+    ("langchain_openai", "langchain-openai"),
+)
 
 
 def resolve_verbose_planner_logging(enabled: bool | None = None) -> bool:
@@ -52,6 +55,8 @@ def create_llm(
     request_timeout_seconds: float | None = None,
     **kwargs: Any,
 ) -> Any:
+    ensure_runtime_dependencies()
+
     from langchain_openai import ChatOpenAI
 
     if "request_timeout" not in kwargs:
@@ -86,3 +91,21 @@ def create_structured_llm(
 def _validate_positive_timeout(value: float, *, env_name: str) -> None:
     if value <= 0:
         raise ValueError(f"{env_name} must be greater than zero.")
+
+
+def ensure_runtime_dependencies(*, bootstrap_hint: str | None = None) -> None:
+    missing_packages: list[str] = []
+    for module_name, package_name in _RUNTIME_DEPENDENCIES:
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing_packages.append(package_name)
+
+    if not missing_packages:
+        return
+
+    package_list = ", ".join(f"`{package}`" for package in missing_packages)
+    message = f"Missing required runtime dependencies: {package_list}. Install them before running QuestionGen."
+    if bootstrap_hint:
+        message = f"{message} {bootstrap_hint}"
+    raise ImportError(message)

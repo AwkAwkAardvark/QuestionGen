@@ -14,6 +14,7 @@ from ..batch import BatchProgressUpdate, run_batch_files
 from ..console_progress import ConsoleProgressRenderer, chain_progress_callbacks, is_notable_progress_update
 from ..config import (
     create_structured_llm,
+    ensure_runtime_dependencies,
     resolve_planner_elapsed_log_interval_seconds,
     resolve_planner_timeout_seconds,
     resolve_verbose_planner_logging,
@@ -373,6 +374,12 @@ def _run_from_ui(
         )
         input_csv = resolve_input_csv(input_mode, uploaded_csv_path, drive_csv_path)
         output_csv, output_json, output_markdown = _artifact_paths(output_dir, input_csv)
+        ensure_runtime_dependencies(
+            bootstrap_hint=(
+                "In Colab, rerun the setup cell once with `BOOTSTRAP_ENV=True`, "
+                "then restart the runtime if `questiongen` was already imported."
+            )
+        )
         current_item = "Waiting for the batch worker to start."
         latest_notable_event = "Preparing batch run..."
         running_summary = _running_summary(

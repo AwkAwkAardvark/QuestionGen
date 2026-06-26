@@ -83,6 +83,7 @@ Launcher responsibilities:
 - bootstrap third-party dependencies only when explicitly requested
 - clone or refresh the selected allowlisted pushed repo branch
 - prepend `REPO_DIR / "src"` to `sys.path` and invalidate import caches after clone or reuse
+- validate required third-party runtime imports before batch execution or Gradio launch, and fail once with bootstrap guidance if they are missing
 - run fresh-subprocess repo tests for pushed-branch validation when requested
 - launch the Gradio UI from `runner_ui.ipynb`
 - create the structured LLM-backed runner for batch/debug flows
@@ -182,6 +183,8 @@ Rules:
 - The notebooks should always call `importlib.invalidate_caches()` after clone or reuse.
 - If `questiongen` is already imported in the notebook kernel and the user requests `RESET_REPO=True` or `BOOTSTRAP_ENV=True`, the notebook should fail fast with a clear restart-required message rather than attempting package-tree reloads.
 - That guard should explain that repo refresh succeeded, that fresh-subprocess tests can still validate the updated pushed branch, and that actual in-kernel app or pipeline execution needs a runtime restart for a clean import.
+- After the repo source path is prepared, the maintained notebooks and the Gradio batch path should verify required runtime imports such as `langchain_openai` before starting generation work.
+- Missing third-party runtime dependencies should fail once as launcher/setup errors with explicit `BOOTSTRAP_ENV=True` guidance, not degrade into dozens of exported per-row `planning_error` results.
 - Fresh-subprocess tests should set `PYTHONPATH` to `REPO_DIR / "src"` in the child process environment so pushed branch code is evaluated in a clean interpreter.
 - The old editable-install warnings came from mixing `%pip install -e ...` with same-kernel imports of `questiongen`; source-path loading plus subprocess tests is the supported hygiene pattern.
 

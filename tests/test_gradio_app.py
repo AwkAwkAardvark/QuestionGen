@@ -212,6 +212,37 @@ class GradioAppHelperTests(unittest.TestCase):
             with self.assertRaises(ImportError):
                 create_app()
 
+    def test_run_from_ui_fails_fast_when_runtime_dependency_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "questions.csv"
+            csv_path.write_text("OriginalQuestionNumber,source_paragraph\n10-03,\"A. B. C. D. E.\"\n", encoding="utf-8")
+            key_path = Path(tmpdir) / "api_key.txt"
+            key_path.write_text("OPENAI_API_KEY=test-key\n", encoding="utf-8")
+
+            with mock.patch(
+                "questiongen.ui.gradio_app.ensure_runtime_dependencies",
+                side_effect=ImportError("Missing required runtime dependencies: `langchain-openai`."),
+            ):
+                with mock.patch("questiongen.ui.gradio_app.run_batch_files") as run_batch_files:
+                    outputs = list(
+                        _run_from_ui(
+                            "Drive CSV Path",
+                            None,
+                            str(csv_path),
+                            str(key_path),
+                            tmpdir,
+                            "gpt-5-mini",
+                            0.0,
+                            ["sentence_insertion"],
+                            progress=None,
+                        )
+                    )
+
+        self.assertEqual(len(outputs), 1)
+        self.assertIn("## Run Failed", outputs[-1][0])
+        self.assertIn("langchain-openai", outputs[-1][0])
+        run_batch_files.assert_not_called()
+
     def test_run_from_ui_keeps_run_log_low_volume_and_finishes_normally(self) -> None:
         class _FakeResult:
             status = "validation_passed"
