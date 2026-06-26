@@ -8,6 +8,7 @@ from .config import (
     resolve_planner_timeout_seconds,
     resolve_verbose_planner_logging,
 )
+from .designers import build_design
 from .explanations import build_explanation_context, write_teacher_facing_explanation
 from .parsers import prepare_source
 from .planners import PLANNERS, RuntimeEventLogger, StructuredLLMFactory
@@ -70,6 +71,12 @@ class LocalQuestionGraphRunner:
         self._log_stage(working_state, "source_check", "start", type_spec)
         self._apply_result(working_state, source_check(working_state, type_spec))
         self._log_stage(working_state, "source_check", "finish", type_spec)
+        if working_state["status"] != "source_passed":
+            return working_state
+
+        self._log_stage(working_state, "design", "start", type_spec)
+        self._apply_result(working_state, build_design(working_state, type_spec))
+        self._log_stage(working_state, "design", "finish", type_spec)
         if working_state["status"] != "source_passed":
             return working_state
 

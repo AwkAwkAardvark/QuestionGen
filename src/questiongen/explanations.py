@@ -7,6 +7,7 @@ from .renderers import DISPLAY_PERMUTATIONS, MARKER_CHOICES, rendered_gap_positi
 from .schemas import (
     ContextualVocabChoicePlan,
     FillInTheBlankPlan,
+    GrammarDesign,
     GrammarPlan,
     GeneratedQuestion,
     MoodAtmospherePlan,
@@ -14,8 +15,10 @@ from .schemas import (
     PreparedSource,
     QuestionState,
     SentenceInsertionPlan,
+    UnderlinedVocabDesign,
     UnderlinedVocabPlan,
     UnderlinedPhraseMeaningPlan,
+    VocabChoiceDesign,
     VocabPlan,
 )
 from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_choice_inventory, vocab_target_inventory
@@ -23,6 +26,7 @@ from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_ch
 
 def build_explanation_context(state: QuestionState) -> dict[str, Any]:
     prepared_source = state["prepared_source"]
+    design = state.get("design")
     plan = state["plan"]
     generated = state["generated"]
     question_type_key = state["QuestionTypeKey"]
@@ -101,9 +105,10 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
             }
         return {
             "explanation_context": _build_vocab_context(
-                prepared_source,
                 plan,
                 generated,
+                design=design,
+                prepared_source=prepared_source,
                 question_subtype_key=generated.QuestionSubtypeKey or state.get("QuestionSubtypeKey"),
             ),
             "status": "rendered",
@@ -117,7 +122,7 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
                 "errors": ["GrammarPlan is required before explanation generation."],
             }
         return {
-            "explanation_context": _build_grammar_context(prepared_source, plan),
+            "explanation_context": _build_grammar_context(prepared_source, plan, design=design),
             "status": "rendered",
             "errors": [],
         }
@@ -282,14 +287,21 @@ def _build_fill_in_the_blank_context(
 
 
 def _build_vocab_context(
-    prepared_source: PreparedSource,
     plan: VocabPlan | ContextualVocabChoicePlan | UnderlinedVocabPlan,
     generated: GeneratedQuestion,
     *,
+    design: object | None = None,
+    prepared_source: PreparedSource | None = None,
     question_subtype_key: str | None = None,
 ) -> dict[str, str]:
-    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
+    sentence_map = (
+        {unit.id: unit.text for unit in prepared_source.sentence_units}
+        if prepared_source is not None
+        else {}
+    )
     if isinstance(plan, VocabPlan):
+        if prepared_source is None:
+            raise ValueError("PreparedSource is required for legacy VocabPlan explanation context.")
         inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
         ordered_spans = sorted(
             [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
@@ -310,40 +322,51 @@ def _build_vocab_context(
 
     if isinstance(plan, ContextualVocabChoicePlan):
         subtype_key = question_subtype_key or "contextual_vocab_choice_5"
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, subtype_key)}
-        selected_span = inventory[plan.selected_span_id]
+        if isinstance(design, VocabChoiceDesign) and design.selected_span_id == plan.selected_span_id:
+            selected_span_text = design.selected_span_text
+        else:
+            if prepared_source is None:
+                raise ValueError("PreparedSource is required for contextual vocab explanation fallback.")
+            inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, subtype_key)}
+            selected_span_text = inventory[plan.selected_span_id].text
         choice_index = MARKER_CHOICES.index(generated.answer)
         correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
         return {
             "subtype": plan.subtype,
             "question_subtype_key": subtype_key,
-            "selected_span_text": selected_span.text,
-            "original_word": selected_span.text,
+            "selected_span_text": selected_span_text,
+            "original_word": selected_span_text,
             "correct_choice": correct_choice,
-            "source_sentence": sentence_map.get(selected_span.sentence_unit_id or "", ""),
+            "source_sentence": "",
             "supporting_evidence": plan.supporting_evidence,
             "correct_marker": generated.answer,
             "contextual_meaning_ko": plan.contextual_meaning_ko,
         }
 
-    span_map = {span.id: span for span in prepared_source.span_units}
-    ordered_spans = sorted(
-        [span_map[span_id] for span_id in plan.target_span_ids if span_id in span_map],
-        key=lambda span: (span.char_start, span.char_end),
-    )
-    ordered_ids = [span.id for span in ordered_spans]
-    answer_span = span_map[plan.answer_span_id]
+    if isinstance(design, UnderlinedVocabDesign):
+        ordered_ids = list(design.target_span_ids)
+        answer_span_text = dict(zip(design.target_span_ids, design.target_span_texts, strict=False))[plan.answer_span_id]
+    else:
+        if prepared_source is None:
+            raise ValueError("PreparedSource is required for underlined vocab explanation fallback.")
+        span_map = {span.id: span for span in prepared_source.span_units}
+        ordered_spans = sorted(
+            [span_map[span_id] for span_id in plan.target_span_ids if span_id in span_map],
+            key=lambda span: (span.char_start, span.char_end),
+        )
+        ordered_ids = [span.id for span in ordered_spans]
+        answer_span_text = span_map[plan.answer_span_id].text
     answer_marker = MARKER_CHOICES[ordered_ids.index(plan.answer_span_id)]
     replacement_by_span_id = plan.corrupted_replacement_map()
     wrong_markers = [
-        f"{marker}의 '{replacement_by_span_id[span.id]}'"
-        for marker, span in zip(MARKER_CHOICES, ordered_spans)
-        if span.id in replacement_by_span_id
+        f"{marker}의 '{replacement_by_span_id[span_id]}'"
+        for marker, span_id in zip(MARKER_CHOICES, ordered_ids)
+        if span_id in replacement_by_span_id
     ]
     return {
         "subtype": plan.subtype,
         "question_subtype_key": question_subtype_key or generated.QuestionSubtypeKey or "",
-        "answer_span_text": answer_span.text,
+        "answer_span_text": answer_span_text,
         "supporting_evidence": plan.supporting_evidence,
         "correct_marker": answer_marker,
         "selection_basis_ko": plan.selection_basis_ko,
@@ -354,23 +377,29 @@ def _build_vocab_context(
 def _build_grammar_context(
     prepared_source: PreparedSource,
     plan: GrammarPlan,
+    *,
+    design: object | None = None,
 ) -> dict[str, str]:
-    inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
     sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
-    ordered_spans = sorted(
-        [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
-        key=lambda span: (span.char_start, span.char_end),
-    )
-    ordered_ids = [span.id for span in ordered_spans]
-    corrupted_span = inventory[plan.corrupted_span_id]
+    if isinstance(design, GrammarDesign):
+        ordered_ids = list(design.target_span_ids)
+        corrupted_span_text = dict(zip(design.target_span_ids, design.target_span_texts, strict=False))[plan.corrupted_span_id]
+    else:
+        inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
+        ordered_spans = sorted(
+            [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
+            key=lambda span: (span.char_start, span.char_end),
+        )
+        ordered_ids = [span.id for span in ordered_spans]
+        corrupted_span_text = inventory[plan.corrupted_span_id].text
     correct_marker = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
-    original_word = corrupted_span.text
+    original_word = corrupted_span_text
     return {
         "original_word": original_word,
         "corrupted_word": plan.corrupted_word,
-        "grammar_cue_ko": _grammar_structure_cue(corrupted_span.text, corrupted_span.heuristic_tags),
+        "grammar_cue_ko": _grammar_structure_cue(corrupted_span_text, []),
         "correction_basis_ko": plan.correction_basis_ko,
-        "source_sentence": sentence_map.get(corrupted_span.sentence_unit_id or "", ""),
+        "source_sentence": "",
         "supporting_evidence": plan.supporting_evidence,
         "correct_marker": correct_marker,
     }

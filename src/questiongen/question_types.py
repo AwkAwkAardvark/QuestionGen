@@ -3,13 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .schemas import (
+    ContextualVocabChoiceDraft,
     ContextualVocabChoicePlan,
+    FillInTheBlankDraft,
     FillInTheBlankPlan,
+    GrammarDraft,
     GrammarPlan,
     MoodAtmospherePlan,
+    ParagraphOrderingDraft,
     ParagraphOrderingPlan,
+    SentenceInsertionDraft,
     SentenceInsertionPlan,
+    UnderlinedPhraseMeaningDraft,
     UnderlinedVocabPlan,
+    UnderlinedVocabDraft,
     UnderlinedPhraseMeaningPlan,
     VocabPlan,
 )
@@ -415,6 +422,7 @@ class QuestionFamilySpec:
     renderer_key: str | None = None
     validator_key: str | None = None
     plan_schema: type | None = None
+    draft_schema: type | None = None
     min_source_units: int | None = None
     choice_count: int | None = None
 
@@ -432,6 +440,7 @@ class QuestionTypeSpec:
     renderer_key: str
     validator_key: str
     plan_schema: type
+    draft_schema: type
     min_source_units: int | None = None
     choice_count: int | None = None
 
@@ -463,6 +472,7 @@ def _spec(
     renderer_key: str,
     validator_key: str,
     plan_schema: type,
+    draft_schema: type,
     min_source_units: int | None,
     choice_count: int | None,
 ) -> QuestionTypeSpec:
@@ -478,6 +488,7 @@ def _spec(
         renderer_key=renderer_key,
         validator_key=validator_key,
         plan_schema=plan_schema,
+        draft_schema=draft_schema,
         min_source_units=min_source_units,
         choice_count=choice_count,
     )
@@ -494,6 +505,7 @@ CONTEXTUAL_VOCAB_ERROR_SPEC = _spec(
     renderer_key="vocab",
     validator_key="vocab",
     plan_schema=VocabPlan,
+    draft_schema=VocabPlan,
     min_source_units=2,
     choice_count=5,
 )
@@ -512,6 +524,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="sentence_insertion",
             validator_key="sentence_insertion",
             plan_schema=SentenceInsertionPlan,
+            draft_schema=SentenceInsertionDraft,
             min_source_units=5,
             choice_count=5,
         ),
@@ -528,6 +541,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="paragraph_ordering",
             validator_key="paragraph_ordering",
             plan_schema=ParagraphOrderingPlan,
+            draft_schema=ParagraphOrderingDraft,
             min_source_units=6,
             choice_count=5,
         ),
@@ -544,6 +558,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="mood_atmosphere",
             validator_key="mood_atmosphere",
             plan_schema=MoodAtmospherePlan,
+            draft_schema=MoodAtmospherePlan,
             min_source_units=5,
             choice_count=5,
         ),
@@ -558,6 +573,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="mood_atmosphere",
             validator_key="mood_atmosphere",
             plan_schema=MoodAtmospherePlan,
+            draft_schema=MoodAtmospherePlan,
             min_source_units=4,
             choice_count=5,
         ),
@@ -572,6 +588,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="mood_atmosphere",
             validator_key="mood_atmosphere",
             plan_schema=MoodAtmospherePlan,
+            draft_schema=MoodAtmospherePlan,
             min_source_units=4,
             choice_count=5,
         ),
@@ -588,6 +605,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="underlined_phrase_meaning",
             validator_key="underlined_phrase_meaning",
             plan_schema=UnderlinedPhraseMeaningPlan,
+            draft_schema=UnderlinedPhraseMeaningDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -604,6 +622,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="fill_in_the_blank",
             validator_key="fill_in_the_blank",
             plan_schema=FillInTheBlankPlan,
+            draft_schema=FillInTheBlankDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -618,6 +637,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="fill_in_the_blank",
             validator_key="fill_in_the_blank",
             plan_schema=FillInTheBlankPlan,
+            draft_schema=FillInTheBlankDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -632,6 +652,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="fill_in_the_blank",
             validator_key="fill_in_the_blank",
             plan_schema=FillInTheBlankPlan,
+            draft_schema=FillInTheBlankDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -648,6 +669,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="vocab",
             validator_key="vocab",
             plan_schema=ContextualVocabChoicePlan,
+            draft_schema=ContextualVocabChoiceDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -662,6 +684,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="vocab",
             validator_key="vocab",
             plan_schema=ContextualVocabChoicePlan,
+            draft_schema=ContextualVocabChoiceDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -676,6 +699,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="vocab",
             validator_key="vocab",
             plan_schema=ContextualVocabChoicePlan,
+            draft_schema=ContextualVocabChoiceDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -690,6 +714,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="vocab",
             validator_key="vocab",
             plan_schema=UnderlinedVocabPlan,
+            draft_schema=UnderlinedVocabDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -704,6 +729,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="vocab",
             validator_key="vocab",
             plan_schema=UnderlinedVocabPlan,
+            draft_schema=UnderlinedVocabDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -718,6 +744,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="vocab",
             validator_key="vocab",
             plan_schema=UnderlinedVocabPlan,
+            draft_schema=UnderlinedVocabDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -732,6 +759,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="vocab",
             validator_key="vocab",
             plan_schema=UnderlinedVocabPlan,
+            draft_schema=UnderlinedVocabDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -746,6 +774,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="vocab",
             validator_key="vocab",
             plan_schema=UnderlinedVocabPlan,
+            draft_schema=UnderlinedVocabDraft,
             min_source_units=2,
             choice_count=5,
         ),
@@ -762,6 +791,7 @@ QUESTION_TYPE_SPECS_BY_FAMILY: dict[str, tuple[QuestionTypeSpec, ...]] = {
             renderer_key="grammar",
             validator_key="grammar",
             plan_schema=GrammarPlan,
+            draft_schema=GrammarDraft,
             min_source_units=2,
             choice_count=5,
         )
@@ -798,6 +828,7 @@ QUESTION_TYPES = {
         renderer_key=specs[0].renderer_key,
         validator_key=specs[0].validator_key,
         plan_schema=specs[0].plan_schema,
+        draft_schema=specs[0].draft_schema,
         min_source_units=specs[0].min_source_units,
         choice_count=specs[0].choice_count,
     )

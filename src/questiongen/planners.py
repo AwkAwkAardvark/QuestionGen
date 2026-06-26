@@ -4,6 +4,7 @@ import threading
 import time
 from typing import Any, Callable, Iterable, Literal
 
+from .designers import build_design, hydrate_plan_from_draft
 from .prompts import (
     build_fill_in_the_blank_prompt,
     build_fill_in_the_blank_repair_prompt,
@@ -23,20 +24,8 @@ from .prompts import (
 from .question_types import QuestionTypeSpec
 from .schemas import (
     BaseModel,
-    ContextualVocabChoicePlan,
-    GrammarPlan,
-    PreparedSource,
     QuestionState,
-    UnderlinedVocabPlan,
-    VocabPlan,
     coerce_model,
-)
-from .targeting import (
-    grammar_subtype_inventory,
-    vocab_hard_candidate_inventory,
-    grammar_target_inventory,
-    vocab_choice_inventory,
-    vocab_target_inventory,
 )
 from .validators import validate_plan_against_prepared_source
 
@@ -125,7 +114,7 @@ def _run_planner_with_repair(
     planner_timeout_seconds: float | None = None,
     planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
-    planner = structured_llm_factory(type_spec.plan_schema)
+    planner = structured_llm_factory(type_spec.draft_schema)
     current_prompt = base_prompt
     last_exc: Exception | None = None
     context_label = _planner_context_label(state, type_spec)
@@ -139,7 +128,7 @@ def _run_planner_with_repair(
         )
         attempt_started_at = time.monotonic()
         try:
-            raw_plan = _invoke_planner_with_timeout(
+            raw_draft = _invoke_planner_with_timeout(
                 planner=planner,
                 prompt=current_prompt,
                 timeout_seconds=planner_timeout_seconds,
@@ -149,11 +138,20 @@ def _run_planner_with_repair(
                 attempt_number=attempt_number,
             )
             attempt_elapsed = time.monotonic() - attempt_started_at
-            plan = coerce_model(raw_plan, type_spec.plan_schema)
+            draft = coerce_model(raw_draft, type_spec.draft_schema)
+            plan = hydrate_plan_from_draft(
+                design=state.get("design"),
+                draft=draft,
+                type_spec=type_spec,
+            )
             prepared_source = state["prepared_source"]
             if prepared_source is not None:
-                plan = _canonicalize_source_owned_plan(plan, prepared_source, type_spec)
-                deterministic_errors = validate_plan_against_prepared_source(prepared_source, plan, type_spec)
+                deterministic_errors = validate_plan_against_prepared_source(
+                    prepared_source,
+                    plan,
+                    type_spec,
+                    design=state.get("design"),
+                )
                 if deterministic_errors:
                     last_exc = RuntimeError("; ".join(deterministic_errors))
                     _log_runtime_event(
@@ -296,53 +294,14 @@ def _single_line_summary(message: str, *, limit: int = 240) -> str:
     return collapsed[: limit - 3] + "..."
 
 
-def _canonicalize_source_owned_plan(
-    plan: BaseModel,
-    prepared_source: PreparedSource,
-    type_spec: QuestionTypeSpec,
-) -> BaseModel:
-    if isinstance(plan, VocabPlan):
-        inventory = {span.id: span for span in vocab_target_inventory(prepared_source)}
-        if len(plan.target_span_ids) == 5 and all(span_id in inventory for span_id in plan.target_span_ids):
-            return plan.model_copy(
-                update={
-                    "target_span_texts": [inventory[span_id].text for span_id in plan.target_span_ids],
-                }
-            )
-        return plan
-
-    if isinstance(plan, GrammarPlan):
-        inventory = {span.id: span for span in grammar_subtype_inventory(prepared_source, type_spec.subtype_key)}
-        if len(plan.target_span_ids) == 5 and all(span_id in inventory for span_id in plan.target_span_ids):
-            return plan.model_copy(
-                update={
-                    "target_span_texts": [inventory[span_id].text for span_id in plan.target_span_ids],
-                }
-            )
-        return plan
-
-    if isinstance(plan, ContextualVocabChoicePlan):
-        inventory = {span.id: span for span in vocab_choice_inventory(prepared_source, type_spec.subtype_key)}
-        selected_span = inventory.get(plan.selected_span_id)
-        if selected_span is not None:
-            return plan.model_copy(
-                update={
-                    "selected_span_text": selected_span.text,
-                }
-            )
-        return plan
-
-    if isinstance(plan, UnderlinedVocabPlan):
-        inventory = {span.id: span for span in vocab_hard_candidate_inventory(prepared_source)}
-        if len(plan.target_span_ids) == 5 and all(span_id in inventory for span_id in plan.target_span_ids):
-            return plan.model_copy(
-                update={
-                    "target_span_texts": [inventory[span_id].text for span_id in plan.target_span_ids],
-                }
-            )
-        return plan
-
-    return plan
+def _ensure_design(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[str, Any] | None:
+    if state.get("design") is not None:
+        return None
+    result = build_design(state, type_spec)
+    if "design" in result:
+        state["design"] = result["design"]
+        return None
+    return result
 
 
 def plan_sentence_insertion(
@@ -363,10 +322,12 @@ def plan_sentence_insertion(
             "status": "planning_error",
             "errors": ["No structured LLM factory was provided for planning."],
         }
+    design_result = _ensure_design(state, type_spec)
+    if design_result is not None:
+        return design_result
 
     prompt = build_sentence_insertion_prompt(
-        source_paragraph=state["source_paragraph"],
-        prepared_source=state["prepared_source"],
+        design=state["design"],
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
@@ -399,10 +360,12 @@ def plan_paragraph_ordering(
             "status": "planning_error",
             "errors": ["No structured LLM factory was provided for planning."],
         }
+    design_result = _ensure_design(state, type_spec)
+    if design_result is not None:
+        return design_result
 
     prompt = build_paragraph_ordering_prompt(
-        source_paragraph=state["source_paragraph"],
-        prepared_source=state["prepared_source"],
+        design=state["design"],
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
@@ -435,10 +398,12 @@ def plan_mood_atmosphere(
             "status": "planning_error",
             "errors": ["No structured LLM factory was provided for planning."],
         }
+    design_result = _ensure_design(state, type_spec)
+    if design_result is not None:
+        return design_result
 
     prompt = build_mood_atmosphere_prompt(
-        source_paragraph=state["source_paragraph"],
-        prepared_source=state["prepared_source"],
+        design=state["design"],
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
@@ -471,10 +436,12 @@ def plan_underlined_phrase_meaning(
             "status": "planning_error",
             "errors": ["No structured LLM factory was provided for planning."],
         }
+    design_result = _ensure_design(state, type_spec)
+    if design_result is not None:
+        return design_result
 
     prompt = build_underlined_phrase_meaning_prompt(
-        source_paragraph=state["source_paragraph"],
-        prepared_source=state["prepared_source"],
+        design=state["design"],
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
@@ -507,10 +474,12 @@ def plan_fill_in_the_blank(
             "status": "planning_error",
             "errors": ["No structured LLM factory was provided for planning."],
         }
+    design_result = _ensure_design(state, type_spec)
+    if design_result is not None:
+        return design_result
 
     prompt = build_fill_in_the_blank_prompt(
-        source_paragraph=state["source_paragraph"],
-        prepared_source=state["prepared_source"],
+        design=state["design"],
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
@@ -543,10 +512,12 @@ def plan_vocab(
             "status": "planning_error",
             "errors": ["No structured LLM factory was provided for planning."],
         }
+    design_result = _ensure_design(state, type_spec)
+    if design_result is not None:
+        return design_result
 
     prompt = build_vocab_prompt(
-        source_paragraph=state["source_paragraph"],
-        prepared_source=state["prepared_source"],
+        design=state["design"],
         type_spec=type_spec,
     )
     return _run_planner_with_repair(
@@ -579,10 +550,12 @@ def plan_grammar(
             "status": "planning_error",
             "errors": ["No structured LLM factory was provided for planning."],
         }
+    design_result = _ensure_design(state, type_spec)
+    if design_result is not None:
+        return design_result
 
     prompt = build_grammar_prompt(
-        source_paragraph=state["source_paragraph"],
-        prepared_source=state["prepared_source"],
+        design=state["design"],
         type_spec=type_spec,
     )
     return _run_planner_with_repair(

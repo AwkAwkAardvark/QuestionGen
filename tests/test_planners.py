@@ -7,6 +7,7 @@ import unittest
 from questiongen.explanations import build_explanation_context, write_teacher_facing_explanation
 from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
+from questiongen.designers import build_design, hydrate_plan_from_draft
 from questiongen.planners import (
     PLANNER_QUOTA_EXHAUSTED_ERROR,
     plan_fill_in_the_blank,
@@ -28,7 +29,9 @@ from questiongen.prompts import (
 from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_SUBTYPE_SPECS, QUESTION_TYPES
 from questiongen.renderers import render_vocab
 from questiongen.schemas import (
+    ContextualVocabChoiceDraft,
     ContextualVocabChoicePlan,
+    FillInTheBlankDraft,
     FillInTheBlankPlan,
     GrammarPlan,
     MoodAtmospherePlan,
@@ -101,16 +104,12 @@ class _RetryPlanner:
         self.invocations += 1
         if self.invocations == 1:
             return {
-                "target_unit_ids": ["S4"],
-                "selected_gap_ids": ["G0", "G1", "G2", "G3", "G4"],
-                "correct_gap_id": "G6",
+                "correct_gap_id": "G1",
                 "explanation": "문맥상 이 위치를 선택했습니다.",
             }
         self.last_prompt = prompt
         return {
-            "target_unit_ids": ["S4"],
-            "selected_gap_ids": ["G0", "G1", "G2", "G4", "G6"],
-            "correct_gap_id": "G6",
+            "correct_gap_id": "G2",
             "explanation": "문맥상 이 위치가 가장 자연스럽습니다.",
         }
 
@@ -124,15 +123,11 @@ class _DeterministicSentenceRetryPlanner:
         self.invocations += 1
         if self.invocations == 1:
             return {
-                "target_unit_ids": ["S2"],
-                "selected_gap_ids": ["G0", "G1", "G2", "G3", "G4"],
-                "correct_gap_id": "G2",
+                "correct_gap_id": "G1",
                 "explanation": "문맥상 이 위치가 가장 자연스럽습니다.",
             }
         self.last_prompt = prompt
         return {
-            "target_unit_ids": ["S2"],
-            "selected_gap_ids": ["G0", "G1", "G2", "G4", "G5"],
             "correct_gap_id": "G2",
             "explanation": "문맥상 이 위치가 가장 자연스럽습니다.",
         }
@@ -291,8 +286,6 @@ class _DeterministicUnderlinedRetryPlanner:
         self.invocations += 1
         if self.invocations == 1:
             return {
-                "selected_span_id": self.weak_span_id,
-                "selected_span_text": self.weak_span_text,
                 "paraphrase_choices_ko": [
                     "첫 문장의 일부 표현이라는 뜻",
                     "한정된 예시만 가리킨다는 뜻",
@@ -303,13 +296,11 @@ class _DeterministicUnderlinedRetryPlanner:
                 "correct_choice": "한정된 예시만 가리킨다는 뜻",
                 "surface_meaning": "표면적 의미",
                 "contextual_meaning": "문맥적 의미",
-                "supporting_evidence": self.evidence,
+                "supporting_evidence": "invented evidence",
                 "explanation": "초안입니다.",
             }
         self.last_prompt = prompt
         return {
-            "selected_span_id": self.strong_span_id,
-            "selected_span_text": self.strong_span_text,
             "paraphrase_choices_ko": [
                 "비교 속에서 상대적 박탈감만 커졌다는 뜻",
                 "경제적 격차가 불만을 낳았다는 뜻",
@@ -573,6 +564,55 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "planned")
         self.assertIsInstance(result["plan"], SentenceInsertionPlan)
 
+    def test_design_stage_locks_sentence_insertion_bundle(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.contextual_insertion_source,
+            "prepared_source": prepare_source(self.contextual_insertion_source),
+            "design": None,
+        }
+        result = build_design(state, QUESTION_TYPES["sentence_insertion"])
+        self.assertEqual(result["status"], "source_passed")
+        self.assertEqual(result["design"].target_unit_id, "S2")
+        self.assertEqual(result["design"].selected_gap_ids, ["G0", "G1", "G2", "G4", "G5"])
+
+    def test_design_stage_reports_incompatibility_when_no_viable_blank_design_exists(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.phrase_choice_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "QuestionSubtypeKey": "blank_connective_relation_5_choices",
+            "QuestionFormatKey": "blank_connective_relation_5_choices",
+            "prepared_source": prepare_source(self.phrase_choice_source),
+            "design": None,
+        }
+        result = build_design(state, QUESTION_SUBTYPE_SPECS["blank_connective_relation_5_choices"])
+        self.assertEqual(result["status"], "qtype_incompatibility_error")
+        self.assertTrue(result["errors"])
+
+    def test_hydration_preserves_locked_vocab_target(self) -> None:
+        prepared = prepare_source(self.mvp_source)
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "vocab",
+            "prepared_source": prepared,
+            "design": None,
+        }
+        design_result = build_design(state, QUESTION_TYPES["vocab"])
+        design = design_result["design"]
+        draft = ContextualVocabChoiceDraft(
+            choice_words=["strengthen", "weaken", "ignore", "delay", "worsen"],
+            correct_choice="strengthen",
+            contextual_meaning_ko="이 자리는 안전을 더 높이는 방향의 표현이 와야 한다는 뜻입니다",
+            supporting_evidence="Residents say the brighter crosswalks feel safer at night.",
+            explanation="문맥상 이 자리는 안전을 더 높이는 방향의 표현이 와야 합니다.",
+        )
+        plan = hydrate_plan_from_draft(design=design, draft=draft, type_spec=QUESTION_TYPES["vocab"])
+        self.assertIsInstance(plan, ContextualVocabChoicePlan)
+        self.assertEqual(plan.selected_span_id, design.selected_span_id)
+        self.assertEqual(plan.selected_span_text, design.selected_span_text)
+
     def test_invalid_planner_payload_fails(self) -> None:
         result = plan_sentence_insertion(
             self.state,
@@ -582,7 +622,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "planning_error")
         self.assertTrue(
             any(
-                "SentenceInsertionPlan requires exactly one target_unit_id." in error
+                "SentenceInsertionDraft" in error or "correct_gap_id" in error
                 for error in result["errors"]
             )
         )
@@ -630,7 +670,7 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planned")
         self.assertEqual(planner.invocations, 2)
-        self.assertIn("correct_gap_id", planner.last_prompt)
+        self.assertIn("locked design answer", planner.last_prompt)
 
     def test_planner_retries_after_deterministic_sentence_insertion_failure(self) -> None:
         planner = _DeterministicSentenceRetryPlanner()
@@ -641,7 +681,7 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planned")
         self.assertEqual(planner.invocations, 2)
-        self.assertIn("collapsed rendered positions", planner.last_prompt)
+        self.assertIn("locked design answer", planner.last_prompt)
 
     def test_verbose_planner_logging_reports_start_elapsed_and_finish(self) -> None:
         planner = _SleepingPlanner(0.03)
@@ -678,9 +718,9 @@ class PlannerTests(unittest.TestCase):
             prepared_source=prepare_source(self.contextual_insertion_source),
             type_spec=QUESTION_TYPES["sentence_insertion"],
         )
-        self.assertIn("Ranked target candidates", prompt)
-        self.assertIn("priority=strong", prompt)
-        self.assertIn("connector_only=", prompt)
+        self.assertIn("Locked target sentence", prompt)
+        self.assertIn("Locked five-gap bundle", prompt)
+        self.assertNotIn("Ranked target candidates", prompt)
         self.assertIn("between S1", prompt)
         self.assertIn("Selection reminders", prompt)
 
@@ -699,29 +739,24 @@ class PlannerTests(unittest.TestCase):
             prepared_source=prepare_source(self.ordering_source),
             type_spec=QUESTION_TYPES["paragraph_ordering"],
         )
-        self.assertIn("Boundary hints", prompt)
-        self.assertIn("Candidate continuation-block starts", prompt)
-        self.assertIn("Ranked partition candidates", prompt)
-        self.assertIn("viability=stable", prompt)
-        self.assertIn("boundary_signal=", prompt)
-        self.assertIn("right_stage_cue=next", prompt.lower())
-        self.assertIn("block_start_priority=medium", prompt)
+        self.assertIn("Locked intro block", prompt)
+        self.assertIn("Locked continuation blocks in logical order", prompt)
+        self.assertIn("Adjacency rationale payload", prompt)
+        self.assertNotIn("Boundary hints", prompt)
 
-    def test_graph_reclassifies_collapsed_gap_plan_as_planning_error(self) -> None:
+    def test_graph_ignores_planner_override_of_locked_gap_bundle(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _CollapsedGapPlanner())
         result = runner.invoke(self.state)
-        self.assertEqual(result["status"], "planning_error")
-        self.assertTrue(any("collapse" in error for error in result["errors"]))
+        self.assertEqual(result["status"], "validation_passed")
 
-    def test_graph_reclassifies_invalid_ordering_plan_as_planning_error(self) -> None:
+    def test_graph_ignores_planner_override_of_locked_ordering_partition(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _InvalidOrderingCoveragePlanner())
         paragraph_state = {
             **self.state,
             "QuestionTypeKey": "paragraph_ordering",
         }
         result = runner.invoke(paragraph_state)
-        self.assertEqual(result["status"], "planning_error")
-        self.assertTrue(any("cover all sentence IDs" in error for error in result["errors"]))
+        self.assertEqual(result["status"], "validation_passed")
 
     def test_graph_rewrites_internal_paragraph_ordering_explanation(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _ParagraphOrderingPlanner())
@@ -891,7 +926,7 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planned")
         self.assertEqual(planner.invocations, 2)
-        self.assertIn("not central enough", planner.last_prompt)
+        self.assertIn("supporting_evidence", planner.last_prompt)
 
     def test_underlined_phrase_meaning_prompt_exposes_ranked_span_priorities(self) -> None:
         prompt = build_underlined_phrase_meaning_prompt(
@@ -900,10 +935,8 @@ class PlannerTests(unittest.TestCase):
             type_spec=QUESTION_TYPES["underlined_phrase_meaning"],
         )
         self.assertIn("rank 1", prompt)
-        self.assertIn("priority=top", prompt)
-        self.assertIn("centrality=claim_bearing", prompt)
-        self.assertIn("shape=proposition", prompt)
-        self.assertIn("punctuation=clean", prompt)
+        self.assertIn("Locked target span", prompt)
+        self.assertNotIn("priority=top", prompt)
         self.assertIn("context=", prompt)
         self.assertIn("Selection reminders", prompt)
 
@@ -1020,11 +1053,12 @@ class PlannerTests(unittest.TestCase):
             prepared_source=prepared,
             type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_best_paraphrase_choice_5"],
         )
-        phrase_prompt = build_vocab_prompt(
-            source_paragraph=self.mvp_source,
-            prepared_source=prepared,
-            type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_phrase_choice_5"],
-        )
+        with self.assertRaisesRegex(ValueError, "workable lexical-slot vocab target"):
+            build_vocab_prompt(
+                source_paragraph=self.phrase_choice_source,
+                prepared_source=prepare_source(self.phrase_choice_source),
+                type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_phrase_choice_5"],
+            )
         polarity_prompt = build_vocab_prompt(
             source_paragraph=self.mvp_source,
             prepared_source=prepared,
@@ -1040,19 +1074,16 @@ class PlannerTests(unittest.TestCase):
             prepared_source=prepared,
             type_spec=QUESTION_TYPES["grammar"],
         )
-        self.assertIn("Phrase-span candidates", blank_prompt)
-        self.assertIn("shape=proposition", blank_prompt)
-        self.assertIn("Lexical-slot vocab targets", vocab_prompt)
+        self.assertIn("Locked blank target", blank_prompt)
+        self.assertIn("Locked target", vocab_prompt)
         self.assertIn("Active subtype: contextual_vocab_choice_5", vocab_prompt)
         self.assertIn("same local slot", vocab_prompt)
         self.assertIn("correct_choice` should be the best contextual fit", vocab_prompt)
         self.assertIn("must be a non-identical best paraphrase", best_paraphrase_prompt)
         self.assertIn("must not appear in `choice_words`", best_paraphrase_prompt)
-        self.assertIn("phrase-level, never single-word", phrase_prompt)
-        self.assertIn("preserve phrase-slot width tightly", phrase_prompt)
         self.assertIn("polarity, degree, or scope drift", polarity_prompt)
         self.assertIn("collocation or selectional mismatch", collocation_prompt)
-        self.assertIn("Single-word grammar targets", grammar_prompt)
+        self.assertIn("Locked five-target bundle", grammar_prompt)
         self.assertIn("allowed_variants=", grammar_prompt)
         self.assertIn("real, standard English word", grammar_prompt)
         self.assertNotIn("role=", grammar_prompt)
@@ -1271,7 +1302,7 @@ class PlannerTests(unittest.TestCase):
         result = runner.invoke(state)
         self.assertEqual(result["status"], "validation_passed")
         explanation = result["generated"].explanation or ""
-        self.assertIn("동사원형", explanation)
+        self.assertIn("동사 형태", explanation)
         self.assertIn("lighting system to nearby neighborhoods", explanation)
         self.assertNotIn("그 구조를 보여 주므로", explanation)
         self.assertNotIn("자유서술 문법 해설", explanation)

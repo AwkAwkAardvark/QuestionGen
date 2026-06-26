@@ -10,7 +10,19 @@ from .paragraph_ordering import (
 )
 from .parsers import content_tokens, normalize_text
 from .question_types import QuestionTypeSpec
-from .schemas import PreparedSource, UnderlinedVocabPlan, VocabPlan
+from .schemas import (
+    FillInTheBlankDesign,
+    GrammarDesign,
+    MoodAtmosphereDesign,
+    ParagraphOrderingDesign,
+    PreparedSource,
+    SentenceInsertionDesign,
+    UnderlinedPhraseMeaningDesign,
+    UnderlinedVocabDesign,
+    UnderlinedVocabPlan,
+    VocabChoiceDesign,
+    VocabPlan,
+)
 from .targeting import (
     allowed_verb_form_variants,
     fill_blank_connective_inventory,
@@ -61,27 +73,18 @@ _REFERENTIAL_CUES = {
 
 def build_sentence_insertion_prompt(
     *,
-    source_paragraph: str,
-    prepared_source: PreparedSource,
+    design: SentenceInsertionDesign | None = None,
+    source_paragraph: str | None = None,
+    prepared_source: PreparedSource | None = None,
     type_spec: QuestionTypeSpec,
 ) -> str:
-    sentence_inventory = "\n".join(
-        (
-            f"- {unit.id}: text={unit.text!r}; "
-            f"left_context={_neighbor_id(prepared_source, unit.index - 1)}; "
-            f"right_context={_neighbor_id(prepared_source, unit.index + 1)}"
-        )
-        for unit in prepared_source.sentence_units
-    )
-    gap_inventory = "\n".join(
-        (
-            f"- {gap.id}: between "
-            f"{_gap_edge_label(prepared_source, gap.before_unit_id, side='before')} and "
-            f"{_gap_edge_label(prepared_source, gap.after_unit_id, side='after')}"
-        )
-        for gap in prepared_source.gap_units
-    )
-    ranked_candidates = _build_sentence_insertion_candidate_hints(prepared_source)
+    if design is None:
+        if source_paragraph is None or prepared_source is None:
+            raise TypeError("build_sentence_insertion_prompt requires either design or source_paragraph plus prepared_source.")
+        from .designers import build_sentence_insertion_design
+
+        design = build_sentence_insertion_design(source_paragraph, prepared_source, type_spec)
+    payload = design.prompt_payload
     return f"""
 You are planning an English exam sentence insertion question.
 
@@ -96,21 +99,22 @@ Planning rules:
 {type_spec.planner_prompt}
 
 Source paragraph:
-{source_paragraph}
+{payload["source_paragraph"]}
 
-Sentence units:
-{sentence_inventory}
+Locked target sentence:
+- {payload["target_unit_id"]}: {payload["target_text"]!r}
 
-Gap units:
-{gap_inventory}
+Left and right evidence:
+- left_context={payload["left_context"]!r}
+- right_context={payload["right_context"]!r}
 
-Ranked target candidates (best available strong target first):
-{ranked_candidates}
+Locked five-gap bundle:
+{payload["gap_bundle"]}
 
 Selection reminders:
-- Choose the target only from candidates with clear two-sided support and avoid `priority=weak` or `priority=reject_by_default`.
-- Exclude the target's collapsed gap pair and never return both sides of that pair inside `selected_gap_ids`.
-- Before returning, re-check that `correct_gap_id` is one of the exact five `selected_gap_ids`.
+- The target sentence and five gap options are already locked by the deterministic design stage.
+- Do not search for a new target sentence or a new gap bundle.
+- Choose `correct_gap_id` only from the locked five-gap bundle above.
 """.strip()
 
 
@@ -129,14 +133,9 @@ Previous validation error:
 
 Repair rules:
 - Return a fully corrected answer.
-- `correct_gap_id` must be exactly one of the IDs listed in `selected_gap_ids`.
-- Re-check that `selected_gap_ids` contains exactly five unique gap IDs.
-- Re-check that you did not choose both gaps immediately before and after the target sentence.
-- Re-check that the five selected gap IDs still map to five distinct rendered positions after removing the target sentence.
-- If the previous error mentions collapsed rendered positions, rebuild the five-gap set from scratch instead of editing only one ID.
-- Re-check the ranked target-candidate notes and prefer the best remaining sentence with two-sided support, not merely a sentence with a valid surface shape.
-- Re-check that the target sentence is not fragmentary, first-only, last-only, or supported by only one side of the context.
-- Re-check that `correct_gap_id` is copied from the final five-item `selected_gap_ids` list after every other field is finalized.
+- The deterministic design stage already locked the target sentence and the five gap options.
+- Do not search for a new target sentence or modify the gap bundle.
+- `correct_gap_id` must be exactly one of the locked gap IDs.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that uses the surrounding sentences as evidence rather than the given sentence itself, internal IDs, gap labels, schema field names, or renderer mechanics.
 - Return only structured data matching the schema.
@@ -145,21 +144,18 @@ Repair rules:
 
 def build_paragraph_ordering_prompt(
     *,
-    source_paragraph: str,
-    prepared_source: PreparedSource,
+    design: ParagraphOrderingDesign | None = None,
+    source_paragraph: str | None = None,
+    prepared_source: PreparedSource | None = None,
     type_spec: QuestionTypeSpec,
 ) -> str:
-    sentence_inventory = "\n".join(
-        (
-            f"- {unit.id}: text={unit.text!r}; "
-            f"stage_cue={_stage_cue(unit.text) or 'none'}; "
-            f"opens_with_reference={_yes_no(_contains_reference(unit.text))}"
-        )
-        for unit in prepared_source.sentence_units
-    )
-    boundary_hints = _build_paragraph_boundary_hints(prepared_source)
-    block_start_hints = _build_paragraph_block_start_hints(prepared_source)
-    partition_candidates = _build_paragraph_partition_candidates(prepared_source)
+    if design is None:
+        if source_paragraph is None or prepared_source is None:
+            raise TypeError("build_paragraph_ordering_prompt requires either design or source_paragraph plus prepared_source.")
+        from .designers import build_paragraph_ordering_design
+
+        design = build_paragraph_ordering_design(source_paragraph, prepared_source, type_spec)
+    payload = design.prompt_payload
     return f"""
 You are planning an English exam paragraph ordering question.
 
@@ -174,24 +170,21 @@ Planning rules:
 {type_spec.planner_prompt}
 
 Source paragraph:
-{source_paragraph}
+{payload["source_paragraph"]}
 
-Sentence units:
-{sentence_inventory}
+Locked intro block:
+{payload["intro_text"]}
 
-Boundary hints:
-{boundary_hints}
+Locked continuation blocks in logical order:
+{payload["continuation_blocks"]}
 
-Candidate continuation-block starts (best first):
-{block_start_hints}
-
-Ranked partition candidates (best first):
-{partition_candidates}
+Adjacency rationale payload:
+{payload["edge_lines"]}
 
 Selection reminders:
-- Choose a partition only if every block boundary is supported by real adjacency evidence, not just by a generic topic outline.
-- Prefer partitions marked `viability=stable` and rebuild the split if the best-looking candidate is still marked `watch`.
-- Avoid block starts marked as `priority=watch` or `priority=weak` when a stronger start signal exists.
+- The deterministic design stage already locked the intro block and the three continuation blocks.
+- Do not search for a new partition.
+- Use the locked block sequence above and explain why that order is forced.
 """.strip()
 
 
@@ -210,13 +203,8 @@ Previous validation error:
 
 Repair rules:
 - Return a fully corrected answer.
-- The intro block and continuation blocks must together cover every sentence exactly once.
-- Re-check that flattening the intro block followed by the three continuation blocks reproduces the full sentence inventory in exactly the original order.
-- Keep exactly three continuation blocks.
-- Keep each block non-empty.
-- Re-check the block-start hints and choose boundaries that create the strongest forced adjacency, not just three plausible chunks.
-- Re-check that the ordering is forced by adjacency, not just by a generic intro-middle-end summary or interchangeable examples.
-- If the previous error mentions weak adjacency, rebuild the whole partition around stronger boundaries rather than only moving one sentence.
+- The deterministic design stage already locked the intro block and continuation blocks.
+- Do not rebuild the partition.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains why one block follows the previous block rather than using internal sentence IDs, block inventories, or schema mechanics.
 - Return only structured data matching the schema.
@@ -225,14 +213,18 @@ Repair rules:
 
 def build_mood_atmosphere_prompt(
     *,
-    source_paragraph: str,
-    prepared_source: PreparedSource,
+    design: MoodAtmosphereDesign | None = None,
+    source_paragraph: str | None = None,
+    prepared_source: PreparedSource | None = None,
     type_spec: QuestionTypeSpec,
 ) -> str:
-    sentence_inventory = "\n".join(
-        f"- {unit.id}: {unit.text}"
-        for unit in prepared_source.sentence_units
-    )
+    if design is None:
+        if source_paragraph is None or prepared_source is None:
+            raise TypeError("build_mood_atmosphere_prompt requires either design or source_paragraph plus prepared_source.")
+        from .designers import build_mood_atmosphere_design
+
+        design = build_mood_atmosphere_design(source_paragraph, prepared_source, type_spec)
+    payload = design.prompt_payload
     active_subtype = type_spec.subtype_key.replace("_5", "")
     return f"""
 You are planning an English exam mood/atmosphere question.
@@ -249,10 +241,10 @@ Planning rules:
 {type_spec.planner_prompt}
 
 Source paragraph:
-{source_paragraph}
+{payload["source_paragraph"]}
 
 Sentence units:
-{sentence_inventory}
+{payload["sentence_inventory"]}
 """.strip()
 
 
@@ -284,31 +276,20 @@ Repair rules:
 
 def build_underlined_phrase_meaning_prompt(
     *,
-    source_paragraph: str,
-    prepared_source: PreparedSource,
+    design: UnderlinedPhraseMeaningDesign | None = None,
+    source_paragraph: str | None = None,
+    prepared_source: PreparedSource | None = None,
     type_spec: QuestionTypeSpec,
 ) -> str:
-    sentence_inventory = "\n".join(
-        f"- {unit.id}: {unit.text}"
-        for unit in prepared_source.sentence_units
-    )
-    candidate_spans = underlined_phrase_inventory(prepared_source)
-    span_inventory = "\n".join(
-        (
-            f"- rank {rank}: {span.id}; score={span.priority_score}; "
-            f"priority={_span_priority_label(span.priority_score)}; "
-            f"centrality={_span_centrality_label(span.heuristic_tags)}; "
-            f"shape={span_shape_label(span)}; "
-            f"punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
-            f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; "
-            f"tags={','.join(span.heuristic_tags) or 'none'}; "
-            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
-        )
-        for rank, span in enumerate(
-            candidate_spans,
-            start=1,
-        )
-    )
+    if design is None:
+        if source_paragraph is None or prepared_source is None:
+            raise TypeError(
+                "build_underlined_phrase_meaning_prompt requires either design or source_paragraph plus prepared_source."
+            )
+        from .designers import build_underlined_phrase_meaning_design
+
+        design = build_underlined_phrase_meaning_design(source_paragraph, prepared_source, type_spec)
+    payload = design.prompt_payload
     return f"""
 You are planning an English exam underlined phrase meaning question.
 
@@ -323,51 +304,31 @@ Planning rules:
 {type_spec.planner_prompt}
 
 Source paragraph:
-{source_paragraph}
+{payload["source_paragraph"]}
 
-Sentence units:
-{sentence_inventory}
-
-Span candidates:
-{span_inventory}
+Locked target span:
+{payload["selected_span_line"]}
 
 Selection reminders:
-- Prefer candidates marked `priority=top` or `priority=strong` and avoid `centrality=weak` or `centrality=local` when a stronger candidate exists.
-- Prefer `shape=proposition` or `shape=claim` spans over merely local phrase chunks.
-- Never choose a span just because its boundaries are valid; the span must still carry a central claim, mechanism, evaluation, contrast, or limitation.
-- Avoid `punctuation=crossing` candidates unless the full span reads as a complete clause-level unit.
+- The deterministic design stage already locked the target span.
+- Do not choose a new span.
 """.strip()
 
 
 def build_fill_in_the_blank_prompt(
     *,
-    source_paragraph: str,
-    prepared_source: PreparedSource,
+    design: FillInTheBlankDesign | None = None,
+    source_paragraph: str | None = None,
+    prepared_source: PreparedSource | None = None,
     type_spec: QuestionTypeSpec,
 ) -> str:
-    sentence_inventory = "\n".join(
-        f"- {unit.id}: {unit.text}"
-        for unit in prepared_source.sentence_units
-    )
-    if type_spec.subtype_key == "blank_connective_relation_5_choices":
-        blank_candidates = fill_blank_connective_inventory(prepared_source)
-    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
-        blank_candidates = fill_blank_summary_inventory(prepared_source)
-    else:
-        blank_candidates = fill_blank_target_inventory(prepared_source)
-    span_inventory = "\n".join(
-        (
-            f"- rank {rank}: {span.id}; score={span.priority_score}; "
-            f"priority={_span_priority_label(span.priority_score)}; "
-            f"centrality={_span_centrality_label(span.heuristic_tags)}; "
-            f"shape={span_shape_label(span)}; "
-            f"punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
-            f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; "
-            f"tags={','.join(span.heuristic_tags) or 'none'}; "
-            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
-        )
-        for rank, span in enumerate(blank_candidates, start=1)
-    )
+    if design is None:
+        if source_paragraph is None or prepared_source is None:
+            raise TypeError("build_fill_in_the_blank_prompt requires either design or source_paragraph plus prepared_source.")
+        from .designers import build_fill_in_the_blank_design
+
+        design = build_fill_in_the_blank_design(source_paragraph, prepared_source, type_spec)
+    payload = design.prompt_payload
     return f"""
 You are planning an English exam fill-in-the-blank question.
 
@@ -382,20 +343,14 @@ Planning rules:
 {type_spec.planner_prompt}
 
 Source paragraph:
-{source_paragraph}
+{payload["source_paragraph"]}
 
-Sentence units:
-{sentence_inventory}
-
-Phrase-span candidates:
-{span_inventory}
+Locked blank target:
+{payload["selected_span_line"]}
 
 Selection reminders:
-- Prefer the candidates that best fit the active subtype's intended evidence class.
-- Prefer `shape=proposition` spans first and `shape=claim` spans second unless the active subtype explicitly prioritizes relation or summary cues.
-- Avoid `punctuation=crossing` candidates unless the full span remains a complete clause-level idea.
-- Reject local restorations that mainly test surface phrase recovery rather than the passage's claim, reason, effect, contrast, limitation, or mechanism.
-- Keep the blank recoverable from the surrounding passage, not from isolated dictionary meaning alone.
+- The deterministic design stage already locked the blank target.
+- Do not choose a new span.
 """.strip()
 
 
@@ -414,12 +369,10 @@ Previous validation error:
 
 Repair rules:
 - Return a fully corrected answer.
-- Re-check that `selected_span_id` is one of the provided phrase-span IDs.
-- Re-check that `selected_span_text` exactly matches the source text for that selected span.
 - Re-check that `completion_choices` contains exactly five unique readable English choices.
 - Re-check that `correct_choice` is one of `completion_choices`.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
-- If the previous error says the selected span is invalid, pick a new readable multi-word span instead of forcing the same one.
+- The deterministic design stage already locked `selected_span_id` and `selected_span_text`; do not change them.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains what idea the blank must express, without schema fields or mechanics.
 - Return only structured data matching the schema.
@@ -428,24 +381,19 @@ Repair rules:
 
 def build_vocab_prompt(
     *,
-    source_paragraph: str,
-    prepared_source: PreparedSource,
+    design: VocabChoiceDesign | UnderlinedVocabDesign | None = None,
+    source_paragraph: str | None = None,
+    prepared_source: PreparedSource | None = None,
     type_spec: QuestionTypeSpec,
 ) -> str:
-    sentence_inventory = "\n".join(
-        f"- {unit.id}: {unit.text}"
-        for unit in prepared_source.sentence_units
-    )
-    if type_spec.plan_schema is VocabPlan:
-        target_inventory = "\n".join(
-            (
-                f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
-                f"antonym_invertible={'YES' if vocab_target_is_antonym_invertible(span) else 'no'}; "
-                f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
-                f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
-            )
-            for rank, span in enumerate(vocab_target_inventory(prepared_source), start=1)
-        )
+    if design is None:
+        if source_paragraph is None or prepared_source is None:
+            raise TypeError("build_vocab_prompt requires either design or source_paragraph plus prepared_source.")
+        from .designers import build_vocab_design
+
+        design = build_vocab_design(source_paragraph, prepared_source, type_spec)
+    payload = design.prompt_payload
+    if isinstance(design, UnderlinedVocabDesign):
         return f"""
 You are planning an English exam contextual vocabulary question.
 
@@ -461,77 +409,23 @@ Planning rules:
 {type_spec.planner_prompt}
 
 Source paragraph:
-{source_paragraph}
+{payload["source_paragraph"]}
 
-Sentence units:
-{sentence_inventory}
-
-Single-word vocab targets:
-{target_inventory}
-
-Selection reminders:
-- Follow the active subtype exactly: either choose five underlined error targets or choose one target plus five lexical options.
-- Prefer targets marked `antonym_invertible=YES` when the subtype is the contextual error format.
-- Source-owned IDs remain the authoritative contract; exact source words will be resolved deterministically from those IDs.
-""".strip()
-    if type_spec.plan_schema is UnderlinedVocabPlan:
-        target_inventory = "\n".join(
-            (
-                f"- rank {rank}: {span.id}; score={span.priority_score}; cues={vocab_choice_target_cue_count(span)}; "
-                f"preference={_vocab_hard_preference_label(span.priority_score, vocab_choice_target_cue_count(span))}; "
-                f"shape={span_shape_label(span)}; punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
-                f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
-                f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
-            )
-            for rank, span in enumerate(vocab_hard_candidate_inventory(prepared_source), start=1)
-        )
-        return f"""
-You are planning an English exam contextual vocabulary question.
-
-Return only structured data matching the required schema.
-
-Question type:
-- Key: vocab
-- Label: {type_spec.family_label_ko}
-- Active subtype: {type_spec.subtype_key}
-- Student-facing stem: {type_spec.question_stem}
-
-Planning rules:
-{type_spec.planner_prompt}
-
-Source paragraph:
-{source_paragraph}
-
-Sentence units:
-{sentence_inventory}
-
-Lexical-slot vocab targets:
-{target_inventory}
+Locked five-target bundle:
+{payload["target_bundle"]}
 
 Selection reminders:
 - Follow the active subtype exactly and keep subtype identity explicit in the returned schema.
+- The deterministic design stage already locked the five targets.
 - Return hard-family corruptions as an ordered `corrupted_replacements` list of records with `span_id` and `replacement_text`, not as a free-form mapping.
-- Select five distinct source-owned target IDs and preserve them in source order when you reason about the underlined passage.
-- Prefer the highest-ranked `preference=top` or `preference=strong` candidates first, but you may use a lower-ranked clean lexical slot when needed to reach five distinct usable targets.
 - Every corrupted replacement must stay readable in the same local slot, while becoming semantically wrong.
-- `score=` and `cues=` are ranked hints, not a validity boundary; lower-ranked clean lexical slots are still allowed if they remain passage-anchored and slot-compatible.
 - If the active subtype is `contextual_vocab_correct_among_4_corrupted_5`, exactly four items must be corrupted and exactly one item must remain clearly correct.
 - If the active subtype is `contextual_vocab_error_1_among_5_5`, exactly one item must be corrupted and the other four must remain unchanged.
 - If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must fail specifically by polarity, degree, or scope drift.
 - If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must fail by collocation or selectional mismatch, not by broad opposite meaning.
 - If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, exactly three items must be corrupted, exactly two must remain unchanged, and only one unchanged item may remain the uniquely strongest answer.
 - If the subtype asks for the correct remaining item, make sure only one answer is defensible from the passage evidence.
-- Source-owned IDs remain the authoritative contract; exact source wording will be resolved deterministically from those IDs.
 """.strip()
-    target_inventory = "\n".join(
-        (
-            f"- rank {rank}: {span.id}; score={span.priority_score}; cues={vocab_choice_target_cue_count(span)}; "
-            f"shape={span_shape_label(span)}; punctuation={'crossing' if span_crosses_punctuation(span.text) else 'clean'}; "
-            f"text={span.text!r}; sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
-            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
-        )
-        for rank, span in enumerate(vocab_choice_inventory(prepared_source, type_spec.subtype_key), start=1)
-    )
     return f"""
 You are planning an English exam contextual vocabulary question.
 
@@ -547,25 +441,20 @@ Planning rules:
 {type_spec.planner_prompt}
 
 Source paragraph:
-{source_paragraph}
+{payload["source_paragraph"]}
 
-Sentence units:
-{sentence_inventory}
-
-Lexical-slot vocab targets:
-{target_inventory}
+Locked target:
+{payload["selected_span_line"]}
 
 Selection reminders:
 - Follow the active subtype exactly and keep subtype identity explicit in the returned schema.
-- Choose a clean lexical slot, not a clause fragment, technical label, proper noun, or grammar-only function word.
-- Prefer `shape=claim`, `shape=phrase`, or strong single-word targets with higher `cues=` counts.
+- The deterministic design stage already locked the lexical slot.
 - Every option must stay readable in the same local slot.
-- `selected_span_text` is the original source wording, but `correct_choice` should be the best contextual fit and may differ from the source wording.
+- `selected_span_text` is the locked original source wording, but `correct_choice` should be the best contextual fit and may differ from the source wording.
 - If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, `correct_choice` must be a non-identical best paraphrase and the original wording must not appear in `choice_words`.
 - If the active subtype is `contextual_vocab_phrase_choice_5`, the selected target and every choice must stay phrase-level, never single-word, and should preserve phrase-slot width tightly.
 - Otherwise prefer a strong non-identical contextual replacement when one exists; exact source wording is allowed but not required.
 - The other four options must be contextually wrong, not near-synonymous or jointly defensible.
-- Source-owned IDs remain the authoritative contract; exact source wording will be resolved deterministically from those IDs.
 """.strip()
 
 
@@ -586,20 +475,18 @@ Previous validation error:
 Repair rules:
 - Return a fully corrected answer.
 - Re-check the active subtype and return a plan that matches that subtype's schema exactly.
-- If the active subtype is a blank-choice vocab item, keep `selected_span_text` as the original source wording but set `correct_choice` to the best contextual lexical fit from `choice_words`.
+- If the active subtype is a blank-choice vocab item, keep the locked target unchanged and set `correct_choice` to the best contextual lexical fit from `choice_words`.
 - If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, `correct_choice` must differ from `selected_span_text` and the unchanged source wording must not appear anywhere in `choice_words`.
 - If the active subtype is `contextual_vocab_phrase_choice_5`, re-check that `selected_span_text` and every option are multiword phrases with tight slot-width preservation.
-- If the active subtype is an underlined vocab item, re-check the number of selected targets, the corruption count, whether `answer_span_id` matches the stem direction, and whether `corrupted_replacements` is an ordered list of `{{span_id, replacement_text}}` records.
+- If the active subtype is an underlined vocab item, do not change the locked target bundle; re-check the corruption count, whether `answer_span_id` matches the stem direction, and whether `corrupted_replacements` is an ordered list of `{{span_id, replacement_text}}` records.
 - If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, re-check that the one corruption is specifically a polarity, degree, or scope distortion.
 - If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, re-check that the one corruption is a collocation or selectional mismatch rather than a broad opposite.
 - Re-check that every option stays in the same local slot and remains readable in context.
 - Re-check that the wrong options are semantically wrong, not merely rare, ungrammatical, or near-synonymous.
-- If the previous error mentions insufficient distinct targets, rebuild the full five-target set from the ranked inventory instead of editing only one target.
 - If the previous error mentions ambiguity or multiple defensible answers, rebuild all distractors from scratch around clearer polarity, scope, collocation, or discourse-role mismatches.
 - If the previous error mentions the wrong corruption class, replace the corrupted item from scratch rather than only paraphrasing the same bad replacement.
 - If the previous error mentions slot-width drift, choose replacements that better preserve local phrase width and lexical-slot shape.
 - If the previous error mentions duplicate rendered targets, rebuild the entire corruption set so all five visible underlined items stay distinct after substitution.
-- If the active subtype is the legacy error format, re-check that `target_span_ids` contains exactly five unique IDs, that `corrupted_span_id` is one of them, and that `corrupted_word` clearly reverses or distorts the passage meaning.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose about contextual mismatch, without schema fields or mechanics.
@@ -609,24 +496,18 @@ Repair rules:
 
 def build_grammar_prompt(
     *,
-    source_paragraph: str,
-    prepared_source: PreparedSource,
+    design: GrammarDesign | None = None,
+    source_paragraph: str | None = None,
+    prepared_source: PreparedSource | None = None,
     type_spec: QuestionTypeSpec,
 ) -> str:
-    sentence_inventory = "\n".join(
-        f"- {unit.id}: {unit.text}"
-        for unit in prepared_source.sentence_units
-    )
-    subtype_inventory = grammar_subtype_inventory(prepared_source, type_spec.subtype_key)
-    target_inventory = "\n".join(
-        (
-            f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
-            f"sentence={span.sentence_unit_id or 'NONE'}; tags={','.join(span.heuristic_tags) or 'none'}; "
-            f"allowed_variants={','.join(sorted(allowed_verb_form_variants(span.text) - {span.text.lower()})) or 'none'}; "
-            f"context={_span_context_window(span.context_before, span.text, span.context_after)}"
-        )
-        for rank, span in enumerate(subtype_inventory, start=1)
-    )
+    if design is None:
+        if source_paragraph is None or prepared_source is None:
+            raise TypeError("build_grammar_prompt requires either design or source_paragraph plus prepared_source.")
+        from .designers import build_grammar_design
+
+        design = build_grammar_design(source_paragraph, prepared_source, type_spec)
+    payload = design.prompt_payload
     return f"""
 You are planning an English exam grammar question.
 
@@ -641,22 +522,21 @@ Planning rules:
 {type_spec.planner_prompt}
 
 Source paragraph:
-{source_paragraph}
+{payload["source_paragraph"]}
 
-Sentence units:
-{sentence_inventory}
+Locked five-target bundle:
+{payload["target_bundle"]}
 
-Single-word grammar targets:
-{target_inventory}
+Locked corruption target:
+- {payload["corrupted_target_id"]}: text={payload["corrupted_target_text"]!r}; allowed_variants={payload["allowed_variants"]}
 
 Selection reminders:
-- Use exactly five targets from the provided inventory.
-- `target_span_ids` are the authoritative contract; exact source words will be resolved deterministically from those IDs.
+- The deterministic design stage already locked the five targets and the one corruption target.
 - CRITICAL: The corrupted word MUST be a real, standard English word. NEVER invent pseudo-words.
   - BAD: 'increaseed', 'reduceing', 'understanded', 'emergeed'
   - GOOD: 'increasing', 'reduced', 'understood', 'emerged'
 - Keep the corruption inside the active grammar subtype's controlled local family.
-- When the target is verb-form-based, use the `allowed_variants` list for the selected target.
+- When the target is verb-form-based, use the `allowed_variants` list for the locked corruption target.
 """.strip()
 
 
@@ -676,12 +556,10 @@ Previous validation error:
 
 Repair rules:
 - Return a fully corrected answer.
-- Re-check that `target_span_ids` contains exactly five unique IDs from the provided grammar-target inventory.
-- `target_span_ids` are authoritative; copy matching source words into `target_span_texts`, but resolve your final selection by ID first.
-- Re-check that `corrupted_span_id` is one of `target_span_ids`.
+- The deterministic design stage already locked `target_span_ids`, `target_span_texts`, and `corrupted_span_id`; do not change them.
 - Re-check that `corrupted_word` is a single English word and a grammatically-plausible verb-form variant of the original target word.
 - CRITICAL: `corrupted_word` must be a REAL English word. NEVER use invented pseudo-words (e.g. 'increaseed', 'reduceing').
-  Use only real inflected forms that appear in `allowed_variants`.
+  Use only real inflected forms that appear in the locked target's `allowed_variants`.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose about the structural cue, without schema fields or mechanics.
@@ -704,14 +582,10 @@ Previous validation error:
 
 Repair rules:
 - Return a fully corrected answer.
-- Re-check that `selected_span_id` is one of the provided span IDs.
-- Re-check that `selected_span_text` exactly matches the source text for that selected span.
+- The deterministic design stage already locked `selected_span_id` and `selected_span_text`; do not change them.
 - Re-check that `paraphrase_choices_ko` contains exactly five unique Korean choices.
 - Re-check that `correct_choice` is one of `paraphrase_choices_ko`.
 - Re-check that `supporting_evidence` is copied as an exact passage snippet.
-- Re-check the ranked span inventory and prefer the strongest claim-bearing or proposition-bearing span, not a merely local phrase with valid boundaries.
-- Re-check that the selected span is not a dangling fragment, a surface comparison phrase, or a weakly central literal phrase.
-- If the previous error says the span is not central enough, choose a new higher-centrality candidate instead of reusing the same span.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains surface wording, contextual meaning, and passage evidence without schema fields or mechanics.
 - Return only structured data matching the schema.
