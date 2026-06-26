@@ -1,8 +1,9 @@
-"""Pending question-type planning artifact.
+"""Planning artifact for family refinement and deferred architecture work.
 
-This file is intentionally outside the live runtime registry. It exists to
-catalog candidate question types and implementation notes without changing
-`src/questiongen/QUESTION_TYPES` or any launcher behavior.
+This file is intentionally outside the live runtime registry. It records the
+current planning state for live-family hardening, dormant families, and future
+architecture work without changing `src/questiongen/QUESTION_TYPES` or any
+launcher behavior.
 """
 
 from __future__ import annotations
@@ -10,319 +11,265 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-InfrastructureKind = Literal["sentence", "block", "span", "passage"]
+FamilyStatus = Literal["live_refinement", "dormant", "future_candidate"]
+InfrastructureKind = Literal["sentence", "block", "span", "multi_span", "passage"]
 
 
 @dataclass(frozen=True)
-class PendingQuestionTypeSpec:
+class PlanningFamilySpec:
     broad_key: str
+    status: FamilyStatus
     label_ko: str
-    format_key: str
-    stem_direction_ko: str
-    expected_output_shape: str
+    format_or_scope: str
     infrastructure: InfrastructureKind
+    current_role: str
     likely_incompatibility_patterns: tuple[str, ...]
-    implementation_risks: tuple[str, ...]
-    requires_user_confirmation: tuple[str, ...] = ()
+    quality_risks: tuple[str, ...]
     notes: tuple[str, ...] = ()
+    requires_user_confirmation: tuple[str, ...] = ()
 
 
-PENDING_CATALOG_CONTEXT = {
+PLANNING_CONTEXT = {
     "status": "planning_only",
     "do_not_import_into_runtime": True,
-    "colab_first_launcher": True,
-    "drive_backed_runtime": True,
-    "run_all_registered_types": True,
-    "incompatibility_status": "qtype_incompatibility_error",
-    "live_question_type_keys": ("sentence_insertion", "paragraph_ordering", "underlined_phrase_meaning"),
-    "next_registry_gate": (
-        "Do not add fill_in_the_blank to the live registry until the current "
-        "gpt-5-mini baseline for sentence_insertion, paragraph_ordering, and "
-        "underlined_phrase_meaning is stable again on mixed-batch review."
+    "canonical_doc": "docs/question_types_pending.md",
+    "sync_rule": (
+        "Keep this file and docs/question_types_pending.md aligned whenever the "
+        "planning stance or live-family status changes."
     ),
-    "live_type_refinement_note": (
-        "The same PendingQuestionTypeSpec shape may also be used to capture "
-        "non-runtime refinement guidance for already live types. Those notes "
-        "are planning aids only and must not be treated as pending registry "
-        "entries."
+    "product_direction": (
+        "Colab-first launcher, Drive-backed runtime data, run all registered "
+        "question types, and preserve valid-but-poor-fit combinations as "
+        "qtype_incompatibility_error."
     ),
-    "pending_only_note": (
-        "Entries below are candidate specs only. They are not live registry "
-        "entries and must not be wired into QUESTION_TYPES until their "
-        "planner, renderer, validator, and suitability gates are ready."
+    "live_question_type_keys": (
+        "sentence_insertion",
+        "paragraph_ordering",
+        "underlined_phrase_meaning",
+        "fill_in_the_blank",
+        "vocab",
+        "grammar",
+    ),
+    "dormant_implemented_question_type_keys": ("mood_atmosphere",),
+    "default_model_policy": "gpt-5-mini shared default; per-type routing deferred.",
+    "boundary_policy": (
+        "Default future meaning or pragmatics boundary cases to vocab; keep "
+        "grammar focused on local structural or form error detection."
+    ),
+    "review_artifact_policy": (
+        "Checked-in review artifacts and ResponseFeedbackDump are useful logic "
+        "review and prioritization evidence, but not runtime-contract truth."
+    ),
+    "next_architecture_gate": (
+        "Land planner-stage observability and timeout hardening before starting "
+        "the deferred shared intermediate design-layer refactor."
+    ),
+    "deferred_graph_shape": (
+        "prepare -> source gate -> design/candidate stage -> final planner -> "
+        "deterministic plan check -> render -> explanation -> final validate"
+    ),
+    "subagent_default_role": (
+        "Read-only design and review helper by default. Subagents may analyze, "
+        "summarize, and draft planning artifacts, but they should not edit "
+        "runtime code, tests, launcher notebooks, or registry wiring unless the "
+        "lead agent assigns that scope explicitly."
+    ),
+    "subagent_allowed_planning_write_scope": (
+        "question_types_pending.py",
+        "docs/question_types_pending.md",
+        "IMPLEMENTATION_PLAN.md",
+        "docs/live_quality_review.md",
+        "docs/launcher_contract.md",
+    ),
+    "subagent_must_not": (
+        "commit",
+        "push",
+        "merge",
+        "change QUESTION_TYPES by default",
+        "edit src/questiongen by default",
+    ),
+    "lead_agent_owns": (
+        "final integration decisions",
+        "doc drift checks",
+        "git staging review",
+        "commit and push hygiene",
     ),
 }
 
 
-PENDING_QUESTION_TYPES: tuple[PendingQuestionTypeSpec, ...] = (
-    PendingQuestionTypeSpec(
-        broad_key="fill_in_the_blank",
-        label_ko="빈칸",
-        format_key="blank_inference_proposition_5_choices",
-        stem_direction_ko=(
-            "Likely first stem: '다음 빈칸에 들어갈 말로 가장 적절한 것은?' "
-            "Treat the first implementation as 빈칸추론 rather than a generic "
-            "blank. Keep the exact blank span shape open until the first "
-            "supported proposition granularity is confirmed."
-        ),
-        expected_output_shape=(
-            "One source passage with one selected proposition-like span "
-            "replaced by a blank; five answer choices; marker answer ①-⑤; "
-            "Korean explanation."
-        ),
-        infrastructure="span",
-        likely_incompatibility_patterns=(
-            "Passages with no recoverable proposition that can be reconstructed from context.",
-            "Passages where blanking a span creates multiple defensible answers.",
-            "Passages whose best removable unit is too short and becomes vocabulary-like rather than inferential.",
-            "Passages whose best removable unit is too long or too structurally messy for a clean one-blank format.",
-            "Passages where the answer would be copied too directly from nearby text instead of requiring paraphrase or inference.",
-        ),
-        implementation_risks=(
-            "The shared span-preparation layer now exists, but blank-specific planner calibration for gpt-5-mini is still pending.",
-            "Distractor quality will dominate item usefulness and may require explicit polarity, scope, and logic-aware validation.",
-            "Blank placement must match 수능/내신 expectations rather than arbitrary deletion.",
-            "The planner may drift toward easy lexical deletion unless the prompt anchors it to proposition reconstruction.",
-        ),
-        requires_user_confirmation=(
-            "Confirm when the current gpt-5-mini live baseline is strong enough to resume blank rollout work.",
-        ),
-        notes=(
-            "Current locked next-pass direction: keep the broad key as `fill_in_the_blank`.",
-            "Current locked first format: `blank_inference_proposition_5_choices`.",
-            "Current locked first release scope: strict proposition-level 빈칸추론 only.",
-            "Do not add this family to QUESTION_TYPES during the current stabilization pass.",
-            "Do not force this into the current sentence/gap pipeline.",
-            "Depends on span IDs and span-preserving rendering.",
-            "Useful external guidance: treat the first blank type as missing-proposition reconstruction, not generic word deletion.",
-            "Useful role model: blank targets should usually act as a claim, conclusion, mechanism, contrast, limitation, or similar discourse function.",
-            "Useful evidence standard: support the answer with multiple clues, ideally including evidence before and after the blank.",
-            "Useful choice-quality direction: distractors should often be near-topic but wrong in polarity, scope, relation, or paraphrase accuracy.",
-            "Recommended broad-key policy for now: keep one broad key, `fill_in_the_blank`, and place the first supported subtype in `format_key` rather than splitting into multiple live registry keys immediately.",
-        ),
-    ),
-    PendingQuestionTypeSpec(
-        broad_key="underlined_phrase_meaning",
-        label_ko="밑줄 친 부분 의미",
-        format_key="underlined_phrase_meaning_5_ko",
-        stem_direction_ko=(
-            "Likely first stem: '다음 글의 밑줄 친 부분의 의미로 가장 적절한 것은?' "
-            "Treat this as contextual meaning / 함축 의미 추론 rather than "
-            "literal translation."
-        ),
-        expected_output_shape=(
-            "Original passage with one underlined English phrase; five Korean "
-            "contextual paraphrase choices; marker answer ①-⑤; Korean explanation."
-        ),
-        infrastructure="span",
-        likely_incompatibility_patterns=(
-            "Passages whose best candidate phrase is too literal and becomes a dictionary-definition target.",
-            "Passages whose underlined phrase is not central to the passage claim or argument.",
-            "Passages with multiple acceptable Korean paraphrases and weak one-best-answer pressure.",
-            "Idiomatic or figurative phrases whose interpretation depends mainly on outside knowledge rather than passage evidence.",
-        ),
-        implementation_risks=(
-            "Needs span selection that respects contextual meaning rather than dictionary glossing.",
-            "Korean answer choices need normalization rules to avoid near-duplicate valid answers.",
-            "The planner may drift toward pure vocabulary or idiom-memory questions unless the prompt anchors interpretation to passage-level evidence.",
-            "Future optional CSV-driven target-span input may change the interface, so keep v1 assumptions explicit.",
-        ),
-        requires_user_confirmation=(
-            "Confirm whether the pending family should be renamed from the older phrase_translation draft to underlined_phrase_meaning before implementation begins.",
-            "Confirm whether the first release should always self-select the underlined phrase from the source paragraph.",
-            "Confirm whether the first release should prioritize metaphorical / abstract phrases over simpler evaluative phrases.",
-        ),
-        notes=(
-            "Useful external guidance: this type is a contextual paraphrase task, not a literal translation task.",
-            "Useful target standard: choose a phrase with a recoverable bridge from surface wording to passage-level meaning.",
-            "Useful explanation standard: explain 'surface image -> contextual meaning -> supporting evidence' rather than giving a bare gloss.",
-            "Recommended family rename before implementation: `underlined_phrase_meaning` fits the intended Korean exam task better than `phrase_translation`.",
-            "Span-based but usually simpler than vocab or grammar because only one target is rendered.",
-        ),
-    ),
-    PendingQuestionTypeSpec(
-        broad_key="vocab",
-        label_ko="어휘",
-        format_key="contextual_vocab_error_5",
-        stem_direction_ko=(
-            "Likely first stem: '다음 글의 밑줄 친 부분 중, 문맥상 낱말의 쓰임이 "
-            "적절하지 않은 것은?' Treat the first implementation as a "
-            "contextual lexical-fit task, not a definition task."
-        ),
-        expected_output_shape=(
-            "Original passage with five numbered underlined targets; one "
-            "target deterministically replaced with a grammatically possible "
-            "but contextually wrong word or short phrase; marker answer ①-⑤; "
-            "Korean explanation."
-        ),
-        infrastructure="span",
-        likely_incompatibility_patterns=(
-            "Passages without five clean lexical targets worth underlining.",
-            "Passages where no candidate word is strongly constrained by passage logic.",
-            "Passages where a wrong replacement becomes obviously impossible rather than plausibly testable.",
-            "Passages whose key vocabulary is too technical, culture-bound, or semantically flat for this format.",
-            "Passages where multiple underlined words could plausibly be disputed once one corruption is inserted.",
-        ),
-        implementation_risks=(
-            "Requires multi-span preparation and deterministic replacement rendering.",
-            "Replacement candidates must be plausible enough for exam quality but still clearly wrong in context.",
-            "The planner may drift toward dictionary-difficulty words unless the prompt anchors it to passage-level logic and expected meaning.",
-            "Validation likely needs lexical and grammatical sanity checks beyond current types, including part-of-speech preservation and single-answer uniqueness.",
-        ),
-        requires_user_confirmation=(
-            "Confirm whether the first release should allow short phrases as well as single-word targets.",
-        ),
-        notes=(
-            "Useful external guidance: treat this as contextual lexical-fit, not vocabulary-definition recall.",
-            "Useful first-format direction: one underlined item should be intentionally corrupted while four other underlined items remain contextually appropriate.",
-            "Useful evidence standard: prove the expected meaning from polarity, logic, semantic role, or broader discourse flow rather than from a bare dictionary gloss.",
-            "Recommended broad-key policy for now: keep one broad key, `vocab`, and place the first supported subtype in `format_key` rather than splitting into multiple live registry keys immediately.",
-            "Should come after phrase-level span tooling is stable.",
-        ),
-    ),
-    PendingQuestionTypeSpec(
-        broad_key="grammar",
-        label_ko="어법",
-        format_key="grammar_error_5",
-        stem_direction_ko=(
-            "Likely first stem: '다음 글의 밑줄 친 부분 중, 어법상 틀린 것은?' "
-            "Treat the first implementation as sentence-structure integrity, "
-            "not isolated rule recall."
-        ),
-        expected_output_shape=(
-            "Original passage with five numbered underlined grammar-bearing "
-            "targets; one target replaced with a plausible-looking but "
-            "structurally wrong form; marker answer ①-⑤; Korean explanation."
-        ),
-        infrastructure="span",
-        likely_incompatibility_patterns=(
-            "Passages without five stable grammar targets suitable for underlining.",
-            "Passages where no grammar-bearing structure is constrained clearly enough for one provable corruption.",
-            "Passages where a wrong inflection or construction would sound too obviously broken.",
-            "Passages where multiple grammar points compete and reduce one-best-answer clarity.",
-            "Passages where the corruption would drift into vocabulary meaning change rather than structure error.",
-        ),
-        implementation_risks=(
-            "Most fragile of the current span-based candidates because the error must be subtle, local, and explainable.",
-            "Requires grammar-aware replacement planning, not just surface word substitution.",
-            "Validation will likely need explicit checks for readability, unique correction, and grammar-versus-vocab boundary.",
-            "High risk of accidental semantic distortion or multiple valid corrections.",
-        ),
-        requires_user_confirmation=(
-            "Confirm the preferred first grammar error family, if the release should narrow scope initially.",
-        ),
-        notes=(
-            "Useful external guidance: treat this as sentence-structure integrity, not rule-quiz memorization.",
-            "Useful first-format direction: introduce one controlled structural corruption while four other underlined grammar-bearing parts remain valid.",
-            "Useful target families for the first pass include subject-verb agreement, finite versus nonfinite form, participle/voice relation, relative-clause structure, noun-clause introducers, parallel structure, and conjunction-versus-preposition contrasts.",
-            "Useful evidence standard: explanations should point to the true subject, clause role, modifier boundary, antecedent, or other structural cue rather than only naming a grammar rule.",
-            "Recommended broad-key policy for now: keep one broad key, `grammar`, and place the first supported subtype in `format_key` rather than splitting into multiple live registry keys immediately.",
-            "Likely the last of the currently discussed candidates to implement.",
-        ),
-    ),
-)
-
-
-LIVE_TYPE_REFINEMENTS: tuple[PendingQuestionTypeSpec, ...] = (
-    PendingQuestionTypeSpec(
-        broad_key="mood_atmosphere",
-        label_ko="심경·분위기",
-        format_key="emotion_shift_pair_choice_5",
-        stem_direction_ko=(
-            "Keep the broad family key, but if the family is reactivated later, make the first rollout "
-            "subtype-specific: use an emotion-shift stem rather than a generic "
-            "심경·분위기 stem."
-        ),
-        expected_output_shape=(
-            "Current dormant draft shape for a future v1: original passage preserved unchanged, "
-            "five English emotion-shift pair choices, marker answer ①-⑤, and "
-            "teacher-facing Korean explanation."
-        ),
-        infrastructure="passage",
-        likely_incompatibility_patterns=(
-            "Informational or expository passages with no stable affective cues.",
-            "Passages with no single clear feeling-holder.",
-            "Passages that contain affective language but no real initial-to-final emotional change.",
-        ),
-        implementation_risks=(
-            "Planner may still force emotion labels onto weakly affective passages unless incompatibility gating stays strict.",
-            "Choice sets can collapse into near-synonym pairs unless prompt and validation keep direction and endpoint distinctions sharp.",
-            "Exported explanations can become generic unless they cite concrete initial/final evidence and the turning point.",
-            "Current ROI is weak relative to the other live-family hardening work, so reactivation should stay deferred until that backlog settles.",
-        ),
-        notes=(
-            "Current product policy: the implementation stays in the repo but the family stays out of the live default registry for now.",
-            "Chosen first-reactivation policy: broad key stays `mood_atmosphere`, and the first returned subtype should still be only `emotion_shift`.",
-            "Chosen draft choice policy: use English adjective-pair choices such as `anxious -> relieved`.",
-            "Chosen target policy: allow writer/narrator or one clearly identifiable character, but reject passages with ambiguous holders.",
-            "Deferred subtypes: `atmosphere` and `emotion_state` stay out of the live registry until v1 suitability and explanation quality are stable.",
-        ),
-    ),
-    PendingQuestionTypeSpec(
+PLANNING_FAMILIES: tuple[PlanningFamilySpec, ...] = (
+    PlanningFamilySpec(
         broad_key="sentence_insertion",
+        status="live_refinement",
         label_ko="문장 삽입",
-        format_key="sentence_insertion_5_gaps",
-        stem_direction_ko=(
-            "Keep the current Korean stem, but move explanation quality away "
-            "from generic '흐름상 자연스럽다' phrasing and toward explicit "
-            "left-context plus right-context evidence."
-        ),
-        expected_output_shape=(
-            "Current rendered shape remains valid: removed target sentence as "
-            "given sentence, five marker positions, marker answer ①-⑤, Korean "
-            "explanation."
-        ),
+        format_or_scope="sentence_insertion_5_gaps",
         infrastructure="sentence",
+        current_role="Live family; ongoing quality hardening and observability target.",
         likely_incompatibility_patterns=(
             "Target candidate has only one-sided linkage and does not create a recoverable coherence gap.",
             "Target candidate is first or last in the source order and lacks one side of anchoring evidence.",
-            "Target candidate is mostly a connector cue with weak lexical or referential support.",
+            "Target candidate is mostly a connector cue with weak lexical, referential, or discourse support.",
         ),
-        implementation_risks=(
-            "Current planner may overvalue local connector cues instead of two-sided coherence repair evidence.",
-            "Current explanations may leak engine mechanics such as gap IDs instead of teacher-facing textual reasoning.",
-            "If future quality gates become too strict too early, valid but simpler sentence-insertion items may be over-rejected.",
+        quality_risks=(
+            "Planner may still overvalue local connector cues instead of two-sided coherence repair evidence.",
+            "Accepted explanations can still sound templated even after internal-ID cleanup.",
+            "Future candidate-design layering should not start before planner observability and timeout hardening land.",
         ),
         notes=(
-            "Useful external guidance: treat sentence insertion as a coherence-repair task, not a connector-matching task.",
-            "Useful next-step heuristic: require at least one left anchor and one right anchor when selecting strong target sentences.",
-            "Useful explanation standard: cite concrete phrases or discourse links on both sides of the insertion point.",
-            "Useful low-quality signal: connector-only evidence without stronger referential, lexical, or discourse support.",
-            "Not yet adopted as schema truth: full evidence object taxonomies, difficulty scoring, or mandatory wrong-gap notes for every distractor.",
+            "Treat the family as coherence repair rather than connector matching.",
+            "Prefer target sentences with evidence on both the left and right sides.",
+            "When the shared design layer is revisited later, sentence_insertion is a likely early adopter after vocab.",
         ),
     ),
-    PendingQuestionTypeSpec(
+    PlanningFamilySpec(
         broad_key="paragraph_ordering",
+        status="live_refinement",
         label_ko="글의 순서",
-        format_key="abc_ordering_after_intro",
-        stem_direction_ko=(
-            "Keep the current Korean stem, but improve explanation quality so "
-            "it explains why the intro leads into the first block and why each "
-            "subsequent block follows through adjacency evidence."
-        ),
-        expected_output_shape=(
-            "Current rendered shape remains valid: fixed intro, three shuffled "
-            "continuation blocks labeled (A)(B)(C), five ordering choices, "
-            "marker answer ①-⑤, Korean explanation."
-        ),
+        format_or_scope="abc_ordering_after_intro",
         infrastructure="block",
+        current_role="Live family; strongest current hardening target among the older live families.",
         likely_incompatibility_patterns=(
             "Passage can be partitioned into blocks, but the first continuation block is not clearly recoverable after the intro.",
             "Blocks behave like parallel examples or independently movable summaries, so more than one order feels acceptable.",
             "Ordering depends mostly on a single connector cue with weak referential or lexical support across edges.",
         ),
-        implementation_risks=(
-            "Current planner may overaccept mechanically contiguous block splits that are structurally legal but weak as exam items.",
-            "Current explanations may summarize the original order without showing why each adjacency link is forced.",
-            "If future quality gates demand too much explicit evidence too soon, simpler but valid ordering items may be rejected.",
+        quality_risks=(
+            "Planner may still overaccept mechanically contiguous block splits that are structurally legal but weak as exam items.",
+            "Accepted explanations may summarize the passage instead of proving each adjacency edge.",
+            "Without better planner logs, long or repeated planning attempts are hard to diagnose from the UI spinner alone.",
         ),
         notes=(
-            "Useful external guidance: treat ordering as adjacency reconstruction rather than generic topic matching.",
-            "Useful next-step heuristic: require a clear intro-to-first-block link plus evidence for each correct block-to-block edge.",
-            "Useful low-quality signal: chunk sets that look like parallel examples or interchangeable subpoints.",
-            "Useful explanation standard: explain the order edge by edge instead of only restating that the whole sequence is natural.",
-            "Useful rendering direction to consider later: choose wrong options more diagnostically rather than omitting one permutation arbitrarily.",
-            "Not yet adopted as schema truth: structured adjacency-evidence objects, per-wrong-order notes, difficulty scoring, or a separate live sentence_ordering registry key.",
+            "Treat the family as adjacency reconstruction rather than topic matching.",
+            "Weak-adjacency passages should fail earlier as qtype_incompatibility_error rather than reach late planning_error.",
+            "When the shared design layer is revisited later, paragraph_ordering is a likely early adopter after vocab.",
+        ),
+    ),
+    PlanningFamilySpec(
+        broad_key="underlined_phrase_meaning",
+        status="live_refinement",
+        label_ko="밑줄 친 부분 의미",
+        format_or_scope="underlined_phrase_meaning_5_ko",
+        infrastructure="span",
+        current_role="Live reference single-span family; no longer a pending registry candidate.",
+        likely_incompatibility_patterns=(
+            "Best candidate phrase is too literal and becomes a dictionary-definition target.",
+            "Selected phrase is not central enough to the passage claim or argument.",
+            "More than one Korean paraphrase remains defensible after rendering.",
+        ),
+        quality_risks=(
+            "Korean distractors may still drift toward near-duplicates.",
+            "Span-centrality heuristics can still admit weakly claim-bearing phrases on mixed batches.",
+            "Future CSV-driven target selection, if added later, would need a separate contract update.",
+        ),
+        notes=(
+            "Treat the family as contextual paraphrase, not literal translation.",
+            "Use it as the stable single-span reference point when evaluating later blank or multi-span work.",
+        ),
+    ),
+    PlanningFamilySpec(
+        broad_key="fill_in_the_blank",
+        status="live_refinement",
+        label_ko="빈칸",
+        format_or_scope=(
+            "blank_inference_proposition_5_choices, "
+            "blank_connective_relation_5_choices, "
+            "blank_summary_completion_5_choices"
+        ),
+        infrastructure="span",
+        current_role="Live family; harden subtype quality rather than reopen registry shape.",
+        likely_incompatibility_patterns=(
+            "No recoverable proposition-like or relation-bearing span can be blanked cleanly.",
+            "Blanking the selected span leaves multiple defensible completions.",
+            "The best removable unit collapses into easy lexical deletion instead of real inference.",
+        ),
+        quality_risks=(
+            "Distractor quality dominates usefulness and may still be too local or too obvious.",
+            "Planner may drift toward source restoration or vocabulary-style deletion unless subtype prompts stay sharp.",
+            "Explanation phrasing can still regress into awkward memo-style Korean if not cleaned deterministically.",
+        ),
+        notes=(
+            "Keep the broad key as fill_in_the_blank and keep subtype behavior in format/subtype metadata.",
+            "Treat the family as proposition or relation reconstruction, not generic deletion.",
+        ),
+    ),
+    PlanningFamilySpec(
+        broad_key="vocab",
+        status="live_refinement",
+        label_ko="어휘",
+        format_or_scope=(
+            "contextual_vocab_choice_5; contextual_vocab_best_paraphrase_choice_5; "
+            "contextual_vocab_phrase_choice_5; contextual_vocab_correct_among_4_corrupted_5; "
+            "contextual_vocab_error_1_among_5_5; contextual_vocab_error_1_among_5_polarity_scope_5; "
+            "contextual_vocab_error_1_among_5_collocation_5; contextual_vocab_correct_among_3_corrupted_5"
+        ),
+        infrastructure="multi_span",
+        current_role="Live multi-subtype family and first planned adopter of any future shared design stage.",
+        likely_incompatibility_patterns=(
+            "Too few clean lexical-slot candidates exist for the requested subtype shape.",
+            "The passage does not constrain the target strongly enough to force one best contextual answer.",
+            "Hard underlined variants leave more than one plausible survivor or accept wrong corruption classes.",
+        ),
+        quality_risks=(
+            "Blank-choice targets can still be too local or too easy.",
+            "Best-paraphrase and correct-among-3-corrupted remain the highest ambiguity-risk branches.",
+            "Hard-family rows need continued exam-naturalness review even after the schema rescue.",
+        ),
+        notes=(
+            "Boundary policy: keep meaning, direction, scope, pragmatic force, and best-fit replacement tasks under vocab by default.",
+            "Preserve the useful ResponseFeedbackDump lessons that still survive: semantic pressure-point targeting, directional or pragmatic targeting, changed-from-source-but-still-correct design, stem-task alignment, and a future internal design-stage artifact.",
+            "Reject stale subtype-pruning claims that were driven by the old hard-vocab schema failure.",
+        ),
+    ),
+    PlanningFamilySpec(
+        broad_key="grammar",
+        status="live_refinement",
+        label_ko="어법",
+        format_or_scope=(
+            "grammar_error_verb_form_5; grammar_error_subject_verb_agreement_5; "
+            "grammar_error_finite_nonfinite_5; grammar_error_participle_voice_5; "
+            "grammar_error_relative_clause_5; grammar_error_noun_clause_introducer_5; "
+            "grammar_error_parallel_structure_5; grammar_error_conjunction_preposition_5"
+        ),
+        infrastructure="multi_span",
+        current_role="Live multi-subtype family with strict structural-signal ownership.",
+        likely_incompatibility_patterns=(
+            "Too few clean grammar-bearing targets exist for a five-target item.",
+            "No single corruption is provable from local structural cues without creating multiple valid corrections.",
+            "The apparent error drifts into meaning-direction or vocabulary judgment instead of structure error.",
+        ),
+        quality_risks=(
+            "Structural corruptions can become too obvious or too semantically disruptive.",
+            "Teacher-facing explanations must stay structural rather than devolving into label-only rule naming.",
+            "Boundary drift from grammar into vocab remains a recurring design risk for function-word cases.",
+        ),
+        notes=(
+            "Boundary policy: keep grammar focused on local structural and form error detection.",
+            "Do not pull modal force, negation scope, causal direction, or pragmatic function-word meaning traps into grammar merely because a function word is involved.",
+        ),
+    ),
+    PlanningFamilySpec(
+        broad_key="mood_atmosphere",
+        status="dormant",
+        label_ko="심경·분위기",
+        format_or_scope="emotion_shift_pair_choice_5; emotion_state_choice_5; atmosphere_choice_5",
+        infrastructure="passage",
+        current_role="Implemented but intentionally dormant outside the live registry.",
+        likely_incompatibility_patterns=(
+            "Informational or expository passages with no stable affective cues.",
+            "Passages with no single clear feeling-holder.",
+            "Passages that contain affective language but no real initial-to-final emotional change.",
+        ),
+        quality_risks=(
+            "Choice sets can collapse into near-synonym pairs unless direction and endpoint distinctions stay sharp.",
+            "Exported explanations can become generic unless they cite concrete initial and final evidence plus the turning point.",
+            "Reactivation now would reopen a broad suitability and explanation-quality problem with weaker ROI than current live-family hardening.",
+        ),
+        notes=(
+            "Keep the implementation code in the repo but keep the family out of QUESTION_TYPES and launcher-derived defaults.",
+            "If reactivated later, start from emotion_shift before returning to emotion_state or atmosphere.",
+        ),
+        requires_user_confirmation=(
+            "Revisit this family only after the active families are materially hardened and the user explicitly confirms a return.",
         ),
     ),
 )

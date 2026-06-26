@@ -72,6 +72,13 @@ Current-code re-audit on `2026-06-25` of the same `34` checked-in `vocab` source
 - it assumes only a subset of `vocab` subtypes were active in the review artifact
 - it interprets the old hard-family `400` schema failures as subtype weakness rather than as a now-fixed schema-contract problem
 
+How to treat that dump now:
+
+- useful as pedagogical and prioritization evidence
+- not current subtype-quality truth by itself
+- not current export-schema truth
+- not current runtime-contract truth
+
 Repo-truth takeaways that still survive from that dump:
 
 - `contextual_vocab_choice_5` is the strongest currently demonstrated branch
@@ -79,6 +86,20 @@ Repo-truth takeaways that still survive from that dump:
 - `contextual_vocab_correct_among_3_corrupted_5` is still the most ambiguity-prone subtype and should receive extra scrutiny before it earns long-term confidence
 - blank-choice target quality still needs pressure against too-local or too-easy targets
 - `best_paraphrase` and `correct_among_3_corrupted` remain the biggest ambiguity-risk branches inside the current live `vocab` set
+
+Specific ideas worth preserving from the dump:
+
+- semantic pressure-point target selection
+- directional or pragmatic target selection
+- "changed from source but still correct" as a valid design mode
+- stem and task alignment
+- the idea of a future internal design-stage artifact for `vocab`
+
+Conclusions to reject as current repo truth:
+
+- stale subtype-pruning advice drawn from pre-fix artifacts
+- current-runtime judgments inferred from the old hard-vocab schema failures
+- any claim that the old checked-in artifacts alone define the present subtype contract
 
 ## `paragraph_ordering` Review
 

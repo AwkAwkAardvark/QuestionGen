@@ -13,7 +13,7 @@ The launcher is responsible for runtime setup only. Reusable generation logic st
 - `notebooks/runner_ui.ipynb` does not run direct batch-generation cells before launching Gradio.
 - `notebooks/runner_debug.ipynb` is the batch/debug notebook.
 - `notebooks/runner_debug.ipynb` keeps direct `run_batch_files(...)`, output preview, and artifact inspection in notebook cells, with Gradio available only as an optional debugging add-on.
-- `notebooks/runner.ipynb` and `notebooks/runner_pending.ipynb` remain in the repo for archival reference only until a later cleanup pass removes them with explicit confirmation.
+- `notebooks/legacy/runner.ipynb` and `notebooks/legacy/runner_pending.ipynb` remain in the repo for archival reference only until a later cleanup pass removes them with explicit confirmation.
 - Archival notebooks are not part of the active compatibility contract and may lag behind current launcher rules or UI behavior.
 - Upload-vs-Drive-path selection belongs inside the Gradio UI, not in notebook-specific UI logic.
 
@@ -147,6 +147,10 @@ Notes:
 - Gradio's progress bar is the primary live progress surface.
 - The summary panel should stay compact and focus on progress, the current item, and the latest notable event.
 - The run log should be lower-volume: keep start/completion, errors, and notable incompatibility or planning failures, but do not mirror every routine successful subtype completion.
+- Current limitation to document explicitly: the existing spinner/progress surface can appear stuck on one running item without showing whether the delay is in planning, retry, rendering, or validation.
+- Before the deferred shared-design-layer refactor, launcher-visible hardening should add an opt-in verbose mode that emits planner-stage lifecycle logs with subtype-aware context to notebook output and Gradio server stdout.
+- That verbose mode should log planner attempt start, finish, retry, notable elapsed time, and timeout so a single long planner call is diagnosable outside the UI spinner alone.
+- Planner timeouts should surface as readable exported `planning_error` rows rather than as silent stalls.
 
 ## Deferred Batch Modes
 
@@ -218,7 +222,7 @@ The current Colab surface is intentionally split:
 2. `runner_debug.ipynb`
 3. archival notebooks kept only for reference
 
-Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility surfaces. `runner.ipynb` and `runner_pending.ipynb` may still be useful as historical reference, but they should not be used as acceptance targets for current launcher or UI behavior.
+Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility surfaces. `notebooks/legacy/runner.ipynb` and `notebooks/legacy/runner_pending.ipynb` may still be useful as historical reference, but they should not be used as acceptance targets for current launcher or UI behavior.
 
 `runner_ui.ipynb` should be limited to these steps:
 

@@ -17,6 +17,10 @@
 - [x] Keep the current batch execution path synchronous and serial; defer async or concurrent orchestration as a later performance-only track.
 - [x] Keep broad family keys as the launcher/UI selection surface while expanding execution into concrete subtype rows underneath each family.
 - [x] Preserve subtype metadata in runtime state and exports through `QuestionFormatKey`, `QuestionSubtypeKey`, and `QuestionSubtype`.
+- [x] Default future meaning/pragmatics boundary cases to `vocab`, while keeping `grammar` focused on local structural or form error detection.
+- [x] Treat checked-in review artifacts and `ResponseFeedbackDump` as quality/prioritization evidence rather than as export-schema or runtime-contract truth.
+- [x] Review relevant durable docs before each commit, and update matching docs in the same work cycle whenever runtime behavior changes.
+- [x] If the worktree is in a shippable state, finish the same work cycle with a reviewed commit and push rather than leaving durable doc or policy changes unpushed.
 
 ## Wave 1: Backend Foundation
 
@@ -61,7 +65,7 @@
 - [x] Construct the structured LLM-backed runner from the notebook layer.
 - [x] Launch the primary staff notebook directly into Gradio without pre-running batch-generation cells.
 - [x] Keep direct batch generation, preview, and artifact inspection in the separate debug notebook.
-- [x] Keep `runner.ipynb` and `runner_pending.ipynb` as archival notebooks until a later confirmed removal pass.
+- [x] Keep `notebooks/legacy/runner.ipynb` and `notebooks/legacy/runner_pending.ipynb` as archival notebooks until a later confirmed removal pass.
 
 ### Separation guarantees
 
@@ -234,6 +238,30 @@
     - `atmosphere_choice_5`
   - dormant policy: keep the implementation code in the repo, but keep `QUESTION_TYPES` and launcher/UI defaults focused on the other live families until their quality work stabilizes
   - reactivation policy: revisit this family only after the active families are hardened further and the user explicitly confirms that the affective family is worth reactivating
+
+## Deferred `v0.2.0` Work: Observability Before Shared Design Layer
+
+### Planner observability and timeout hardening first
+
+- [ ] Add verbose planner-stage lifecycle logging before any shared graph refactor.
+- [ ] Log planner attempt start, finish, retry, and elapsed time with subtype-aware context so a single stuck row is traceable in Colab and Gradio server logs.
+- [ ] Add planner-call timeout policy that surfaces readable exported `planning_error` rows instead of opaque hangs.
+- [ ] Document clearly that the current spinner/progress surfaces are not sufficient to diagnose a single long or stuck planner call.
+- [ ] Keep timeout failures as explicit exported errors rather than silent stalls or hidden retries.
+
+### Shared intermediate design layer remains deferred
+
+- [ ] Treat the future shared design layer as a `v0.2.0`-scale architectural change, not part of the current hardening pass.
+- [ ] Use the future shared graph shape:
+  - `prepare -> source gate -> design/candidate stage -> final planner -> deterministic plan check -> render -> explanation -> final validate`
+- [ ] Treat that design stage as a reusable family pattern rather than as a `vocab`-only special case.
+- [ ] First adopter when implementation starts: `vocab`.
+- [ ] First follow-on adopters after the pattern exists: `sentence_insertion` and `paragraph_ordering`.
+- [ ] Expect participating families to need new design-stage prompt surfaces plus slimmer revised final-planner prompts.
+- [ ] Start the eventual refactor only on a fresh branch cut from clean `main`, not from a dirty notebook-oriented worktree baseline.
+- [ ] Default subagent role during design or prep work: read-only helper for analysis and planning artifacts, not runtime integration.
+- [ ] If a subagent receives write scope during planning or prep, keep that scope limited to planning artifacts such as `question_types_pending.py`, `docs/question_types_pending.md`, and matching durable docs.
+- [ ] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
 
 ## Acceptance Checklist
 

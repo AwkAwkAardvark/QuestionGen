@@ -35,6 +35,19 @@ Current product direction:
 - `gpt-5-mini` is the single default model for the current MVP
 - per-type model-tier routing is intentionally deferred until after live-pipeline stabilization
 
+Current planning-file role:
+
+- `question_types_pending.py` is a planning artifact, not a runtime registry input
+- it should mirror this doc's live-state assumptions, boundary policy, and deferred-architecture stance rather than preserving stale rollout history
+- keep it aligned with this doc whenever live-family status or planning direction changes
+
+Current subagent role for planning work:
+
+- default subagent role is read-only analysis and planning support
+- subagents may draft planning artifacts and durable docs only when the lead agent gives that scope explicitly
+- subagents should not edit `src/questiongen/`, tests, launcher notebooks, or `QUESTION_TYPES` by default during planning/prep work
+- lead agent remains responsible for final integration, doc drift review, commit review, and push hygiene
+
 Because the launcher runs every registered type by default, `mood_atmosphere` stays intentionally outside the live registry for ROI reasons. The remaining sections below are retained mainly as planning history and subtype notes rather than as a live-status checklist.
 
 Latest gating lessons from sample review:
@@ -63,6 +76,31 @@ Latest gating lessons from sample review:
   - treat the hard underlined `vocab` family as the next highest-value runtime-quality surface now that it is no longer blocked by schema failure
   - review `contextual_vocab_best_paraphrase_choice_5` and especially `contextual_vocab_correct_among_3_corrupted_5` as ambiguity-risk branches rather than as automatically safe extensions of the baseline choice subtype
 - model-tier specialization is a later optimization problem, not part of the current MVP hardening pass
+
+## `vocab` vs `grammar` Boundary Policy
+
+Durable ownership rule:
+
+- `vocab` owns subtypes where the student's main task is contextual meaning, semantic direction, pragmatic force, or best-fit replacement judgment.
+- `grammar` owns subtypes where the student's main task is local structural or form error detection.
+
+Default future boundary-case ownership:
+
+- keep modal-force contrasts such as `must`, `must not`, `don't have to`, `should`, and `may` under `vocab` when the task is about contextual force rather than formal licensing
+- keep negation, scope, and degree contrasts under `vocab` when the point is semantic direction
+- keep causal or logical direction contrasts under `vocab`
+- keep function-word meaning traps such as `like/as`, `if/unless`, and `although/even if` under `vocab` when the question is about contextual force rather than clause form
+
+Keep these families under `grammar`:
+
+- verb-form and inflection errors
+- subject-verb agreement
+- finite versus nonfinite choice
+- participle and voice control
+- relative clause form
+- noun-clause introducer form
+- parallel structure
+- conjunction or preposition governance when the failure is mainly structural
 
 ## Recommended Order
 
@@ -290,6 +328,36 @@ The remaining workflow should be treated as:
 
 This is safer than thinking in terms of question-type names alone because the next real architectural boundary is no longer basic span preparation itself, but how far the live span contract can be pushed without breaking mixed-batch quality.
 
+## Deferred Shared Design Layer
+
+Current planning stance:
+
+- do not implement the shared intermediate design layer in the current pass
+- treat planner observability and timeout hardening as the prerequisite task before that refactor
+- treat the architecture shift as a future `v0.2.0`-scale change rather than as incremental cleanup
+
+Planned reusable graph shape:
+
+- `prepare -> source gate -> design/candidate stage -> final planner -> deterministic plan check -> render -> explanation -> final validate`
+
+Reuse direction once that pattern exists:
+
+- first adopter: `vocab`
+- first follow-on adopters: `sentence_insertion` and `paragraph_ordering`
+
+Prompt implications to keep explicit:
+
+- the current subtype prompts are not enough for the future shared design layer
+- participating families will need new design-stage prompt surfaces
+- those same families will usually also need slimmer revised final-planner prompts
+- this prompt split is part of the architectural cost, not incidental cleanup
+
+Subagent role when this design work starts later:
+
+- keep subagents read-only by default while they prepare target ideas, candidate-veto heuristics, and prompt-split drafts
+- allow planning-artifact edits only if the lead agent explicitly scopes that write access
+- keep final runtime-code edits, integration sequencing, and commit/push ownership with the lead agent
+
 ## Live Type Refinement Notes
 
 The same planning area can also store refinement guidance for already live types, as long as it stays outside the runtime registry.
@@ -491,6 +559,13 @@ Current recommendation:
 - Keep the broad key `vocab` for now.
 - Keep the live subtype fan-out under that broad key instead of splitting registry keys.
 - Use future vocab work to sharpen subtype semantics and quality gates rather than reopening the broad-family contract.
+- When future subtypes sit on the `vocab`/`grammar` boundary, default them to `vocab` unless the core task is local structural error detection.
+- Preserve the design lessons from `ResponseFeedbackDump` that still survive current runtime changes:
+  - semantic pressure-point target selection
+  - directional or pragmatic target selection
+  - "changed from source but still correct" as a valid design mode
+  - stem and task alignment
+  - the idea of a future internal design-stage artifact for `vocab`
 
 ### `grammar`
 
@@ -523,3 +598,4 @@ Current recommendation:
 - Keep the broad key `grammar` for now.
 - Treat the first implementation as `grammar_error`, encoded through `format_key` rather than a separate live registry key.
 - Keep the live runtime scoped to verb-form corruption for now, and defer preposition/conjunction-role confusion until a later dedicated expansion pass.
+- Do not pull boundary-case semantic-force or meaning-direction tasks into `grammar` merely because a function word is involved.
