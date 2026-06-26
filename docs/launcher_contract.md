@@ -80,7 +80,7 @@ Launcher responsibilities:
   - `RESET_REPO`
   - `RUN_REPO_TESTS`
 - validate the selected branch against that allowlist before clone or refresh
-- bootstrap third-party dependencies only when explicitly requested
+- bootstrap third-party dependencies when explicitly requested, and auto-bootstrap missing runtime packages on a clean kernel before the first `questiongen` import when safe
 - clone or refresh the selected allowlisted pushed repo branch
 - prepend `REPO_DIR / "src"` to `sys.path` and invalidate import caches after clone or reuse
 - probe raw runtime modules such as `langchain_openai` and `gradio` before any `questiongen` import needed for batch or UI launch
@@ -176,8 +176,8 @@ Supported controls:
 
 Rules:
 
-- `BOOTSTRAP_ENV=True` installs third-party dependencies only. It should not be the normal rerun path.
-- When `BOOTSTRAP_ENV=True`, the setup cell should stop after dependency bootstrap and tell the user to set `BOOTSTRAP_ENV=False` before repo refresh, batch execution, or Gradio launch.
+- `BOOTSTRAP_ENV=True` forces a third-party dependency reinstall. It should not be the normal rerun path.
+- On a clean kernel with `BOOTSTRAP_ENV=False`, the maintained notebooks may auto-install missing runtime packages before repo-backed `questiongen` execution starts.
 - The normal rerun path should skip both third-party bootstrap and package reinstall.
 - Repo code should be loaded from `REPO_DIR / "src"` on `sys.path`, not by routine editable installs.
 - Missing runtime modules should be checked before importing `questiongen` itself, so a first-run dependency failure does not leave a partially imported package tree in the kernel.
@@ -289,7 +289,7 @@ Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility sur
 2. Load secrets from `api_key.txt`.
 3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to stable `main`, default `REPO_BRANCH` to `main`, and default `BOOTSTRAP_ENV` plus `RESET_REPO` to `False`.
 4. Bootstrap third-party dependencies only when requested.
-5. If `BOOTSTRAP_ENV=True`, stop after dependency install with a rerun message so the next pass can prepare repo source in a clean post-install kernel state.
+5. Auto-install missing runtime packages on a clean kernel when needed, or force reinstall when `BOOTSTRAP_ENV=True`.
 6. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
 7. Load repo code from `REPO_DIR / "src"` and apply the import guard.
 8. Launch `questiongen.ui.gradio_app.create_app()` immediately.
@@ -300,7 +300,7 @@ Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility sur
 2. Load secrets from `api_key.txt`.
 3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to stable `main`, default `REPO_BRANCH` to `main`, and default `BOOTSTRAP_ENV`, `RESET_REPO`, and `RUN_REPO_TESTS` to `False`.
 4. Bootstrap third-party dependencies only when requested.
-5. If `BOOTSTRAP_ENV=True`, stop after dependency install with a rerun message so the next pass can prepare repo source in a clean post-install kernel state.
+5. Auto-install missing runtime packages for batch execution on a clean kernel when needed, or force reinstall when `BOOTSTRAP_ENV=True`.
 6. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
 7. Load repo code from `REPO_DIR / "src"` and apply the import guard.
 8. Run fresh-subprocess repo tests when branch validation is needed.
