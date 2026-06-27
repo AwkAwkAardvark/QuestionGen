@@ -37,9 +37,8 @@ from .schemas import (
 )
 from .targeting import (
     allowed_verb_form_variants,
-    fill_blank_connective_inventory,
-    fill_blank_summary_inventory,
-    fill_blank_target_inventory,
+    fill_blank_design_target,
+    fill_blank_inventory_for_subtype,
     grammar_subtype_inventory,
     vocab_hard_bundle,
     underlined_phrase_inventory,
@@ -350,15 +349,20 @@ def build_fill_in_the_blank_design(
     prepared_source: PreparedSource,
     type_spec: QuestionTypeSpec,
 ) -> QuestionDesign:
-    if type_spec.subtype_key == "blank_connective_relation_5_choices":
-        inventory = fill_blank_connective_inventory(prepared_source)
-    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
-        inventory = fill_blank_summary_inventory(prepared_source)
-    else:
-        inventory = fill_blank_target_inventory(prepared_source)
-    if not inventory:
+    inventory = fill_blank_inventory_for_subtype(prepared_source, type_spec.subtype_key)
+    span = fill_blank_design_target(prepared_source, type_spec.subtype_key)
+    if span is None:
         raise ValueError(f"Passage has no suitable contextual span for {type_spec.subtype_key}.")
-    span = inventory[0]
+    rank = next((index for index, candidate in enumerate(inventory, start=1) if candidate.id == span.id), 1)
+    if type_spec.subtype_key == "blank_connective_relation_5_choices":
+        inference_test = "Recover the discourse relation, not a copied local phrase."
+        anti_restoration_rule = "If the only viable answer is verbatim restoration, fail this subtype."
+    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
+        inference_test = "Recover the passage-level takeaway in non-identical wording."
+        anti_restoration_rule = "Prefer a distinct summary target over reusing the proposition blank span."
+    else:
+        inference_test = "Recover the passage-level claim or effect in non-identical wording."
+        anti_restoration_rule = "The correct answer must be contextual completion, not source restoration."
     return FillInTheBlankDesign(
         family_key=type_spec.renderer_key,
         subtype_key=type_spec.subtype_key,
@@ -370,11 +374,13 @@ def build_fill_in_the_blank_design(
             "selected_span_id": span.id,
             "selected_span_text": span.text,
             "selected_span_line": (
-                f"- rank 1: {span.id}; score={span.priority_score}; text={span.text!r}; "
+                f"- rank {rank}: {span.id}; score={span.priority_score}; text={span.text!r}; "
                 f"tags={','.join(span.heuristic_tags) or 'none'}; context={_span_context(span)}"
             ),
             "support_context": _span_context(span),
             "tags": ", ".join(span.heuristic_tags) or "none",
+            "inference_test": inference_test,
+            "anti_restoration_rule": anti_restoration_rule,
         },
     )
 

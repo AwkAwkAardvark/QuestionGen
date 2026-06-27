@@ -322,20 +322,57 @@ class _FillInTheBlankPlanner:
         match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
         span_id = match.group(1) if match else "P0"
         span_text = match.group(2) if match else "improve safety without raising its energy budget"
+        subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
+        active_subtype = subtype_match.group(1) if subtype_match else "blank_inference_proposition_5_choices"
+        if active_subtype == "blank_connective_relation_5_choices":
+            return FillInTheBlankPlan(
+                subtype="connective_relation",
+                selected_span_id=span_id,
+                selected_span_text=span_text,
+                completion_choices=[
+                    "as a result",
+                    "for example",
+                    "in contrast",
+                    "even so",
+                    "meanwhile",
+                ],
+                correct_choice="as a result",
+                contextual_meaning_ko="이 빈칸은 앞선 원인에서 뒤의 결과로 이어지는 관계를 복원해야 합니다",
+                supporting_evidence="Because the lights use less electricity",
+                explanation="문맥상 앞선 원인에서 뒤의 결과로 이어지는 관계가 복원되어야 합니다.",
+            )
+        if active_subtype == "blank_summary_completion_5_choices":
+            return FillInTheBlankPlan(
+                subtype="summary_completion",
+                selected_span_id=span_id,
+                selected_span_text=span_text,
+                completion_choices=[
+                    "opportunity must be shared widely to preserve social peace",
+                    "economic rewards should remain concentrated in a few hands",
+                    "public distrust naturally strengthens every reform effort",
+                    "innovation matters more than any concern about inequality",
+                    "social peace depends on reducing every form of ambition",
+                ],
+                correct_choice="opportunity must be shared widely to preserve social peace",
+                contextual_meaning_ko="이 빈칸은 글의 최종 교훈을 압축해 완성해야 합니다",
+                supporting_evidence="The lesson is",
+                explanation="문맥상 글의 최종 교훈을 압축해 완성해야 합니다.",
+            )
         return FillInTheBlankPlan(
+            subtype="proposition_inference",
             selected_span_id=span_id,
             selected_span_text=span_text,
             completion_choices=[
-                span_text,
-                "more confusion among the residents",
-                "a weaker plan for nearby roads",
-                "fewer reasons to expand the system",
-                "higher costs for the city budget",
+                "improve safety while keeping the energy budget unchanged",
+                "create more confusion among the residents",
+                "slow the expansion of nearby neighborhoods",
+                "raise costs without improving crosswalk visibility",
+                "reduce safety to cut the energy budget",
             ],
-            correct_choice=span_text,
-            contextual_meaning_ko="원문의 핵심 설명이 그대로 복원되어야 한다는 의미",
-            supporting_evidence=span_text,
-            explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
+            correct_choice="improve safety while keeping the energy budget unchanged",
+            contextual_meaning_ko="이 빈칸은 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과를 복원해야 합니다",
+            supporting_evidence="Because the lights use less electricity",
+            explanation="문맥상 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과가 복원되어야 합니다.",
         )
 
 
@@ -657,6 +694,59 @@ class PlannerTests(unittest.TestCase):
         result = build_design(state, QUESTION_SUBTYPE_SPECS["blank_connective_relation_5_choices"])
         self.assertEqual(result["status"], "qtype_incompatibility_error")
         self.assertTrue(result["errors"])
+
+    def test_fill_in_the_blank_design_diversifies_or_rejects_weaker_subtypes(self) -> None:
+        source = (
+            "People often remember the rewards of economic competition and the innovation it can inspire. "
+            "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
+            "Workers who felt excluded from the benefits became less willing to trust public institutions. "
+            "As this distrust spread, even reforms that might have helped were greeted with suspicion. "
+            "The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace."
+        )
+        prepared = prepare_source(source)
+        proposition_result = build_design(
+            {
+                **self.state,
+                "source_paragraph": source,
+                "QuestionTypeKey": "fill_in_the_blank",
+                "QuestionSubtypeKey": "blank_inference_proposition_5_choices",
+                "QuestionFormatKey": "blank_inference_proposition_5_choices",
+                "prepared_source": prepared,
+                "design": None,
+            },
+            QUESTION_TYPES["fill_in_the_blank"],
+        )
+        summary_result = build_design(
+            {
+                **self.state,
+                "source_paragraph": source,
+                "QuestionTypeKey": "fill_in_the_blank",
+                "QuestionSubtypeKey": "blank_summary_completion_5_choices",
+                "QuestionFormatKey": "blank_summary_completion_5_choices",
+                "prepared_source": prepared,
+                "design": None,
+            },
+            QUESTION_SUBTYPE_SPECS["blank_summary_completion_5_choices"],
+        )
+        connective_result = build_design(
+            {
+                **self.state,
+                "source_paragraph": source,
+                "QuestionTypeKey": "fill_in_the_blank",
+                "QuestionSubtypeKey": "blank_connective_relation_5_choices",
+                "QuestionFormatKey": "blank_connective_relation_5_choices",
+                "prepared_source": prepared,
+                "design": None,
+            },
+            QUESTION_SUBTYPE_SPECS["blank_connective_relation_5_choices"],
+        )
+        self.assertEqual(proposition_result["status"], "source_passed")
+        self.assertEqual(summary_result["status"], "source_passed")
+        self.assertNotEqual(
+            proposition_result["design"].selected_span_id,
+            summary_result["design"].selected_span_id,
+        )
+        self.assertEqual(connective_result["status"], "qtype_incompatibility_error")
 
     def test_hydration_preserves_locked_vocab_target(self) -> None:
         prepared = prepare_source(self.mvp_source)
@@ -1157,6 +1247,9 @@ class PlannerTests(unittest.TestCase):
             type_spec=QUESTION_TYPES["grammar"],
         )
         self.assertIn("Locked blank target", blank_prompt)
+        self.assertIn("Active subtype: blank_inference_proposition_5_choices", blank_prompt)
+        self.assertIn("Locked design facts", blank_prompt)
+        self.assertIn("non-identical wording", blank_prompt)
         self.assertIn("Locked target", vocab_prompt)
         self.assertIn("Active subtype: contextual_vocab_choice_5", vocab_prompt)
         self.assertIn("same local slot", vocab_prompt)

@@ -337,6 +337,7 @@ Return only structured data matching the required schema.
 Question type:
 - Key: fill_in_the_blank
 - Label: {type_spec.family_label_ko}
+- Active subtype: {type_spec.subtype_key}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -347,6 +348,11 @@ Source paragraph:
 
 Locked blank target:
 {payload["selected_span_line"]}
+
+Locked design facts:
+- Inference test: {payload["inference_test"]}
+- Anti-restoration rule: {payload["anti_restoration_rule"]}
+- Support context: {payload["support_context"]}
 
 Selection reminders:
 - The deterministic design stage already locked the blank target.
@@ -371,7 +377,9 @@ Repair rules:
 - Return a fully corrected answer.
 - Re-check that `completion_choices` contains exactly five unique readable English choices.
 - Re-check that `correct_choice` is one of `completion_choices`.
-- Re-check that `supporting_evidence` is copied as an exact passage snippet.
+- Re-check that proposition and summary blanks use a non-identical `correct_choice`, not verbatim source restoration.
+- Re-check that when `correct_choice` differs from the locked source wording, the unchanged source wording does not remain in `completion_choices` as a second defensible option.
+- Re-check that `supporting_evidence` is copied as an exact broader passage snippet, not just the deleted source wording alone.
 - The deterministic design stage already locked `selected_span_id` and `selected_span_text`; do not change them.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains what idea the blank must express, without schema fields or mechanics.

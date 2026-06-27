@@ -55,12 +55,13 @@ from .schemas import (
 from .targeting import (
     BLANK_MARKER,
     allowed_verb_form_variants,
-    fill_blank_connective_inventory,
+    fill_blank_completion_option_quality_error,
+    fill_blank_connective_allows_source_near_completion,
     fill_blank_connective_quality_error,
-    fill_blank_summary_inventory,
+    fill_blank_design_target,
+    fill_blank_inventory_for_subtype,
     fill_blank_summary_quality_error,
     fill_blank_span_quality_error,
-    fill_blank_target_inventory,
     grammar_subtype_inventory,
     grammar_target_inventory,
     is_auxiliary_like,
@@ -872,18 +873,16 @@ def _validate_fill_in_the_blank_design(
 ) -> list[str]:
     if not isinstance(design, FillInTheBlankDesign):
         return ["FillInTheBlankDesign is missing for deterministic design checks."]
-    if type_spec.subtype_key == "blank_connective_relation_5_choices":
-        inventory = fill_blank_connective_inventory(prepared_source)
-    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
-        inventory = fill_blank_summary_inventory(prepared_source)
-    else:
-        inventory = fill_blank_target_inventory(prepared_source)
+    inventory = fill_blank_inventory_for_subtype(prepared_source, type_spec.subtype_key)
     span_map = {span.id: span for span in inventory}
     span = span_map.get(design.selected_span_id)
     if span is None:
         return [f"Unknown selected span ID in design: {design.selected_span_id}"]
     if design.selected_span_text != span.text:
         return ["FillInTheBlankDesign selected_span_text must exactly match the source span text."]
+    expected_span = fill_blank_design_target(prepared_source, type_spec.subtype_key)
+    if expected_span is None or design.selected_span_id != expected_span.id:
+        return ["FillInTheBlankDesign selected_span_id must match the deterministic subtype target."]
     return []
 
 
@@ -911,12 +910,7 @@ def _validate_fill_in_the_blank_plan(
         return ["FillInTheBlankPlan is missing for deterministic plan checks."]
 
     errors: list[str] = []
-    if type_spec.subtype_key == "blank_connective_relation_5_choices":
-        inventory = fill_blank_connective_inventory(prepared_source)
-    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
-        inventory = fill_blank_summary_inventory(prepared_source)
-    else:
-        inventory = fill_blank_target_inventory(prepared_source)
+    inventory = fill_blank_inventory_for_subtype(prepared_source, type_spec.subtype_key)
     span_map = {span.id: span for span in inventory}
     selected_span = span_map.get(plan.selected_span_id)
     if selected_span is None:
@@ -932,8 +926,31 @@ def _validate_fill_in_the_blank_plan(
         errors.append("FillInTheBlankPlan English choices must be unique.")
     if normalize_english_choice(plan.correct_choice) not in normalized_choices:
         errors.append("FillInTheBlankPlan correct_choice must be included in completion_choices.")
+    for choice in plan.completion_choices:
+        choice_error = fill_blank_completion_option_quality_error(choice, subtype_key=type_spec.subtype_key)
+        if choice_error is not None:
+            errors.append(f"FillInTheBlankPlan completion choice {choice!r} {choice_error.lower()}")
     if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
         errors.append("FillInTheBlankPlan supporting_evidence must be copied from the source passage.")
+    if normalize_text(plan.supporting_evidence) == normalize_text(plan.selected_span_text):
+        errors.append("FillInTheBlankPlan supporting_evidence must cite broader passage support than the deleted source wording alone.")
+
+    normalized_selected = normalize_english_choice(plan.selected_span_text)
+    normalized_correct = normalize_english_choice(plan.correct_choice)
+    if normalized_correct != normalized_selected and normalized_selected in normalized_choices:
+        errors.append(
+            "FillInTheBlankPlan must not keep the unchanged original wording as a second defensible option when correct_choice differs."
+        )
+    if type_spec.subtype_key in {
+        "blank_inference_proposition_5_choices",
+        "blank_summary_completion_5_choices",
+    }:
+        if normalized_correct == normalized_selected:
+            errors.append(f"FillInTheBlankPlan {type_spec.subtype_key} must use a non-identical correct_choice.")
+    elif normalized_correct == normalized_selected and not fill_blank_connective_allows_source_near_completion(selected_span):
+        errors.append(
+            "FillInTheBlankPlan connective subtype may keep the source wording only for a non-trivial relation-bearing target."
+        )
 
     if type_spec.subtype_key == "blank_connective_relation_5_choices":
         span_quality_error = fill_blank_connective_quality_error(selected_span)
@@ -951,13 +968,7 @@ def _validate_fill_in_the_blank_compatibility(
     prepared_source: PreparedSource,
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
-    if type_spec.subtype_key == "blank_connective_relation_5_choices":
-        viable_spans = fill_blank_connective_inventory(prepared_source)
-    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
-        viable_spans = fill_blank_summary_inventory(prepared_source)
-    else:
-        viable_spans = fill_blank_target_inventory(prepared_source)
-    if not viable_spans:
+    if fill_blank_design_target(prepared_source, type_spec.subtype_key) is None:
         return [f"Passage has no suitable contextual span for {type_spec.subtype_key}."]
     return []
 
@@ -2043,12 +2054,7 @@ def validate_fill_in_the_blank_output(
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
     errors: list[str] = []
-    if type_spec.subtype_key == "blank_connective_relation_5_choices":
-        inventory = fill_blank_connective_inventory(prepared_source)
-    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
-        inventory = fill_blank_summary_inventory(prepared_source)
-    else:
-        inventory = fill_blank_target_inventory(prepared_source)
+    inventory = fill_blank_inventory_for_subtype(prepared_source, type_spec.subtype_key)
     span_map = {span.id: span for span in inventory}
     selected_span = span_map.get(plan.selected_span_id)
     expected_choices = [normalize_english_choice(choice) for choice in plan.completion_choices]

@@ -98,20 +98,57 @@ class _StubPlanner:
             match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
             selected_span_id = match.group(1) if match else "P0"
             selected_span_text = match.group(2) if match else "less electricity than the older"
+            subtype_match = re.search(r"Active subtype: ([A-Za-z0-9_]+)", prompt)
+            active_subtype = subtype_match.group(1) if subtype_match else "blank_inference_proposition_5_choices"
+            if active_subtype == "blank_connective_relation_5_choices":
+                return self.output_schema(
+                    subtype="connective_relation",
+                    selected_span_id=selected_span_id,
+                    selected_span_text=selected_span_text,
+                    completion_choices=[
+                        "as a result",
+                        "for example",
+                        "in contrast",
+                        "even so",
+                        "meanwhile",
+                    ],
+                    correct_choice="as a result",
+                    contextual_meaning_ko="이 빈칸은 앞선 원인에서 뒤의 결과로 이어지는 관계를 복원해야 합니다",
+                    supporting_evidence="Because the lights use less electricity",
+                    explanation="문맥상 앞선 원인에서 뒤의 결과로 이어지는 관계가 복원되어야 합니다.",
+                )
+            if active_subtype == "blank_summary_completion_5_choices":
+                return self.output_schema(
+                    subtype="summary_completion",
+                    selected_span_id=selected_span_id,
+                    selected_span_text=selected_span_text,
+                    completion_choices=[
+                        "opportunity must be shared widely to preserve social peace",
+                        "economic rewards should remain concentrated in a few hands",
+                        "public distrust naturally strengthens every reform effort",
+                        "innovation matters more than any concern about inequality",
+                        "social peace depends on reducing every form of ambition",
+                    ],
+                    correct_choice="opportunity must be shared widely to preserve social peace",
+                    contextual_meaning_ko="이 빈칸은 글의 최종 교훈을 압축해 완성해야 합니다",
+                    supporting_evidence="The lesson is",
+                    explanation="문맥상 글의 최종 교훈을 압축해 완성해야 합니다.",
+                )
             return self.output_schema(
+                subtype="proposition_inference",
                 selected_span_id=selected_span_id,
                 selected_span_text=selected_span_text,
                 completion_choices=[
-                    selected_span_text,
-                    "more confusion among the residents",
-                    "a weaker plan for nearby roads",
-                    "fewer reasons to expand the system",
-                    "higher costs for the city budget",
+                    "improve safety while keeping the energy budget unchanged",
+                    "create more confusion among the residents",
+                    "slow the expansion of nearby neighborhoods",
+                    "raise costs without improving crosswalk visibility",
+                    "reduce safety to cut the energy budget",
                 ],
-                correct_choice=selected_span_text,
-                contextual_meaning_ko="원문의 핵심 설명이 복원되어야 한다는 의미",
-                supporting_evidence=selected_span_text,
-                explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
+                correct_choice="improve safety while keeping the energy budget unchanged",
+                contextual_meaning_ko="이 빈칸은 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과를 복원해야 합니다",
+                supporting_evidence="Because the lights use less electricity",
+                explanation="문맥상 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과가 복원되어야 합니다.",
             )
         if self.output_schema in {ContextualVocabChoicePlan, ContextualVocabChoiceDraft}:
             match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
@@ -694,7 +731,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(by_subtype["abc_ordering_after_intro"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["underlined_phrase_meaning_5_ko"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["blank_inference_proposition_5_choices"].status, "validation_passed")
-        self.assertEqual(by_subtype["blank_connective_relation_5_choices"].status, "validation_passed")
+        self.assertEqual(by_subtype["blank_connective_relation_5_choices"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["blank_summary_completion_5_choices"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["contextual_vocab_choice_5"].status, "validation_passed")
         self.assertEqual(by_subtype["contextual_vocab_best_paraphrase_choice_5"].status, "validation_passed")
@@ -708,6 +745,15 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(by_subtype["grammar_error_subject_verb_agreement_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["grammar_error_finite_nonfinite_5"].status, "validation_passed")
         self.assertEqual(results[-1].status, "input_error")
+
+    def test_fill_blank_weak_subtypes_surface_as_qtype_incompatibility(self) -> None:
+        results = run_batch_rows([self.mixed_family_row], ["fill_in_the_blank"], self.runner)
+        by_subtype = {result.QuestionSubtypeKey: result for result in results}
+        self.assertEqual(by_subtype["blank_inference_proposition_5_choices"].status, "validation_passed")
+        self.assertEqual(by_subtype["blank_connective_relation_5_choices"].status, "qtype_incompatibility_error")
+        self.assertEqual(by_subtype["blank_summary_completion_5_choices"].status, "qtype_incompatibility_error")
+        self.assertNotEqual(by_subtype["blank_connective_relation_5_choices"].status, "planning_error")
+        self.assertNotEqual(by_subtype["blank_summary_completion_5_choices"].status, "planning_error")
 
     def test_per_row_failure_is_captured(self) -> None:
         results = run_batch_rows(self.rows, ["sentence_insertion"], _FailingRunner())

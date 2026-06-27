@@ -24,6 +24,7 @@ from questiongen.schemas import (
 )
 from questiongen.targeting import (
     allowed_verb_form_variants,
+    fill_blank_summary_inventory,
     fill_blank_target_inventory,
     fill_blank_span_quality_error,
     grammar_target_inventory,
@@ -1072,6 +1073,23 @@ class ValidatorTests(unittest.TestCase):
         bad_span = next(span for span in phrase_span_inventory(prepared) if span.text == "use less electricity than the")
         self.assertIn("surface-restoration fragment", fill_blank_span_quality_error(bad_span) or "")
 
+    def test_fill_in_the_blank_connective_compatibility_rejects_restoration_only_passage(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        prepared = prepare_source(source)
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["blank_connective_relation_5_choices"],
+        )
+        self.assertTrue(any("blank_connective_relation_5_choices" in error for error in errors))
+
     def test_vocab_and_grammar_source_checks_accept_single_word_targets(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "
@@ -1366,16 +1384,16 @@ class ValidatorTests(unittest.TestCase):
             selected_span_id=selected_span.id,
             selected_span_text=selected_span.text,
             completion_choices=[
-                selected_span.text,
-                "more confusion among the residents",
-                "a weaker plan for nearby roads",
-                "fewer reasons to expand the system",
-                "higher costs for the city budget",
+                "improve safety while keeping the energy budget unchanged",
+                "create more confusion among the residents",
+                "slow the expansion of nearby neighborhoods",
+                "raise costs without improving crosswalk visibility",
+                "reduce safety to cut the energy budget",
             ],
-            correct_choice=selected_span.text,
-            contextual_meaning_ko="원문의 핵심 설명이 복원되어야 한다는 의미",
-            supporting_evidence=selected_span.text,
-            explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
+            correct_choice="improve safety while keeping the energy budget unchanged",
+            contextual_meaning_ko="이 빈칸은 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과를 복원해야 합니다",
+            supporting_evidence="Because the lights use less electricity",
+            explanation="문맥상 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과를 복원해야 합니다.",
         )
         generated = GeneratedQuestion(
             OriginalQuestionNumber="MVP-01",
@@ -1384,18 +1402,17 @@ class ValidatorTests(unittest.TestCase):
             student_paragraph=source.replace(selected_span.text, "_____", 1),
             question_stem=QUESTION_TYPES["fill_in_the_blank"].question_stem,
             choices=[
-                selected_span.text,
-                "more confusion among the residents",
-                "a weaker plan for nearby roads",
-                "fewer reasons to expand the system",
-                "higher costs for the city budget",
+                "improve safety while keeping the energy budget unchanged",
+                "create more confusion among the residents",
+                "slow the expansion of nearby neighborhoods",
+                "raise costs without improving crosswalk visibility",
+                "reduce safety to cut the energy budget",
             ],
             answer="①",
             explanation=(
-                f"빈칸은 원문에서 '{selected_span.text}'에 해당하는 부분으로, "
-                "이 자리에는 원문의 핵심 설명이 복원되어야 한다는 의미가 들어가야 합니다. "
-                f"특히 '{selected_span.text}'라는 내용이 그 방향을 뒷받침하므로 "
-                f"정답은 ① {selected_span.text}입니다."
+                "빈칸 앞뒤를 보면 'Because the lights use less electricity'라는 흐름이 핵심 단서입니다. "
+                '따라서 이 자리에는 "에너지 예산을 늘리지 않으면서 안전을 높이는 핵심 효과"에 해당하는 내용이 들어가야 하므로 '
+                "정답은 ① improve safety while keeping the energy budget unchanged입니다."
             ),
         )
         self.assertEqual(
@@ -1404,6 +1421,166 @@ class ValidatorTests(unittest.TestCase):
                 plan=plan,
                 generated=generated,
                 type_spec=QUESTION_TYPES["fill_in_the_blank"],
+            ),
+            [],
+        )
+
+    def test_fill_in_the_blank_plan_rejects_identical_proposition_restoration(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(span for span in fill_blank_target_inventory(prepared) if "improve safety" in span.text)
+        plan = FillInTheBlankPlan(
+            subtype="proposition_inference",
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            completion_choices=[
+                selected_span.text,
+                "create more confusion among the residents",
+                "slow the expansion of nearby neighborhoods",
+                "raise costs without improving crosswalk visibility",
+                "reduce safety to cut the energy budget",
+            ],
+            correct_choice=selected_span.text,
+            contextual_meaning_ko="이 빈칸은 에너지 예산을 늘리지 않으면서 안전을 높이는 핵심 효과를 복원해야 합니다",
+            supporting_evidence="Because the lights use less electricity",
+            explanation="문맥상 에너지 예산을 늘리지 않으면서 안전을 높이는 핵심 효과가 복원되어야 합니다.",
+        )
+        errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["fill_in_the_blank"])
+        self.assertTrue(any("non-identical correct_choice" in error for error in errors))
+
+    def test_fill_in_the_blank_connective_validator_accepts_non_restoration_completion(self) -> None:
+        source = (
+            "The bridge sensors kept warning about hidden ice. "
+            "As a result, buses slowed down before reaching the hill. "
+            "Drivers reported fewer sudden stops after the route changed."
+        )
+        span_text = "As a result"
+        span_start = source.index(span_text)
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The bridge sensors kept warning about hidden ice.", index=0),
+                SourceUnit(id="S1", text="As a result, buses slowed down before reaching the hill.", index=1),
+                SourceUnit(id="S2", text="Drivers reported fewer sudden stops after the route changed.", index=2),
+            ],
+            gap_units=[
+                GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+                GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+                GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id="S2"),
+                GapUnit(id="G3", index=3, before_unit_id="S2", after_unit_id=None),
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text=span_text,
+                    normalized_text=span_text,
+                    char_start=span_start,
+                    char_end=span_start + len(span_text),
+                    sentence_unit_id="S1",
+                    sentence_index=1,
+                    context_before="",
+                    context_after=", buses slowed down before reaching the hill.",
+                    heuristic_tags=["contextual_cue", "phrase_frame"],
+                    priority_score=7,
+                )
+            ],
+        )
+        plan = FillInTheBlankPlan(
+            subtype="connective_relation",
+            selected_span_id="P0",
+            selected_span_text=span_text,
+            completion_choices=[
+                "as a consequence",
+                "for example",
+                "in contrast",
+                "even so",
+                "meanwhile",
+            ],
+            correct_choice="as a consequence",
+            contextual_meaning_ko="이 빈칸은 앞선 경고에서 뒤의 결과로 이어지는 인과 관계를 복원해야 합니다",
+            supporting_evidence="The bridge sensors kept warning about hidden ice.",
+            explanation="문맥상 앞선 경고에서 뒤의 결과로 이어지는 인과 관계가 복원되어야 합니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["blank_connective_relation_5_choices"],
+            ),
+            [],
+        )
+
+    def test_fill_in_the_blank_summary_validator_rejects_identical_restoration(self) -> None:
+        source = (
+            "People often remember the rewards of economic competition and the innovation it can inspire. "
+            "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
+            "Workers who felt excluded from the benefits became less willing to trust public institutions. "
+            "As this distrust spread, even reforms that might have helped were greeted with suspicion. "
+            "The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(span for span in fill_blank_summary_inventory(prepared) if span.text == "not that ambition should vanish")
+        plan = FillInTheBlankPlan(
+            subtype="summary_completion",
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            completion_choices=[
+                selected_span.text,
+                "opportunity must be shared widely to preserve social peace",
+                "economic rewards should remain concentrated in a few hands",
+                "innovation matters more than any concern about inequality",
+                "social peace depends on reducing every form of ambition",
+            ],
+            correct_choice=selected_span.text,
+            contextual_meaning_ko="이 빈칸은 글의 최종 교훈을 압축해 완성해야 합니다",
+            supporting_evidence="The lesson is",
+            explanation="문맥상 글의 최종 교훈을 압축해 완성해야 합니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["blank_summary_completion_5_choices"],
+        )
+        self.assertTrue(any("non-identical correct_choice" in error for error in errors))
+
+    def test_fill_in_the_blank_summary_validator_accepts_non_restoration_completion(self) -> None:
+        source = (
+            "People often remember the rewards of economic competition and the innovation it can inspire. "
+            "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
+            "Workers who felt excluded from the benefits became less willing to trust public institutions. "
+            "As this distrust spread, even reforms that might have helped were greeted with suspicion. "
+            "The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(span for span in fill_blank_summary_inventory(prepared) if span.text == "not that ambition should vanish")
+        plan = FillInTheBlankPlan(
+            subtype="summary_completion",
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            completion_choices=[
+                "opportunity must be shared widely to preserve social peace",
+                "economic rewards should remain concentrated in a few hands",
+                "public distrust naturally strengthens every reform effort",
+                "innovation matters more than any concern about inequality",
+                "social peace depends on reducing every form of ambition",
+            ],
+            correct_choice="opportunity must be shared widely to preserve social peace",
+            contextual_meaning_ko="이 빈칸은 글의 최종 교훈을 압축해 완성해야 합니다",
+            supporting_evidence="The lesson is",
+            explanation="문맥상 글의 최종 교훈을 압축해 완성해야 합니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["blank_summary_completion_5_choices"],
             ),
             [],
         )

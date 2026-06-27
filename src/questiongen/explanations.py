@@ -21,7 +21,13 @@ from .schemas import (
     VocabChoiceDesign,
     VocabPlan,
 )
-from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_choice_inventory, vocab_target_inventory
+from .targeting import (
+    fill_blank_inventory_for_subtype,
+    grammar_target_inventory,
+    phrase_span_inventory,
+    vocab_choice_inventory,
+    vocab_target_inventory,
+)
 
 
 def build_explanation_context(state: QuestionState) -> dict[str, Any]:
@@ -92,7 +98,12 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
                 "errors": ["FillInTheBlankPlan is required before explanation generation."],
             }
         return {
-            "explanation_context": _build_fill_in_the_blank_context(plan, generated),
+            "explanation_context": _build_fill_in_the_blank_context(
+                plan,
+                generated,
+                prepared_source=prepared_source,
+                question_subtype_key=generated.QuestionSubtypeKey or state.get("QuestionSubtypeKey"),
+            ),
             "status": "rendered",
             "errors": [],
         }
@@ -274,13 +285,24 @@ def _build_underlined_phrase_meaning_context(
 def _build_fill_in_the_blank_context(
     plan: FillInTheBlankPlan,
     generated: GeneratedQuestion,
+    *,
+    prepared_source: PreparedSource,
+    question_subtype_key: str | None = None,
 ) -> dict[str, str]:
     choice_index = MARKER_CHOICES.index(generated.answer)
     correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
+    subtype_key = question_subtype_key or "blank_inference_proposition_5_choices"
+    span_inventory = {span.id: span for span in fill_blank_inventory_for_subtype(prepared_source, subtype_key)}
+    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
+    selected_span = span_inventory.get(plan.selected_span_id)
+    source_sentence = sentence_map.get(selected_span.sentence_unit_id or "", "") if selected_span is not None else ""
+    support_quote = plan.supporting_evidence
+    if selected_span is not None and " ".join(plan.supporting_evidence.split()).lower() == " ".join(plan.selected_span_text.split()).lower():
+        support_quote = source_sentence.replace(plan.selected_span_text, "_____", 1) if source_sentence else plan.supporting_evidence
     return {
         "selected_span_text": plan.selected_span_text,
         "contextual_meaning_ko": plan.contextual_meaning_ko,
-        "supporting_evidence": plan.supporting_evidence,
+        "supporting_evidence": support_quote,
         "correct_marker": generated.answer,
         "correct_choice": correct_choice,
     }
@@ -511,7 +533,7 @@ def _write_underlined_phrase_meaning_explanation(context: dict[str, str]) -> str
 def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
     idea = _clean_teacher_note(context["contextual_meaning_ko"]) or "글의 핵심 내용을 복원하는 설명"
     return (
-        f"빈칸 앞뒤를 보면 '{context['supporting_evidence']}'라는 대목이 핵심 단서입니다. "
+        f"빈칸 앞뒤를 보면 '{context['supporting_evidence']}'라는 흐름이 핵심 단서입니다. "
         f"따라서 이 자리에는 \"{idea}\"에 해당하는 내용이 들어가야 하므로 "
         f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
     )

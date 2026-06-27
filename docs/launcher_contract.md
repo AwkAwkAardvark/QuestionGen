@@ -246,6 +246,9 @@ Rules:
 - `validation_passed` rows are expected to be structurally intact, including abbreviation-safe sentence preparation and fragment-safe rendered text, not just schema-valid fields.
 - `underlined_phrase_meaning` should preserve the original passage exactly except for wrapping the chosen source span as `[밑줄]...[/밑줄]` in exported `student_paragraph`.
 - `fill_in_the_blank` should preserve the original passage exactly except for replacing one selected source span with the single blank marker `_____` in exported `student_paragraph`.
+- For `fill_in_the_blank`, deterministic design should admit only targets that support inference-style completion rather than immediate local restoration.
+- For `fill_in_the_blank`, proposition and summary subtypes should require a non-identical `correct_choice`, and weaker redundant subtypes should fail as `qtype_incompatibility_error` when they have no distinct non-restoration target.
+- For `fill_in_the_blank`, if `correct_choice` differs from the deleted source wording, the unchanged source wording should not remain in the five choices as a second defensible option.
 - `vocab` now fans out into eight concrete live subtype rows under the broad family key:
   - `contextual_vocab_choice_5`
   - `contextual_vocab_best_paraphrase_choice_5`
@@ -267,6 +270,7 @@ Rules:
 - `mood_atmosphere` remains implemented but dormant. Its current subtype work stays out of default launcher and batch outputs until the other live families and output-quality work stabilize and it is explicitly reactivated later.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
 - For `fill_in_the_blank`, `vocab`, and `grammar`, exported explanations should also avoid malformed memo fragments such as duplicated `...의미` wording and should lead with local supporting evidence rather than generic boilerplate.
+- For `fill_in_the_blank`, the supporting-evidence line used in planning and explanation should come from broader passage support, not just the deleted source wording alone.
 - Teacher-facing explanation writing is now treated as a post-render concern rather than as part of structural planning for the live types.
 - Planner rationale may remain internal, but exported explanations for the live types are now rewritten from rendered item context and textual evidence rather than copied directly from planner-internal IDs or schema fields.
 - The launcher may write JSON directly from `result.model_dump()` payloads until a dedicated package-level JSON exporter is added.

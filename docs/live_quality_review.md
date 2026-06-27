@@ -243,6 +243,7 @@ Current explanation hardening target after `paragraph_ordering`:
 
 Landed policy:
 
+- `fill_in_the_blank` should reject restoration-only targets before planning rather than exporting easy "put back the deleted phrase" rows
 - exported explanations should begin from local supporting evidence, not from generic stock phrases alone
 - planner-owned Korean notes such as `contextual_meaning_ko` and `correction_basis_ko` should be cleaned before export rather than copied as awkward memo fragments
 - malformed phrases such as duplicated `...의미` wording should fail deterministic explanation validation instead of shipping as `validation_passed`

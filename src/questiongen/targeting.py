@@ -14,6 +14,7 @@ NUMBERED_UNDERLINE_CLOSE_TEMPLATE = "[/밑줄{marker}]"
 _SINGLE_WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*$")
 _ENGLISH_WORD_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*$")
 _LEXICAL_CHOICE_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*(?: [A-Za-z]+(?:[-'’][A-Za-z]+)*){0,3}$")
+_ENGLISH_COMPLETION_RE = re.compile(r"^[A-Za-z]+(?:[-'’][A-Za-z]+)*(?: [A-Za-z]+(?:[-'’][A-Za-z]+)*){0,11}$")
 _TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'’][A-Za-z]+)*")
 _CROSS_PUNCTUATION_RE = re.compile(r"[,;:()]|(?:\s[-–—]\s)")
 _INNER_PROPER_NOUN_RE = re.compile(r"(?<!^)\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b")
@@ -123,6 +124,43 @@ _DISCOURSE_CUE_WORDS = {
     "without",
     "yet",
 }
+_RELATION_CUE_WORDS = {
+    "although",
+    "because",
+    "but",
+    "despite",
+    "however",
+    "if",
+    "instead",
+    "meanwhile",
+    "rather",
+    "so",
+    "still",
+    "therefore",
+    "though",
+    "thus",
+    "unless",
+    "whereas",
+    "while",
+    "yet",
+}
+_SUMMARY_LEADIN_PHRASES = (
+    "the lesson is",
+    "the point is",
+    "overall",
+    "in short",
+    "in conclusion",
+    "ultimately",
+)
+_RELATION_CUE_PHRASES = (
+    "as a consequence",
+    "as a result",
+    "even so",
+    "for example",
+    "for this reason",
+    "in contrast",
+    "on the other hand",
+)
 _POLARITY_SCOPE_CUE_WORDS = {
     "all",
     "always",
@@ -431,6 +469,36 @@ def fill_blank_summary_inventory(prepared_source: PreparedSource) -> list[SpanUn
     return sorted(candidates, key=_fill_blank_summary_sort_key)
 
 
+def fill_blank_inventory_for_subtype(
+    prepared_source: PreparedSource,
+    subtype_key: str = "blank_inference_proposition_5_choices",
+) -> list[SpanUnit]:
+    if subtype_key == "blank_connective_relation_5_choices":
+        return fill_blank_connective_inventory(prepared_source)
+    if subtype_key == "blank_summary_completion_5_choices":
+        return fill_blank_summary_inventory(prepared_source)
+    return fill_blank_target_inventory(prepared_source)
+
+
+def fill_blank_design_target(
+    prepared_source: PreparedSource,
+    subtype_key: str = "blank_inference_proposition_5_choices",
+) -> SpanUnit | None:
+    inventory = fill_blank_inventory_for_subtype(prepared_source, subtype_key)
+    if not inventory:
+        return None
+    if subtype_key == "blank_inference_proposition_5_choices":
+        return inventory[0]
+
+    proposition_inventory = fill_blank_target_inventory(prepared_source)
+    proposition_target = proposition_inventory[0] if proposition_inventory else None
+    return _select_distinct_fill_blank_target(
+        inventory,
+        proposition_target,
+        prefer_sentence_change=subtype_key == "blank_summary_completion_5_choices",
+    )
+
+
 def vocab_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
     return _dedupe_by_text(
         span
@@ -694,6 +762,8 @@ def fill_blank_span_quality_error(span: SpanUnit) -> str | None:
     content_count = _content_word_count(tokens)
     has_clause_signal = _has_clause_signal(span.text, tags)
     has_proposition_signal = _has_proposition_signal(span.text, tags)
+    anchor_count = _fill_blank_contextual_anchor_count(span)
+    echoed_content_count = _fill_blank_echoed_content_count(span)
 
     if not tokens:
         return "Selected span is empty and cannot support a blank."
@@ -709,21 +779,31 @@ def fill_blank_span_quality_error(span: SpanUnit) -> str | None:
         return "Selected span is not proposition-like enough for fill_in_the_blank."
     if "embedded_phrase" in tags and not has_proposition_signal:
         return "Selected span is too local and reads like a cloze fragment rather than a central blank target."
+    if anchor_count == 0:
+        return "Selected span is too locally recoverable and lacks surrounding evidence for a non-restoration blank."
+    if echoed_content_count >= max(2, content_count - 1):
+        return "Selected span is too strongly echoed by the remaining sentence context for a non-restoration blank."
     return None
 
 
 def fill_blank_connective_quality_error(span: SpanUnit) -> str | None:
-    base_error = fill_blank_span_quality_error(span)
-    if base_error is not None:
-        return base_error
-    lowered = normalize_text(span.text).lower()
-    tags = set(span.heuristic_tags)
-    if not (
-        {"contextual_cue", "clause_like", "proposition_like"} & tags
-        or any(token in lowered.split() for token in _PROPOSITION_CUE_WORDS)
-    ):
-        return "Selected span is not relation-bearing enough for a connective blank."
-    if len(_span_tokens(span.text)) > 7:
+    tokens = _span_tokens(span.text)
+    content_count = _content_word_count(tokens)
+    if not tokens:
+        return "Selected span is empty and cannot support a connective blank."
+    if len(tokens) < 2:
+        return "Selected span is too short for a connective-relation blank."
+    if content_count < 1:
+        return "Selected span is too function-word heavy for a connective blank."
+    if span_crosses_punctuation(span.text):
+        return "Selected span crosses punctuation and is not a clean connective blank."
+    if not _has_explicit_relation_cue(span.text):
+        return "Selected span is not explicitly relation-bearing enough for a connective blank."
+    if _fill_blank_contextual_anchor_count(span) < 1:
+        return "Selected span does not preserve enough surrounding support for a connective blank."
+    if tokens and (tokens[-1] in _FUNCTION_WORDS or is_auxiliary_like(tokens[-1])):
+        return "Selected span is truncated and does not land on a stable relation-bearing completion."
+    if len(tokens) > 7:
         return "Selected span is too long for a connective-relation blank."
     return None
 
@@ -733,11 +813,47 @@ def fill_blank_summary_quality_error(span: SpanUnit) -> str | None:
     if base_error is not None:
         return base_error
     tags = set(span.heuristic_tags)
-    if "claim_bearing" not in tags and "abstract_term" not in tags:
+    if "claim_bearing" not in tags and "abstract_term" not in tags and not _has_summary_leadin(span):
         return "Selected span is not summary-worthy enough for a summary-completion blank."
     if span.priority_score < 5:
         return "Selected span is too weak for a summary-completion blank."
     return None
+
+
+def fill_blank_completion_option_quality_error(
+    value: str,
+    *,
+    subtype_key: str = "blank_inference_proposition_5_choices",
+) -> str | None:
+    normalized = " ".join(value.split())
+    tokens = _span_tokens(normalized)
+    content_count = _content_word_count(tokens)
+
+    if not normalized:
+        return "Choice is empty."
+    if _ENGLISH_COMPLETION_RE.fullmatch(normalized) is None:
+        return "Choice is not readable English text."
+    if span_crosses_punctuation(normalized):
+        return "Choice crosses punctuation and is not a clean blank completion."
+    if subtype_key == "blank_connective_relation_5_choices":
+        if not _has_explicit_relation_cue(normalized):
+            return "Choice does not express a clear discourse relation."
+        if len(tokens) > 8:
+            return "Choice is too long for a connective blank."
+        return None
+    if len(tokens) < 4 or content_count < 2:
+        return "Choice is too short for an inference-style blank."
+    if subtype_key == "blank_summary_completion_5_choices" and len(tokens) < 5:
+        return "Choice is too short for a summary-completion blank."
+    return None
+
+
+def fill_blank_connective_allows_source_near_completion(span: SpanUnit) -> bool:
+    return (
+        fill_blank_connective_quality_error(span) is None
+        and _has_explicit_relation_cue(span.text)
+        and _fill_blank_echoed_content_count(span) < 2
+    )
 
 
 def is_short_english_lexical_choice(value: str) -> bool:
@@ -1028,6 +1144,9 @@ def _fill_blank_summary_sort_key(span: SpanUnit) -> tuple[int, int, int, int]:
         bonus += 4
     if "abstract_term" in tags:
         bonus += 2
+    if _has_summary_leadin(span):
+        bonus += 4
+    bonus += min(span.sentence_index or 0, 3)
     sentence_bias = -(span.sentence_index or 0)
     return (-(span.priority_score + bonus), sentence_bias, span.char_start, span.char_end)
 
@@ -1126,6 +1245,51 @@ def _has_incomplete_edge(tokens: list[str], span: SpanUnit) -> bool:
     if next_token and len(tokens) >= 2 and tokens[-2] in {"a", "an", "his", "her", "its", "my", "our", "that", "the", "their", "these", "this", "those", "your"}:
         return True
     return False
+
+
+def _fill_blank_contextual_anchor_count(span: SpanUnit) -> int:
+    return int(_context_has_semantic_anchor(span.context_before)) + int(_context_has_semantic_anchor(span.context_after))
+
+
+def _fill_blank_echoed_content_count(span: SpanUnit) -> int:
+    span_content_tokens = {token for token in _span_tokens(span.text) if token not in _FUNCTION_WORDS}
+    if not span_content_tokens:
+        return 0
+    context_tokens = set(_span_tokens(f"{span.context_before or ''} {span.context_after or ''}"))
+    return len(span_content_tokens & context_tokens)
+
+
+def _has_explicit_relation_cue(text: str) -> bool:
+    normalized = normalize_text(text).lower()
+    return any(token in _RELATION_CUE_WORDS for token in _span_tokens(text)) or any(
+        phrase in normalized for phrase in _RELATION_CUE_PHRASES
+    )
+
+
+def _has_summary_leadin(span: SpanUnit) -> bool:
+    before = normalize_text(span.context_before or "").lower()
+    text = normalize_text(span.text).lower()
+    return any(phrase in before for phrase in _SUMMARY_LEADIN_PHRASES) or text.startswith("not that ")
+
+
+def _select_distinct_fill_blank_target(
+    inventory: list[SpanUnit],
+    reference_span: SpanUnit | None,
+    *,
+    prefer_sentence_change: bool,
+) -> SpanUnit | None:
+    if not inventory:
+        return None
+    if reference_span is None:
+        return inventory[0]
+    distinct_candidates = [span for span in inventory if span.id != reference_span.id]
+    if not distinct_candidates:
+        return None
+    if prefer_sentence_change:
+        for span in distinct_candidates:
+            if span.sentence_index != reference_span.sentence_index:
+                return span
+    return distinct_candidates[0]
 
 
 def _neighbor_first_token(text: str | None) -> str:

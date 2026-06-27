@@ -171,12 +171,16 @@
   - first-release target: contextual paraphrase / 함축 의미 추론, not literal translation
   - shipped v1 policy: self-select one phrase, prefer abstract or claim-bearing spans, use Korean contextual paraphrase choices, and render `[밑줄]...[/밑줄]` in exports
 - [x] `fill_in_the_blank`
-  - rollout policy: live now for MVP, even if distractor quality and semantic recoverability remain rough
+  - rollout policy: live now, but only when the locked target supports inference-style completion rather than literal source restoration
   - live subtype set:
     - `blank_inference_proposition_5_choices`
     - `blank_connective_relation_5_choices`
     - `blank_summary_completion_5_choices`
   - shipped policy: selected broad-family runs expand to multiple blank subtypes, each with subtype-specific inventories and incompatibility gates
+  - current hardening policy:
+    - design should lock a target whose recovery requires broader passage reasoning, not immediate source restoration
+    - proposition and summary blanks must use a non-identical `correct_choice`
+    - if a weaker blank subtype can only reuse the same restoration-style span, it should fail early as `qtype_incompatibility_error` rather than ship a redundant row
   - current explanation policy: rewrite exported explanations from supporting evidence plus cleaned Korean meaning notes, and reject malformed memo-style phrasing rather than exporting awkward `...라는 의미` boilerplate
 
 ### Single-span acceptance

@@ -23,14 +23,12 @@ from .schemas import (
 )
 from .targeting import (
     BLANK_MARKER,
-    fill_blank_connective_inventory,
-    fill_blank_summary_inventory,
+    fill_blank_inventory_for_subtype,
     grammar_target_inventory,
     grammar_subtype_inventory,
     normalize_english_choice,
     numbered_underline_close,
     numbered_underline_open,
-    phrase_span_inventory,
     render_numbered_span_edits,
     vocab_hard_candidate_inventory,
     vocab_choice_inventory,
@@ -538,12 +536,7 @@ def _build_fill_in_the_blank_question(
     if type_spec.choice_count != len(MARKER_CHOICES):
         raise ValueError("Fill-in-the-blank renderer expects exactly five choices.")
 
-    if type_spec.subtype_key == "blank_connective_relation_5_choices":
-        inventory = fill_blank_connective_inventory(prepared_source)
-    elif type_spec.subtype_key == "blank_summary_completion_5_choices":
-        inventory = fill_blank_summary_inventory(prepared_source)
-    else:
-        inventory = phrase_span_inventory(prepared_source)
+    inventory = fill_blank_inventory_for_subtype(prepared_source, type_spec.subtype_key)
     span_map = {span.id: span for span in inventory}
     selected_span = span_map.get(plan.selected_span_id)
     if selected_span is None:
