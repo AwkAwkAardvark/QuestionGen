@@ -181,6 +181,9 @@
     - design should lock a target whose recovery requires broader passage reasoning, not immediate source restoration
     - proposition and summary blanks must use a non-identical `correct_choice`
     - if a weaker blank subtype can only reuse the same restoration-style span, it should fail early as `qtype_incompatibility_error` rather than ship a redundant row
+  - completed structural rescue:
+    - the anti-restoration hardening pass is the completed structural rescue for this family
+    - the next cycle should not reopen blank-family subtype pruning, registry reshaping, or export-schema redesign unless a later deliberate policy decision says otherwise
   - current explanation policy: rewrite exported explanations from supporting evidence plus cleaned Korean meaning notes, and reject malformed memo-style phrasing rather than exporting awkward `...라는 의미` boilerplate
 
 ### Single-span acceptance
@@ -227,9 +230,15 @@
     - [x] document that the old `35` hard-family `400` rows in `111945` are stale schema artifacts, not current-code subtype verdicts
     - [x] re-audit current deterministic compatibility on those same `34` checked-in `vocab` source passages to separate post-fix behavior from stale pre-fix CSV evidence
     - [ ] rerun a fresh live `vocab` sample export on current code so artifact review is no longer anchored to pre-fix planner output
-    - [ ] prioritize hard underlined subtype pass/fail quality after the schema fix, especially whether accepted rows still feel exam-natural
+    - [ ] re-baseline hard `vocab` subtype pass/fail quality on that fresh export, especially whether accepted rows still feel exam-natural rather than like "pick the absurd one"
+    - [ ] harden explanation quality across `vocab`, `fill_in_the_blank`, and `grammar` after the fresh `vocab` review identifies recurring weak-but-valid patterns
+    - [ ] run a fresh mixed-batch audit after those `vocab` plus explanation-quality passes
     - [x] tighten blank-choice target quality against too-local / too-easy targets without regressing subtype coverage
     - [x] scrutinize ambiguity risk in `contextual_vocab_best_paraphrase_choice_5` and `contextual_vocab_correct_among_3_corrupted_5` by moving more rejection logic into deterministic design and compatibility gates
+  - immediate next-cycle boundary:
+    - use fresh current-code exports as the truth surface for the next `vocab` review cycle, with older checked-in CSVs and `ResponseFeedbackDump` kept only as historical comparison artifacts
+    - keep the broad-family registry and export contract stable while refining subtype-level design gates, prompts, validators, and explanation writers
+    - do not treat the next cycle as subtype pruning, registry reshaping, or export-schema redesign
 - [x] `grammar`
   - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
   - live subtype set:
@@ -338,4 +347,4 @@ Landed hardening contract:
 - [x] `QUESTION_TYPES` remains the live default-registry surface, while dormant implemented families such as `mood_atmosphere` stay outside it until later reactivation work.
 - [x] Batch execution may short-circuit further LLM attempts after the first `insufficient_quota` failure, but exported result counts must still equal input rows times active question types.
 - [x] Future async exploration, if any, should start at the batch or row/type orchestration layer without changing current question-type semantics or exported row counts.
-- [x] After the current hardening baseline, reopen qtype-specific refinement planning with priority on `grammar` and `vocab`.
+- [x] After the current hardening baseline, reopen qtype-specific refinement planning with priority on fresh `vocab` live-quality re-baselining, then explanation hardening across `vocab`, `fill_in_the_blank`, and `grammar`.

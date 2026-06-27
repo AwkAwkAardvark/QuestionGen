@@ -16,6 +16,28 @@ Current branch snapshot reviewed on `hail-mary-finish-everything`:
   - `8` `qtype_incompatibility_error`
   - `7` `planning_error`
 
+## `ResponseFeedbackDump` After The `fill_in_the_blank` Rescue
+
+`ResponseFeedbackDump` was re-read after the `fill_in_the_blank` anti-restoration hardening pass landed. It remains useful review evidence, but it is not authoritative anywhere it assumes an older live schema, older registry shape, or older export/status surface.
+
+Signals from that dump that still survive as current review guidance:
+
+- restoration-style blank rows were a real issue and justified the completed `fill_in_the_blank` structural rescue
+- `contextual_vocab_choice_5` remains the strongest demonstrated `vocab` branch
+- hard `vocab` subtypes still need fresh exam-naturalness review now that the schema rescue is in place
+- `contextual_vocab_best_paraphrase_choice_5` and `contextual_vocab_correct_among_3_corrupted_5` remain the clearest ambiguity-risk surfaces
+- explanation phrasing quality still needs cleanup in high-pass families, especially `vocab`, `fill_in_the_blank`, and `grammar`
+
+Conclusions from that dump to reject as stale:
+
+- subtype deactivation or pruning advice
+- claims derived from the old hard-`vocab` schema failures
+- any judgment that assumes an older registry layout, output shape, or status vocabulary is still current repo truth
+
+Immediate review target from this reread:
+
+- a fresh live export review on current code must replace reliance on stale checked-in artifacts when judging current `vocab` quality and post-hardening `fill_in_the_blank`
+
 ## 2026-06-25 Checked-In CSV Audit
 
 The two checked-in CSV review artifacts under `sample_data/output/` are evidence for quality review only. They are not the runtime contract, and they were generated before the current hard-vocab rescue landed on `main`.
@@ -84,6 +106,7 @@ Repo-truth takeaways that still survive from that dump:
 - `contextual_vocab_choice_5` is the strongest currently demonstrated branch
 - the hard underlined `vocab` branches remain the highest-value next runtime-quality surface now that the schema blocker is gone
 - `contextual_vocab_correct_among_3_corrupted_5` is still the most ambiguity-prone subtype and should receive extra scrutiny before it earns long-term confidence
+- restoration-style `fill_in_the_blank` rows were a real failure mode, but that family's anti-restoration rescue is now the completed structural response rather than an open schema-direction question
 - blank-choice target quality still needs pressure against too-local or too-easy targets
 - `best_paraphrase` and `correct_among_3_corrupted` remain the biggest ambiguity-risk branches inside the current live `vocab` set
 - current runtime policy is now to resolve more of that ambiguity in deterministic design rather than by hoping the planner picks the right survivor or corruption anchor later
