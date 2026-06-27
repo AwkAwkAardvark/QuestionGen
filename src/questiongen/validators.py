@@ -82,6 +82,8 @@ from .targeting import (
     vocab_collocation_candidate_inventory,
     vocab_corruption_is_collocation_like,
     vocab_corruption_is_polarity_scope_like,
+    vocab_correct_among_4_bundle_error,
+    vocab_correct_among_4_corruption_error,
     vocab_correct_among_3_survivor_pair_error,
     vocab_choice_inventory,
     vocab_choice_target_cue_count,
@@ -1010,6 +1012,13 @@ def _validate_vocab_design(
             "contextual_vocab_error_1_among_5_5",
         } and design.answer_span_id is None:
             return [f"UnderlinedVocabDesign {type_spec.subtype_key} requires a locked answer_span_id."]
+        if type_spec.subtype_key == "contextual_vocab_correct_among_4_corrupted_5":
+            selected_spans = [inventory[span_id] for span_id in design.target_span_ids]
+            bundle_error = vocab_correct_among_4_bundle_error(selected_spans, design.answer_span_id or "")
+            if bundle_error is not None:
+                return [
+                    "UnderlinedVocabDesign contextual_correct_among_4_corrupted " + bundle_error
+                ]
         if type_spec.subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
             if design.answer_span_id is None or design.untouched_distractor_span_id is None:
                 return [
@@ -1194,12 +1203,17 @@ def _validate_vocab_compatibility(
                 return [
                     "Passage does not contain a clear unique-survivor vocab bundle for contextual_vocab_correct_among_3_corrupted_5."
                 ]
-            if type_spec.subtype_key in {
-                "contextual_vocab_correct_among_4_corrupted_5",
-                "contextual_vocab_error_1_among_5_5",
-            }:
+            if type_spec.subtype_key == "contextual_vocab_correct_among_4_corrupted_5":
+                if len(vocab_hard_candidate_inventory(prepared_source)) >= 5:
+                    return [
+                        "Passage does not contain a stable five-target vocab bundle with four corruption-friendly distractors for contextual_vocab_correct_among_4_corrupted_5."
+                    ]
                 return [
-                    f"Passage does not contain a stable five-target vocab bundle for {type_spec.subtype_key}."
+                    "Passage does not contain a stable five-target vocab bundle for contextual_vocab_correct_among_4_corrupted_5."
+                ]
+            if type_spec.subtype_key == "contextual_vocab_error_1_among_5_5":
+                return [
+                    "Passage does not contain a stable five-target vocab bundle for contextual_vocab_error_1_among_5_5."
                 ]
             return [f"Passage does not contain five workable lexical-slot vocab targets for {type_spec.subtype_key}."]
         return []
@@ -1331,6 +1345,12 @@ def _validate_underlined_vocab_plan(
         )
         if is_near_synonym_choice(span.text, replacement):
             errors.append("UnderlinedVocabPlan corrupted replacements must not be near-synonyms of the source wording.")
+        if plan.subtype == "contextual_correct_among_4_corrupted":
+            profile_error = vocab_correct_among_4_corruption_error(span, replacement)
+            if profile_error is not None:
+                errors.append(
+                    f"UnderlinedVocabPlan contextual_correct_among_4_corrupted replacement for {span.id} {profile_error}"
+                )
         if plan.subtype == "contextual_error_1_among_5_polarity_scope":
             if not vocab_target_is_polarity_scope_eligible(span):
                 errors.append(

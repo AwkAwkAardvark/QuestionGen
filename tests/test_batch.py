@@ -770,6 +770,31 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(correct3_result.status, "qtype_incompatibility_error")
         self.assertNotEqual(correct3_result.status, "planning_error")
 
+    def test_correct_among_4_hardening_rejection_surfaces_as_qtype_incompatibility(self) -> None:
+        rows = [
+            BatchInputRow(
+                OriginalQuestionNumber="VOC-04",
+                BatchRowId=0,
+                source_paragraph=(
+                    "Community happiness has lasting social value. "
+                    "Relative wealth has visible symbolic force. "
+                    "Widening inequality has deep political cost. "
+                    "Persistent discontent has broad civic impact. "
+                    "Public dignity has fragile moral weight."
+                ),
+            ),
+        ]
+
+        results = run_batch_rows(rows, ["vocab"], self.runner)
+        by_row_and_subtype = {
+            (result.OriginalQuestionNumber, result.QuestionSubtypeKey): result
+            for result in results
+        }
+
+        correct4_result = by_row_and_subtype[("VOC-04", "contextual_vocab_correct_among_4_corrupted_5")]
+        self.assertEqual(correct4_result.status, "qtype_incompatibility_error")
+        self.assertNotEqual(correct4_result.status, "planning_error")
+
     def test_hard_vocab_subtypes_produce_passes_on_sample_reaudit(self) -> None:
         sample_path = Path("sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv")
         if not sample_path.exists():

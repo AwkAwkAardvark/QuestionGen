@@ -54,6 +54,58 @@ from questiongen.validators import (
 )
 
 
+def _manual_prepared_source_with_vocab_spans(
+    sentences: list[str],
+    span_specs: list[tuple[int, str, list[str], int]],
+) -> PreparedSource:
+    source = " ".join(sentences)
+    sentence_units = [SourceUnit(id=f"S{index}", text=text, index=index) for index, text in enumerate(sentences)]
+    gap_units = [
+        GapUnit(
+            id=f"G{index}",
+            index=index,
+            before_unit_id=f"S{index - 1}" if index > 0 else None,
+            after_unit_id=f"S{index}" if index < len(sentences) else None,
+        )
+        for index in range(len(sentences) + 1)
+    ]
+    sentence_starts: list[int] = []
+    cursor = 0
+    for sentence in sentences:
+        sentence_starts.append(cursor)
+        cursor += len(sentence) + 1
+
+    span_units: list[SpanUnit] = []
+    for span_index, (sentence_index, word, tags, priority_score) in enumerate(span_specs):
+        sentence_text = sentences[sentence_index]
+        sentence_start = sentence_starts[sentence_index]
+        local_start = sentence_text.index(word)
+        char_start = sentence_start + local_start
+        char_end = char_start + len(word)
+        span_units.append(
+            SpanUnit(
+                id=f"P{span_index}",
+                text=word,
+                normalized_text=word.lower(),
+                char_start=char_start,
+                char_end=char_end,
+                sentence_unit_id=f"S{sentence_index}",
+                sentence_index=sentence_index,
+                context_before=sentence_text[:local_start],
+                context_after=sentence_text[local_start + len(word) :],
+                heuristic_tags=tags,
+                priority_score=priority_score,
+            )
+        )
+
+    return PreparedSource(
+        source_text=source,
+        sentence_units=sentence_units,
+        gap_units=gap_units,
+        span_units=span_units,
+    )
+
+
 class ValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.type_spec = QUESTION_TYPES["sentence_insertion"]
@@ -2346,6 +2398,127 @@ class ValidatorTests(unittest.TestCase):
             design=design,
         )
         self.assertTrue(any("locked design corruptible subset" in error for error in errors))
+
+    def test_correct_among_4_compatibility_rejects_bundle_without_corruption_ready_distractors(self) -> None:
+        sentences = [
+            "Community happiness has lasting social value.",
+            "Relative wealth has visible symbolic force.",
+            "Widening inequality has deep political cost.",
+            "Persistent discontent has broad civic impact.",
+            "Public dignity has fragile moral weight.",
+        ]
+        prepared = _manual_prepared_source_with_vocab_spans(
+            sentences,
+            [
+                (0, "happiness", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue"], 8),
+                (1, "wealth", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue"], 8),
+                (2, "inequality", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue"], 9),
+                (3, "discontent", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue"], 8),
+                (4, "dignity", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue"], 8),
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            prepared.source_text,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+        )
+        self.assertTrue(any("corruption-friendly distractors" in error for error in errors))
+
+    def test_correct_among_4_plan_rejects_obvious_low_value_swaps(self) -> None:
+        sentences = [
+            "Leaders cease wasteful spending during droughts.",
+            "Engineers expand storage when demand rises.",
+            "Families ignore rumors during emergencies.",
+            "Stronger pumps reduce pressure loss across the valley.",
+            "Volunteers protect the main channel from damage.",
+        ]
+        prepared = _manual_prepared_source_with_vocab_spans(
+            sentences,
+            [
+                (0, "cease", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 8),
+                (1, "expand", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 8),
+                (2, "ignore", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 8),
+                (3, "reduce", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 8),
+                (4, "protect", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 9),
+            ],
+        )
+        bundle = vocab_hard_bundle(prepared, "contextual_vocab_correct_among_4_corrupted_5")
+        self.assertIsNotNone(bundle)
+        assert bundle is not None
+        ordered_targets = list(bundle.selected_spans)
+        answer_span = next(span for span in ordered_targets if span.id == bundle.answer_span_id)
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_correct_among_4_corrupted",
+            target_span_ids=[span.id for span in ordered_targets],
+            target_span_texts=[span.text for span in ordered_targets],
+            corrupted_replacements=[
+                {"span_id": span.id, "replacement_text": replacement}
+                for span, replacement in zip(
+                    [span for span in ordered_targets if span.id != answer_span.id],
+                    ["teacher", "road", "report", "station"],
+                    strict=False,
+                )
+            ],
+            answer_span_id=answer_span.id,
+            selection_basis_ko="정답만 문맥을 유지하고 나머지는 모두 틀려야 합니다.",
+            supporting_evidence="Volunteers protect the main channel from damage.",
+            explanation="문맥상 나머지 표현들은 너무 노골적이라 부적절합니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+        )
+        self.assertTrue(any("low-value factual swaps" in error for error in errors))
+
+    def test_correct_among_4_plan_allows_local_contextual_distortions(self) -> None:
+        sentences = [
+            "Leaders cease wasteful spending during droughts.",
+            "Engineers expand storage when demand rises.",
+            "Families ignore rumors during emergencies.",
+            "Stronger pumps reduce pressure loss across the valley.",
+            "Volunteers protect the main channel from damage.",
+        ]
+        prepared = _manual_prepared_source_with_vocab_spans(
+            sentences,
+            [
+                (0, "cease", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 8),
+                (1, "expand", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 8),
+                (2, "ignore", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 8),
+                (3, "reduce", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 8),
+                (4, "protect", ["single_word", "vocab_candidate", "contextual_cue", "antonym_invertible", "claim_bearing"], 9),
+            ],
+        )
+        bundle = vocab_hard_bundle(prepared, "contextual_vocab_correct_among_4_corrupted_5")
+        self.assertIsNotNone(bundle)
+        assert bundle is not None
+        ordered_targets = list(bundle.selected_spans)
+        answer_span = next(span for span in ordered_targets if span.id == bundle.answer_span_id)
+        plan = UnderlinedVocabPlan(
+            subtype="contextual_correct_among_4_corrupted",
+            target_span_ids=[span.id for span in ordered_targets],
+            target_span_texts=[span.text for span in ordered_targets],
+            corrupted_replacements=[
+                {"span_id": span.id, "replacement_text": replacement}
+                for span, replacement in zip(
+                    [span for span in ordered_targets if span.id != answer_span.id],
+                    ["continue", "shrink", "notice", "increase"],
+                    strict=False,
+                )
+            ],
+            answer_span_id=answer_span.id,
+            selection_basis_ko="정답만 원래 의미를 유지합니다.",
+            supporting_evidence="Volunteers protect the main channel from damage.",
+            explanation="문맥상 정답만 원래 의미를 유지하고 나머지는 문맥을 어긋나게 만듭니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+            ),
+            [],
+        )
 
     def test_correct_among_4_plan_against_design_rejects_changed_survivor(self) -> None:
         source = (

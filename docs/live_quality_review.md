@@ -158,7 +158,7 @@ Observed buckets:
 
 ## Hardening Direction
 
-Next hardening target for the live branch:
+This `paragraph_ordering` hardening target has now landed on the current branch:
 
 - move weak-adjacency `paragraph_ordering` passages out of late `planning_error` and into earlier `qtype_incompatibility_error`
 - keep deterministic plan validation strict rather than rescuing weak passages by loosening the validator
@@ -225,6 +225,13 @@ Current acceptance boundary for this rescue:
 - eliminate schema-shaped `planning_error` for the hard family
 - reserve `qtype_incompatibility_error` for true candidate-inventory failure rather than for missing five parser-top-tier targets
 - keep regression coverage that re-audits the checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv` source passages and requires that each hard subtype produces at least some `validation_passed` rows rather than remaining stuck at zero-pass default incompatibility
+
+## Current `contextual_vocab_correct_among_4_corrupted_5` Target
+
+- keep this subtype live; review artifacts such as `ResponseFeedbackDump` remain prioritization evidence only, not subtype-pruning authority
+- current quality problem to harden: reject bundles or draft plans that collapse into "find the only absurd underline" behavior
+- current repo-truth boundary: the four corrupted targets should still look like locally plausible lexical-slot competitors, not semantically loud, unrelated, or giveaway-absurd replacements
+- when no such bundle exists for a passage, prefer `qtype_incompatibility_error` over shipping an easy survivor item
 
 ## Explanation Quality Policy For High-Pass Families
 

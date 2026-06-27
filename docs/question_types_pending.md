@@ -64,9 +64,9 @@ Latest gating lessons from sample review:
   - they should not be used as current evidence that the hard underlined `vocab` subtypes are fundamentally incompatible with those passages
 - `ResponseFeedbackDump` is still useful for prioritization, but stale as a direct diagnosis because it assumes only a subset of live `vocab` subtypes and treats those old schema failures as subtype-quality evidence
 - the main current signal is live-family quality, not operations:
-  - `paragraph_ordering` is the clearest next hardening target because the sample still shows a concentrated cluster of weak-adjacency rows reaching late `planning_error`
-  - `sentence_insertion` and `underlined_phrase_meaning` still need quality work, but their current sample failures are less concentrated than the `paragraph_ordering` issue
-- the next live-quality pass should therefore harden `paragraph_ordering` adjacency strength and suitability gating first, then return to cross-family explanation quality
+  - the `paragraph_ordering` adjacency/suitability pass is now the landed branch policy, so it is no longer the active next-target note
+  - the next concrete live-quality target is `contextual_vocab_correct_among_4_corrupted_5`, because current review evidence points to accepted bundles that can collapse into "find the only absurd underline" behavior
+- the current live-quality pass should therefore keep `contextual_vocab_correct_among_4_corrupted_5` live while rejecting bundles or draft plans whose four corrupted targets are too semantically loud, too unrelated, or otherwise giveaway-absurd
 - current live families should reject weak items more aggressively before any further family expansion or review-baseline regeneration
 - the current explanation-quality rule for high-pass families is:
   - `fill_in_the_blank`, `vocab`, and `grammar` should anchor explanations in supporting evidence first
@@ -235,6 +235,7 @@ Current recommendation on registry shape:
   - collocation design now locks an explicit corruption-eligible subset inside the five-target bundle and rejects generic five-target passages that lack a real local phrase-frame or selectional anchor
   - collocation also now rejects semantic-frame-adjacent but still natural broad substitutions such as `wealth -> income` as `qtype_incompatibility_error` rather than stretching the subtype
   - `contextual_vocab_correct_among_4_corrupted_5` and `contextual_vocab_error_1_among_5_5` now use a deterministic stable-bundle selector instead of blindly locking the first five clean hard candidates, and both subtypes lock their answer marker in design
+  - for `contextual_vocab_correct_among_4_corrupted_5`, that stable-bundle policy is not enough by itself: bundles or draft plans that turn the task into spotting one absurd underline should fail as `qtype_incompatibility_error` rather than ship as easy passes
   - `contextual_vocab_correct_among_3_corrupted_5` now locks both the answer span and the weaker untouched distractor during deterministic design and rejects flat-strength or answer-like extra-survivor bundles rather than letting the planner improvise the survivor pair
   - keep all live subtypes single-answer exports under the broad family key
 - Current deterministic contract:
@@ -250,6 +251,7 @@ Current recommendation on registry shape:
   - no polarity/scope-eligible corruption anchor inside an otherwise generic five-target hard-vocab bundle
   - no collocation-eligible corruption anchor inside an otherwise generic five-target hard-vocab bundle
   - no stable five-target bundle with enough spread across context for the easier hard underlined subtypes
+  - for `contextual_vocab_correct_among_4_corrupted_5`, no five-target bundle whose four corrupted replacements remain plausible enough to avoid a single absurd giveaway
   - no clear deterministic unique-survivor margin for `contextual_vocab_correct_among_3_corrupted_5`
   - target cue count too weak for stable contextual recovery
   - extra untouched item not uniquely weaker or still too answer-like in `contextual_vocab_correct_among_3_corrupted_5`

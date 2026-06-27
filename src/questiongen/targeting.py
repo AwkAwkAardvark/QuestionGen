@@ -525,13 +525,10 @@ def vocab_hard_bundle(prepared_source: PreparedSource, subtype_key: str) -> Voca
         return None
 
     if subtype_key == "contextual_vocab_correct_among_4_corrupted_5":
-        selected = _best_generic_hard_bundle(inventory)
-        if selected is None:
+        bundle = _best_correct_among_4_bundle(inventory)
+        if bundle is None:
             return None
-        return VocabHardBundle(
-            selected_spans=selected,
-            answer_span_id=_strongest_bundle_span_id(selected),
-        )
+        return bundle
 
     if subtype_key == "contextual_vocab_error_1_among_5_5":
         selected = _best_generic_hard_bundle(inventory)
@@ -1463,6 +1460,75 @@ def vocab_target_is_collocation_eligible(span: SpanUnit) -> bool:
     return _collocation_frame_support_score(span) >= 3
 
 
+def vocab_target_supports_soft_corruption(span: SpanUnit) -> bool:
+    tags = set(span.heuristic_tags)
+    cue_count = vocab_choice_target_cue_count(span)
+    if cue_count < 2 or span.priority_score < 5:
+        return False
+    if "abstract_term" in tags and not (
+        {"phrase_frame", "claim_bearing", "antonym_invertible"} & tags
+        or vocab_target_is_polarity_scope_eligible(span)
+        or vocab_target_is_collocation_eligible(span)
+    ):
+        return False
+    if vocab_target_is_polarity_scope_eligible(span) or vocab_target_is_collocation_eligible(span):
+        return True
+    if "antonym_invertible" in tags:
+        return True
+    if _context_content_token_count(span.context_before) >= 1 and _context_content_token_count(span.context_after) >= 1:
+        return True
+    if "phrase_frame" in tags and _collocation_partner_count(span) >= 1:
+        return True
+    if (
+        "claim_bearing" in tags
+        and _context_content_token_count(span.context_before) >= 2
+        and _context_content_token_count(span.context_after) >= 2
+    ):
+        return True
+    return False
+
+
+def vocab_correct_among_4_bundle_error(
+    selected_spans: list[SpanUnit] | tuple[SpanUnit, ...],
+    answer_span_id: str,
+) -> str | None:
+    if len(selected_spans) != 5:
+        return "requires a five-target bundle."
+    selected_by_id = {span.id: span for span in selected_spans}
+    if answer_span_id not in selected_by_id:
+        return "requires an answer_span_id drawn from the locked bundle."
+    non_answer_spans = [span for span in selected_spans if span.id != answer_span_id]
+    if len(non_answer_spans) != 4:
+        return "requires exactly four non-answer targets to corrupt."
+    if any(not vocab_target_supports_soft_corruption(span) for span in non_answer_spans):
+        return (
+            "requires four corruption-friendly non-answer targets so the wrong items do not collapse "
+            "into obvious absurdities."
+        )
+    return None
+
+
+def vocab_correct_among_4_corruption_error(span: SpanUnit, replacement_text: str) -> str | None:
+    replacement_tokens = _span_tokens(replacement_text)
+    if not replacement_tokens:
+        return "requires readable lexical corruptions, not empty replacements."
+    if len(replacement_tokens) == 1:
+        replacement = replacement_tokens[0]
+        if replacement in _FUNCTION_WORDS or is_auxiliary_like(replacement):
+            return "requires lexical corruptions, not function-word or auxiliary swaps."
+        if _looks_grammarish_choice_text(replacement_text):
+            return "requires lexical corruptions, not grammar-like swaps."
+        if replacement in _LOW_VALUE_FACTUAL_WORDS and (
+            _has_strong_content_profile(set(span.heuristic_tags))
+            or vocab_choice_target_cue_count(span) >= 3
+        ):
+            return (
+                "requires local contextual distortions, not low-value factual swaps that make the "
+                "wrong item obviously absurd."
+            )
+    return None
+
+
 def _correct_among_3_answer_like_profile_count(span: SpanUnit) -> int:
     tags = set(span.heuristic_tags)
     cue_count = vocab_choice_target_cue_count(span)
@@ -1569,6 +1635,26 @@ def _best_hard_bundle_with_eligible(
             continue
         if any(predicate(span) for span in bundle):
             return tuple(bundle)
+    return None
+
+
+def _best_correct_among_4_bundle(inventory: list[SpanUnit]) -> VocabHardBundle | None:
+    if len(inventory) < 5:
+        return None
+    ranked = sorted(
+        [inventory[start : start + 5] for start in range(len(inventory) - 4)],
+        key=lambda spans: _hard_bundle_window_score(spans),
+        reverse=True,
+    )
+    for bundle in ranked:
+        if not _bundle_is_stable_for_generic_hard_vocab(bundle):
+            continue
+        answer_span_id = _strongest_bundle_span_id(tuple(bundle))
+        if vocab_correct_among_4_bundle_error(bundle, answer_span_id) is None:
+            return VocabHardBundle(
+                selected_spans=tuple(bundle),
+                answer_span_id=answer_span_id,
+            )
     return None
 
 
