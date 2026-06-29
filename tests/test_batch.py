@@ -842,25 +842,20 @@ class BatchTests(unittest.TestCase):
         self.assertNotEqual(correct4_result.status, "planning_error")
 
     def test_hard_vocab_subtypes_produce_passes_on_sample_reaudit(self) -> None:
-        sample_path = Path("sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv")
+        sample_path = Path("sample_data/Olymforce_cleaned_final.csv")
         if not sample_path.exists():
             self.skipTest(f"Missing local sample fixture: {sample_path}")
         with sample_path.open("r", encoding="utf-8-sig", newline="") as handle:
             sample_rows = list(csv.DictReader(handle))
 
         runner = compile_question_graph(structured_llm_factory=lambda schema: _HardVocabAuditPlanner(schema))
-        seen_sources: set[str] = set()
         rows: list[BatchInputRow] = []
         for sample_row in sample_rows:
-            source = sample_row["source_paragraph"]
-            if source in seen_sources:
-                continue
-            seen_sources.add(source)
             rows.append(
                 BatchInputRow(
                     OriginalQuestionNumber=str(sample_row["OriginalQuestionNumber"]),
                     BatchRowId=len(rows),
-                    source_paragraph=source,
+                    source_paragraph=sample_row["source_paragraph"],
                 )
             )
 

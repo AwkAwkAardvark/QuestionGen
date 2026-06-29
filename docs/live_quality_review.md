@@ -42,6 +42,8 @@ Immediate review target from this reread:
 
 The two checked-in CSV review artifacts under `sample_data/output/` are evidence for quality review only. They are not the runtime contract, and they were generated before the current hard-vocab rescue landed on `main`.
 
+The checked-in source corpus behind those `34`-passage reviews is `sample_data/Olymforce_cleaned_final.csv`, which should be the default fresh-rerun input for current-code `vocab` re-baselining when the older output artifacts are missing locally.
+
 `Olymforce_cleaned_spellchecked_nobom_20260625_104227.csv`
 
 - shape: `34` source passages expanded across `3` live families for `102` exported rows
