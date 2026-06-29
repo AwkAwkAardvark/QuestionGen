@@ -674,6 +674,46 @@ class _NonQuotaPlanningErrorRunner:
 
 
 class BatchTests(unittest.TestCase):
+    _HARD_VOCAB_REAUDIT_SCENARIOS = [
+        {
+            "row": BatchInputRow(
+                OriginalQuestionNumber="VOC-HARD-01",
+                BatchRowId=0,
+                source_paragraph=(
+                    "City planners recently tested brighter LED lights on several downtown blocks. "
+                    "The new lights make crosswalks easier to see after sunset. "
+                    "They also use less electricity than the older lights. "
+                    "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+                    "Residents say the brighter crosswalks feel safer at night. "
+                    "Officials now plan to expand the same lighting system to nearby neighborhoods."
+                ),
+            ),
+            "subtypes": [
+                "contextual_vocab_correct_among_4_corrupted_5",
+                "contextual_vocab_error_1_among_5_5",
+                "contextual_vocab_error_1_among_5_polarity_scope_5",
+                "contextual_vocab_correct_among_3_corrupted_5",
+            ],
+        },
+        {
+            "row": BatchInputRow(
+                OriginalQuestionNumber="VOC-HARD-02",
+                BatchRowId=1,
+                source_paragraph=(
+                    "Volunteers collect medical supplies before each storm. "
+                    "Nurses protect emergency access around the clinic. "
+                    "Drivers reduce speed near the narrow bridge. "
+                    "Teachers improve safety drills during the winter term. "
+                    "Engineers expand backup power for the shelter. "
+                    "Families open extra rooms for displaced neighbors."
+                ),
+            ),
+            "subtypes": [
+                "contextual_vocab_error_1_among_5_collocation_5",
+            ],
+        },
+    ]
+
     @staticmethod
     def _load_fixture_row(question_number: str) -> BatchInputRow:
         fixture_path = Path(__file__).resolve().parents[1] / "sample_data" / "sample_question.csv"
@@ -841,24 +881,8 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(correct4_result.status, "qtype_incompatibility_error")
         self.assertNotEqual(correct4_result.status, "planning_error")
 
-    def test_hard_vocab_subtypes_produce_passes_on_sample_reaudit(self) -> None:
-        sample_path = Path("sample_data/Olymforce_cleaned_final.csv")
-        if not sample_path.exists():
-            self.skipTest(f"Missing local sample fixture: {sample_path}")
-        with sample_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            sample_rows = list(csv.DictReader(handle))
-
+    def test_hard_vocab_subtypes_produce_passes_on_inline_reaudit(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _HardVocabAuditPlanner(schema))
-        rows: list[BatchInputRow] = []
-        for sample_row in sample_rows:
-            rows.append(
-                BatchInputRow(
-                    OriginalQuestionNumber=str(sample_row["OriginalQuestionNumber"]),
-                    BatchRowId=len(rows),
-                    source_paragraph=sample_row["source_paragraph"],
-                )
-            )
-
         hard_subtypes = [
             "contextual_vocab_correct_among_4_corrupted_5",
             "contextual_vocab_error_1_among_5_5",
@@ -868,8 +892,9 @@ class BatchTests(unittest.TestCase):
         ]
 
         results = []
-        for row in rows:
-            for subtype in hard_subtypes:
+        for scenario in self._HARD_VOCAB_REAUDIT_SCENARIOS:
+            row = scenario["row"]
+            for subtype in scenario["subtypes"]:
                 prepared = prepare_source(row.source_paragraph)
                 results.append(
                     runner.invoke(
@@ -891,10 +916,10 @@ class BatchTests(unittest.TestCase):
 
         for subtype in hard_subtypes:
             subtype_results = [result for result in results if result["QuestionSubtypeKey"] == subtype]
-            self.assertTrue(subtype_results, msg=f"Expected rows for {subtype} in sample re-audit.")
+            self.assertTrue(subtype_results, msg=f"Expected inline re-audit rows for {subtype}.")
             self.assertTrue(
                 any(result["status"] == "validation_passed" for result in subtype_results),
-                msg=f"Expected at least one validation_passed row for {subtype} in sample re-audit.",
+                msg=f"Expected at least one validation_passed inline re-audit row for {subtype}.",
             )
             self.assertFalse(
                 any(
@@ -907,7 +932,7 @@ class BatchTests(unittest.TestCase):
                     )
                     for result in subtype_results
                 ),
-                msg=f"Did not expect schema-shaped planning_error rows for {subtype} in sample re-audit.",
+                msg=f"Did not expect schema-shaped planning_error rows for {subtype} in inline re-audit.",
             )
 
     def test_quota_failure_triggers_batch_global_fail_fast(self) -> None:

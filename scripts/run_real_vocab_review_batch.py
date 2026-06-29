@@ -11,22 +11,21 @@ from questiongen.config import create_structured_llm
 from questiongen.graph import compile_question_graph
 
 
-DEFAULT_INPUT_CSV = Path("sample_data/Olymforce_cleaned_final.csv")
 DEFAULT_OUTPUT_DIR = Path("artifacts/real_vocab_review_batch")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run a fresh real vocab-only batch on the checked-in 34-passage "
-            "review corpus and write CSV, JSON, Markdown, and summary artifacts."
+            "Run a fresh real vocab-only batch on an explicit input corpus and "
+            "write CSV, JSON, Markdown, and summary artifacts."
         )
     )
     parser.add_argument(
         "--input-csv",
         type=Path,
-        default=DEFAULT_INPUT_CSV,
-        help="CSV with OriginalQuestionNumber and source_paragraph columns.",
+        required=True,
+        help="CSV with OriginalQuestionNumber and source_paragraph columns to review.",
     )
     parser.add_argument(
         "--output-dir",
