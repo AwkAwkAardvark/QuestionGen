@@ -27,12 +27,13 @@ from questiongen.prompts import (
     build_vocab_prompt,
 )
 from questiongen.question_types import MOOD_ATMOSPHERE_SPEC, QUESTION_SUBTYPE_SPECS, QUESTION_TYPES
-from questiongen.renderers import render_vocab
+from questiongen.renderers import render_grammar, render_vocab
 from questiongen.schemas import (
     ContextualVocabChoiceDraft,
     ContextualVocabChoicePlan,
     FillInTheBlankDraft,
     FillInTheBlankPlan,
+    GrammarDesign,
     GrammarPlan,
     MoodAtmospherePlan,
     ParagraphOrderingPlan,
@@ -409,7 +410,9 @@ class _VocabPlanner:
             )
         if active_subtype == "contextual_vocab_error_1_among_5_collocation_5":
             target_ids, target_texts = zip(*targets[:5])
-            if locked_corruptible_ids:
+            if locked_answer_id:
+                collocation_target_id = locked_answer_id
+            elif locked_corruptible_ids:
                 collocation_target_id = locked_corruptible_ids[0]
             else:
                 collocation_target_id = target_ids[target_texts.index("ignore")] if "ignore" in target_texts else target_ids[-1]
@@ -1618,6 +1621,83 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("따라서 ③의'Inequality'만 문맥을 유지하고", explanation)
         self.assertNotIn("따라서 ①의'Inequality'", explanation)
 
+    def test_grammar_explanation_uses_rendered_source_order_marker(self) -> None:
+        source = (
+            "The city can reduce energy use without raising taxes. "
+            "Officials plan to expand the lighting system next month. "
+            "Residents say the brighter streets feel safer at night. "
+            "Engineers are testing whether the new lamps last longer in winter. "
+            "The mayor hopes to show that the project saves money over time. "
+            "Teachers report that students now walk home with more confidence."
+        )
+        prepared = prepare_source(source)
+        inventory = grammar_target_inventory(prepared)
+        span_map = {span.text.lower(): span for span in inventory}
+        targets = [
+            span_map["testing"],
+            span_map["reduce"],
+            span_map["expand"],
+            span_map["show"],
+            span_map["raising"],
+        ]
+        corrupted_span = span_map["show"]
+        plan = GrammarPlan(
+            subtype="verb_form",
+            target_span_ids=[targets[3].id, targets[1].id, targets[4].id, targets[0].id, targets[2].id],
+            target_span_texts=[targets[3].text, targets[1].text, targets[4].text, targets[0].text, targets[2].text],
+            corrupted_span_id=corrupted_span.id,
+            corrupted_word="showed",
+            correction_basis_ko="이 자리는 조동사 뒤이므로 동사원형이 유지되어야 합니다",
+            supporting_evidence="The mayor hopes to show that the project saves money over time.",
+            explanation="초안입니다.",
+        )
+        design = GrammarDesign(
+            family_key="grammar",
+            subtype_key="grammar_error_verb_form_5",
+            subtype="verb_form",
+            target_span_ids=plan.target_span_ids,
+            target_span_texts=plan.target_span_texts,
+            corrupted_span_id=plan.corrupted_span_id,
+            prompt_payload={},
+        )
+        rendered = render_grammar(
+            {
+                **self.state,
+                "source_paragraph": source,
+                "QuestionTypeKey": "grammar",
+                "QuestionSubtypeKey": "grammar_error_verb_form_5",
+                "QuestionFormatKey": "grammar_error_verb_form_5",
+                "prepared_source": prepared,
+                "plan": plan,
+            },
+            QUESTION_SUBTYPE_SPECS["grammar_error_verb_form_5"],
+        )
+        self.assertEqual(rendered["generated"].answer, "⑤")
+        context_result = build_explanation_context(
+            {
+                **self.state,
+                **rendered,
+                "prepared_source": prepared,
+                "plan": plan,
+                "design": design,
+                "QuestionTypeKey": "grammar",
+            }
+        )
+        rewrite_result = write_teacher_facing_explanation(
+            {
+                **self.state,
+                **rendered,
+                **context_result,
+                "prepared_source": prepared,
+                "plan": plan,
+                "design": design,
+                "QuestionTypeKey": "grammar",
+            }
+        )
+        explanation = rewrite_result["generated"].explanation or ""
+        self.assertIn("따라서 ⑤의'showed'는 맞지 않고", explanation)
+        self.assertNotIn("따라서 ①의'showed'는 맞지 않고", explanation)
+
     def test_graph_rewrites_vocab_explanation_from_source_evidence(self) -> None:
         runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabDriftPlanner())
         state = {
@@ -1647,7 +1727,7 @@ class PlannerTests(unittest.TestCase):
         result = runner.invoke(state)
         self.assertEqual(result["status"], "validation_passed")
         explanation = result["generated"].explanation or ""
-        self.assertIn("동사 형태", explanation)
+        self.assertIn("동사원형", explanation)
         self.assertIn("lighting system to nearby neighborhoods", explanation)
         self.assertNotIn("그 구조를 보여 주므로", explanation)
         self.assertNotIn("자유서술 문법 해설", explanation)

@@ -180,6 +180,7 @@
   - current hardening policy:
     - design should lock a target whose recovery requires broader passage reasoning, not immediate source restoration
     - proposition and summary blanks must use a non-identical `correct_choice`
+    - `blank_connective_relation_5_choices` should admit only short connective-style completions; clause stubs or sentence fragments should fail earlier as `qtype_incompatibility_error`
     - if a weaker blank subtype can only reuse the same restoration-style span, it should fail early as `qtype_incompatibility_error` rather than ship a redundant row
   - completed structural rescue:
     - the anti-restoration hardening pass is the completed structural rescue for this family
@@ -219,8 +220,9 @@
     - [x] keep subtype-specific post-plan checks strict: corruption counts, source-order uniqueness, slot compatibility, no near-synonym corruption, rendered uniqueness, one-best-answer behavior, polarity/scope-only checks, collocation-only checks, and uniquely stronger surviving-answer checks for `contextual_vocab_correct_among_3_corrupted_5`
     - [x] tighten the hard-vocab planner and repair prompts so retries explicitly react to insufficient distinct targets, ambiguity between surviving answers, wrong corruption class, slot-width drift, and duplicate rendered targets
     - [x] for `contextual_vocab_error_1_among_5_polarity_scope_5`, lock a five-target bundle that includes an explicit polarity/scope-eligible corruption subset and fail early as `qtype_incompatibility_error` when no such anchor exists
-    - [x] for `contextual_vocab_error_1_among_5_collocation_5`, lock a five-target bundle that includes an explicit collocation-eligible corruption subset and fail early as `qtype_incompatibility_error` when no such local phrase-frame or selectional anchor exists
+    - [x] for `contextual_vocab_error_1_among_5_collocation_5`, lock one stable collocation target in design rather than letting the planner drift across a wider eligible subset, and fail early as `qtype_incompatibility_error` when no unique local phrase-frame or selectional anchor exists
     - [x] for `contextual_vocab_correct_among_4_corrupted_5` and `contextual_vocab_error_1_among_5_5`, replace the raw “first five” lock with a stable-bundle selector that penalizes clustered frames and locks the answer marker in design
+    - [x] for `contextual_vocab_correct_among_4_corrupted_5`, require four locally anchored corruption-friendly distractors so the accepted row does not collapse into “spot the absurd one”
     - [x] for `contextual_vocab_correct_among_3_corrupted_5`, lock both the intended answer span and the weaker untouched distractor in design and reject both flat-strength bundles and answer-like extra survivors as `qtype_incompatibility_error`
     - [x] clean exported `vocab` explanations in the same pass so they do not open with raw quoted English evidence and they strip duplicated Korean memo boilerplate such as repeated `이 자리에는 ...`
     - [x] keep regression coverage that re-audits checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv` source passages and requires every hard `vocab` subtype to produce at least some `validation_passed` rows with no schema-shaped `planning_error`
@@ -251,6 +253,10 @@
     - `grammar_error_parallel_structure_5`
     - `grammar_error_conjunction_preposition_5`
   - shipped policy: the broad `grammar` family now expands into multiple controlled subtype rows instead of one generic verb-form row
+  - current hardening policy:
+    - keep the live family restricted to controlled structural corruption and reject pseudo-word outputs such as malformed inflectional inventions before they can pass validation
+    - prefer earlier `qtype_incompatibility_error` when a would-be verb-family target is not a real controlled verb-form anchor
+    - keep explanation marker references aligned with the rendered answer numbering
   - current explanation policy: prefer local structural-cue explanations that name the governing evidence, and reject malformed memo-style Korean notes before export
 
 ### Multi-span acceptance

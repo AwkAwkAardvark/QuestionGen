@@ -1018,6 +1018,10 @@ def _validate_vocab_design(
             ]
             if invalid_ids:
                 return ["UnderlinedVocabDesign collocation subset must contain only collocation-eligible targets."]
+            if design.answer_span_id is None:
+                return ["UnderlinedVocabDesign collocation subtype requires a locked answer_span_id."]
+            if design.answer_span_id not in design.corruptible_span_ids:
+                return ["UnderlinedVocabDesign collocation subtype answer_span_id must come from the locked corruptible subset."]
         if type_spec.subtype_key in {
             "contextual_vocab_correct_among_4_corrupted_5",
             "contextual_vocab_error_1_among_5_5",
@@ -1108,6 +1112,11 @@ def _validate_vocab_plan_against_design(
                 errors.append("UnderlinedVocabPlan answer_span_id must match the locked design corrupted target.")
             if design.answer_span_id is not None and set(plan.corrupted_replacement_map()) != {design.answer_span_id}:
                 errors.append("UnderlinedVocabPlan must corrupt only the locked design target for contextual_vocab_error_1_among_5.")
+        if type_spec.subtype_key == "contextual_vocab_error_1_among_5_collocation_5":
+            if design.answer_span_id is not None and plan.answer_span_id != design.answer_span_id:
+                errors.append("UnderlinedVocabPlan answer_span_id must match the locked design collocation target.")
+            if design.answer_span_id is not None and set(plan.corrupted_replacement_map()) != {design.answer_span_id}:
+                errors.append("UnderlinedVocabPlan must corrupt only the locked design collocation target.")
         if type_spec.subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
             corrupted_ids = set(plan.corrupted_replacement_map())
             locked_untouched_ids = {

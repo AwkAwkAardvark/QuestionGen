@@ -1585,6 +1585,53 @@ class ValidatorTests(unittest.TestCase):
             [],
         )
 
+    def test_fill_in_the_blank_connective_compatibility_rejects_clause_stub_target(self) -> None:
+        source = (
+            "The bridge sensors kept warning about hidden ice. "
+            "Because the lights use less electricity, buses slowed down before reaching the hill. "
+            "Drivers reported fewer sudden stops after the route changed."
+        )
+        span_text = "Because the lights use less electricity"
+        span_start = source.index(span_text)
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="The bridge sensors kept warning about hidden ice.", index=0),
+                SourceUnit(
+                    id="S1",
+                    text="Because the lights use less electricity, buses slowed down before reaching the hill.",
+                    index=1,
+                ),
+                SourceUnit(id="S2", text="Drivers reported fewer sudden stops after the route changed.", index=2),
+            ],
+            gap_units=[
+                GapUnit(id=f"G{index}", index=index, before_unit_id=f"S{index - 1}" if index > 0 else None, after_unit_id=f"S{index}" if index < 3 else None)
+                for index in range(4)
+            ],
+            span_units=[
+                SpanUnit(
+                    id="P0",
+                    text=span_text,
+                    normalized_text=span_text,
+                    char_start=span_start,
+                    char_end=span_start + len(span_text),
+                    sentence_unit_id="S1",
+                    sentence_index=1,
+                    context_before="",
+                    context_after=", buses slowed down before reaching the hill.",
+                    heuristic_tags=["contextual_cue", "phrase_frame", "claim_bearing"],
+                    priority_score=7,
+                )
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["blank_connective_relation_5_choices"],
+        )
+        self.assertTrue(errors)
+        self.assertTrue(any("suitable contextual span" in error or "connective" in error for error in errors))
+
     def test_vocab_validator_rejects_duplicate_targets(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "
@@ -2479,6 +2526,22 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("local phrase-frame or selectional mismatch" in error for error in invalid_errors))
 
+    def test_underlined_vocab_collocation_design_locks_single_corruption_target(self) -> None:
+        source = (
+            "Leaders cease wasteful spending during droughts. "
+            "Engineers expand storage when demand rises. "
+            "Families ignore rumors during emergencies. "
+            "Stronger pumps reduce pressure loss across the valley. "
+            "Volunteers protect the main channel from damage. "
+            "Teachers discuss the results every Friday."
+        )
+        prepared = prepare_source(source)
+        bundle = vocab_hard_bundle(prepared, "contextual_vocab_error_1_among_5_collocation_5")
+        self.assertIsNotNone(bundle)
+        assert bundle is not None
+        self.assertEqual(len(bundle.corruptible_span_ids), 1)
+        self.assertEqual(bundle.answer_span_id, bundle.corruptible_span_ids[0])
+
     def test_collocation_compatibility_rejects_broad_semantic_substitution_frame(self) -> None:
         source = (
             "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
@@ -2647,6 +2710,38 @@ class ValidatorTests(unittest.TestCase):
             QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
         )
         self.assertTrue(any("low-value factual swaps" in error for error in errors))
+
+    def test_correct_among_4_compatibility_rejects_one_sided_bundle(self) -> None:
+        prepared = _manual_prepared_source_with_vocab_spans(
+            [
+                "Community happiness grows.",
+                "Relative wealth matters.",
+                "Widening inequality hurts.",
+                "Persistent discontent spreads.",
+                "Public dignity weakens.",
+            ],
+            [
+                (0, "happiness", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue", "claim_bearing"], 7),
+                (1, "wealth", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue", "claim_bearing"], 7),
+                (2, "inequality", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue", "claim_bearing"], 8),
+                (3, "discontent", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue", "claim_bearing"], 7),
+                (4, "dignity", ["single_word", "vocab_candidate", "abstract_term", "contextual_cue", "claim_bearing"], 7),
+            ],
+        )
+        prepared = prepared.model_copy(
+            update={
+                "span_units": [
+                    span.model_copy(update={"context_before": "single cue", "context_after": ""})
+                    for span in prepared.span_units
+                ]
+            }
+        )
+        errors = validate_question_type_compatibility(
+            prepared.source_text,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_4_corrupted_5"],
+        )
+        self.assertTrue(any("corruption-friendly distractors" in error for error in errors))
 
     def test_correct_among_4_plan_allows_local_contextual_distortions(self) -> None:
         sentences = [
@@ -3056,6 +3151,43 @@ class ValidatorTests(unittest.TestCase):
         errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["grammar"])
 
         self.assertTrue(any("malformed pseudo-word" in error for error in errors))
+
+    def test_grammar_compatibility_filters_nonverbial_verb_family_targets(self) -> None:
+        source = "Initially, teams moved carefully. Gradually, workers responded quickly. Finally, crews acted calmly."
+        prepared = PreparedSource(
+            source_text=source,
+            sentence_units=[
+                SourceUnit(id="S0", text="Initially, teams moved carefully.", index=0),
+                SourceUnit(id="S1", text="Gradually, workers responded quickly.", index=1),
+                SourceUnit(id="S2", text="Finally, crews acted calmly.", index=2),
+            ],
+            gap_units=[
+                GapUnit(id=f"G{index}", index=index, before_unit_id=f"S{index - 1}" if index > 0 else None, after_unit_id=f"S{index}" if index < 3 else None)
+                for index in range(4)
+            ],
+            span_units=[
+                SpanUnit(
+                    id=f"P{index}",
+                    text=text,
+                    normalized_text=text,
+                    char_start=index * 20,
+                    char_end=index * 20 + len(text),
+                    sentence_unit_id=f"S{index // 2}",
+                    sentence_index=index // 2,
+                    context_before="to ",
+                    context_after=" next",
+                    heuristic_tags=["single_word", "grammar_candidate", "finite_nonfinite_candidate"],
+                    priority_score=6,
+                )
+                for index, text in enumerate(["initially", "carefully", "gradually", "quickly", "calmly"])
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            source,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["grammar_error_finite_nonfinite_5"],
+        )
+        self.assertTrue(any("five workable targets" in error for error in errors))
 
     def test_grammar_compatibility_mentions_verb_form_targets(self) -> None:
         source = "Birds sing softly at dawn. Leaves fall slowly in autumn."

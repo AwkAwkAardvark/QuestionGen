@@ -252,8 +252,10 @@ class _StubPlanner:
                 replacements = {polarity_target_id: polarity_replacement}
                 answer_span_id = polarity_target_id
             elif subtype == "contextual_error_1_among_5_collocation":
-                collocation_target_id = locked_corruptible_ids[0] if locked_corruptible_ids else (
+                collocation_target_id = locked_answer_id or (
+                    locked_corruptible_ids[0] if locked_corruptible_ids else (
                     target_ids[target_texts.index("ignore")] if "ignore" in target_texts else target_ids[-1]
+                    )
                 )
                 replacements = {collocation_target_id: "collect"}
                 answer_span_id = collocation_target_id
@@ -436,7 +438,7 @@ class _HardVocabAuditPlanner:
             eligible_infos = [
                 info for info in target_infos if not locked_corruptible_ids or info["span_id"] in set(locked_corruptible_ids)
             ]
-            corruption_target_id = str(eligible_infos[corruption_index]["span_id"])
+            corruption_target_id = locked_answer_id or str(eligible_infos[corruption_index]["span_id"])
             subtype = "contextual_error_1_among_5_collocation"
             replacements = [
                 {"span_id": corruption_target_id, "replacement_text": replacement_text},

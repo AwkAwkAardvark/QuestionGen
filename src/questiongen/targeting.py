@@ -572,17 +572,7 @@ def vocab_hard_bundle(prepared_source: PreparedSource, subtype_key: str) -> Voca
         )
 
     if subtype_key == "contextual_vocab_error_1_among_5_collocation_5":
-        selected = _best_hard_bundle_with_eligible(
-            inventory,
-            predicate=vocab_target_is_collocation_eligible,
-        )
-        if selected is None:
-            return None
-        selected_eligible_ids = tuple(span.id for span in selected if vocab_target_is_collocation_eligible(span))
-        return VocabHardBundle(
-            selected_spans=selected,
-            corruptible_span_ids=selected_eligible_ids,
-        )
+        return _best_collocation_bundle(inventory)
 
     if subtype_key == "contextual_vocab_correct_among_3_corrupted_5":
         for start in range(len(inventory) - 4):
@@ -624,19 +614,35 @@ def grammar_target_inventory(prepared_source: PreparedSource) -> list[SpanUnit]:
 def grammar_subtype_inventory(prepared_source: PreparedSource, subtype_key: str) -> list[SpanUnit]:
     inventory = grammar_target_inventory(prepared_source)
     if subtype_key == "grammar_error_verb_form_5":
-        return [span for span in inventory if "verb_form_candidate" in span.heuristic_tags]
+        return [
+            span
+            for span in inventory
+            if "verb_form_candidate" in span.heuristic_tags and grammar_target_supports_controlled_verb_family(span)
+        ]
     if subtype_key == "grammar_error_subject_verb_agreement_5":
         return [span for span in inventory if "subject_verb_agreement_candidate" in span.heuristic_tags]
     if subtype_key == "grammar_error_finite_nonfinite_5":
-        return [span for span in inventory if "finite_nonfinite_candidate" in span.heuristic_tags]
+        return [
+            span
+            for span in inventory
+            if "finite_nonfinite_candidate" in span.heuristic_tags and grammar_target_supports_controlled_verb_family(span)
+        ]
     if subtype_key == "grammar_error_participle_voice_5":
-        return [span for span in inventory if "participle_voice_candidate" in span.heuristic_tags]
+        return [
+            span
+            for span in inventory
+            if "participle_voice_candidate" in span.heuristic_tags and grammar_target_supports_controlled_verb_family(span)
+        ]
     if subtype_key == "grammar_error_relative_clause_5":
         return [span for span in inventory if "relative_clause_candidate" in span.heuristic_tags]
     if subtype_key == "grammar_error_noun_clause_introducer_5":
         return [span for span in inventory if "noun_clause_candidate" in span.heuristic_tags]
     if subtype_key == "grammar_error_parallel_structure_5":
-        return [span for span in inventory if "parallel_structure_candidate" in span.heuristic_tags]
+        return [
+            span
+            for span in inventory
+            if "parallel_structure_candidate" in span.heuristic_tags and grammar_target_supports_controlled_verb_family(span)
+        ]
     if subtype_key == "grammar_error_conjunction_preposition_5":
         return [span for span in inventory if "conjunction_preposition_candidate" in span.heuristic_tags]
     return inventory
@@ -787,6 +793,7 @@ def fill_blank_span_quality_error(span: SpanUnit) -> str | None:
 
 
 def fill_blank_connective_quality_error(span: SpanUnit) -> str | None:
+    normalized = normalize_text(span.text).lower()
     tokens = _span_tokens(span.text)
     content_count = _content_word_count(tokens)
     if not tokens:
@@ -799,6 +806,12 @@ def fill_blank_connective_quality_error(span: SpanUnit) -> str | None:
         return "Selected span crosses punctuation and is not a clean connective blank."
     if not _has_explicit_relation_cue(span.text):
         return "Selected span is not explicitly relation-bearing enough for a connective blank."
+    if len(tokens) > 5:
+        return "Selected span is too long and reads like a clause stub rather than a connective completion."
+    if content_count > 2 and normalized not in _RELATION_CUE_PHRASES:
+        return "Selected span expands into a clause stub rather than a short connective-style completion."
+    if len(tokens) > 4 and normalized not in _RELATION_CUE_PHRASES:
+        return "Selected span is too long to stay a short connective-style completion."
     if _fill_blank_contextual_anchor_count(span) < 1:
         return "Selected span does not preserve enough surrounding support for a connective blank."
     if tokens and (tokens[-1] in _FUNCTION_WORDS or is_auxiliary_like(tokens[-1])):
@@ -1410,6 +1423,55 @@ def malformed_verb_form_reason(original_word: str, corrupted_word: str) -> str |
     return None
 
 
+_NONVERBIAL_LY_EXCEPTIONS = {
+    "apply",
+    "comply",
+    "deny",
+    "imply",
+    "multiply",
+    "occupy",
+    "qualify",
+    "rely",
+    "reply",
+    "supply",
+    "verify",
+}
+_NONVERBIAL_VERB_FAMILY_BLOCKLIST = {
+    "better",
+    "best",
+    "less",
+    "least",
+    "more",
+    "most",
+    "that",
+    "these",
+    "this",
+    "those",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "whose",
+    "why",
+}
+
+
+def grammar_target_supports_controlled_verb_family(span: SpanUnit) -> bool:
+    token = normalize_english_word(span.text)
+    if not token or len(_span_tokens(span.text)) != 1:
+        return False
+    if token in _NONVERBIAL_VERB_FAMILY_BLOCKLIST:
+        return False
+    if token.endswith("ly") and token not in _NONVERBIAL_LY_EXCEPTIONS:
+        return False
+    if token.endswith(("er", "est")) and token not in _IRREGULAR_VARIANT_INDEX:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Near-synonym denial (for vocab validator)
 # ---------------------------------------------------------------------------
@@ -1629,6 +1691,8 @@ def vocab_target_supports_soft_corruption(span: SpanUnit) -> bool:
     cue_count = vocab_choice_target_cue_count(span)
     if cue_count < 2 or span.priority_score < 5:
         return False
+    left_support = _context_content_token_count(span.context_before)
+    right_support = _context_content_token_count(span.context_after)
     if "abstract_term" in tags and not (
         {"phrase_frame", "claim_bearing", "antonym_invertible"} & tags
         or vocab_target_is_polarity_scope_eligible(span)
@@ -1639,14 +1703,15 @@ def vocab_target_supports_soft_corruption(span: SpanUnit) -> bool:
         return True
     if "antonym_invertible" in tags:
         return True
-    if _context_content_token_count(span.context_before) >= 1 and _context_content_token_count(span.context_after) >= 1:
+    if left_support >= 1 and right_support >= 1:
         return True
-    if "phrase_frame" in tags and _collocation_partner_count(span) >= 1:
+    if "phrase_frame" in tags and _collocation_partner_count(span) >= 1 and (left_support >= 1 or right_support >= 1):
         return True
     if (
         "claim_bearing" in tags
-        and _context_content_token_count(span.context_before) >= 2
-        and _context_content_token_count(span.context_after) >= 2
+        and left_support >= 2
+        and right_support >= 2
+        and cue_count >= 3
     ):
         return True
     return False
@@ -1690,6 +1755,8 @@ def vocab_correct_among_4_corruption_error(span: SpanUnit, replacement_text: str
                 "requires local contextual distortions, not low-value factual swaps that make the "
                 "wrong item obviously absurd."
             )
+    if _context_content_token_count(span.context_before) < 1 or _context_content_token_count(span.context_after) < 1:
+        return "requires locally anchored lexical competitors, not targets supported only from one side."
     return None
 
 
@@ -1802,6 +1869,36 @@ def _best_hard_bundle_with_eligible(
     return None
 
 
+def _best_unique_collocation_anchor_id(bundle: tuple[SpanUnit, ...]) -> str | None:
+    eligible = [span for span in bundle if vocab_target_is_collocation_eligible(span)]
+    if not eligible:
+        return None
+    ranked = sorted(
+        eligible,
+        key=lambda span: (
+            _collocation_frame_support_score(span),
+            vocab_target_strength_score(span),
+            span.priority_score,
+            -span.char_start,
+        ),
+        reverse=True,
+    )
+    if len(ranked) >= 2:
+        top_score = (
+            _collocation_frame_support_score(ranked[0]),
+            vocab_target_strength_score(ranked[0]),
+            ranked[0].priority_score,
+        )
+        next_score = (
+            _collocation_frame_support_score(ranked[1]),
+            vocab_target_strength_score(ranked[1]),
+            ranked[1].priority_score,
+        )
+        if top_score == next_score:
+            return None
+    return ranked[0].id
+
+
 def _best_correct_among_4_bundle(inventory: list[SpanUnit]) -> VocabHardBundle | None:
     if len(inventory) < 5:
         return None
@@ -1819,6 +1916,29 @@ def _best_correct_among_4_bundle(inventory: list[SpanUnit]) -> VocabHardBundle |
                 selected_spans=tuple(bundle),
                 answer_span_id=answer_span_id,
             )
+    return None
+
+
+def _best_collocation_bundle(inventory: list[SpanUnit]) -> VocabHardBundle | None:
+    if len(inventory) < 5:
+        return None
+    ranked = sorted(
+        [inventory[start : start + 5] for start in range(len(inventory) - 4)],
+        key=lambda spans: _hard_bundle_window_score(spans),
+        reverse=True,
+    )
+    for candidate in ranked:
+        bundle = tuple(candidate)
+        if not _bundle_is_stable_for_generic_hard_vocab(candidate):
+            continue
+        answer_span_id = _best_unique_collocation_anchor_id(bundle)
+        if answer_span_id is None:
+            continue
+        return VocabHardBundle(
+            selected_spans=bundle,
+            corruptible_span_ids=(answer_span_id,),
+            answer_span_id=answer_span_id,
+        )
     return None
 
 

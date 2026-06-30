@@ -37,6 +37,11 @@ Conclusions from that dump to reject as stale:
 Immediate review target from this reread:
 
 - a fresh live export review on current code must replace reliance on stale checked-in artifacts when judging current `vocab` quality and post-hardening `fill_in_the_blank`
+- the current hardening pass should tighten the remaining deterministic weak points before that rerun:
+  - `blank_connective_relation_5_choices` should reject clause-stub targets earlier as `qtype_incompatibility_error`
+  - `contextual_vocab_error_1_among_5_collocation_5` should lock one design-stage corruption anchor instead of letting the planner choose across a broader eligible subset
+  - `contextual_vocab_correct_among_4_corrupted_5` should reject bundles whose four wrong items are only absurd one-off distortions rather than locally plausible lexical competitors
+  - `grammar` should reject pseudo-word corruptions and keep explanation markers aligned with the rendered answer
 
 ## 2026-06-25 Checked-In CSV Audit
 
@@ -257,6 +262,12 @@ Current acceptance boundary for this rescue:
 - current quality problem to harden: reject bundles or draft plans that collapse into "find the only absurd underline" behavior
 - current repo-truth boundary: the four corrupted targets should still look like locally plausible lexical-slot competitors, not semantically loud, unrelated, or giveaway-absurd replacements
 - when no such bundle exists for a passage, prefer `qtype_incompatibility_error` over shipping an easy survivor item
+
+## Current `grammar` Target
+
+- keep the live `grammar` registry shape unchanged in this cycle; the task is hardening, not subtype expansion
+- current quality problem to harden: reject malformed pseudo-words such as adverb-plus-`-ing` inventions or non-verb comparative drift before they reach `validation_passed`
+- current repo-truth boundary: explanation rewrites must cite the same rendered marker as `answer`, even when design target order differs from source order
 
 ## Explanation Quality Policy For High-Pass Families
 
