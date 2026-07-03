@@ -64,9 +64,9 @@ Latest gating lessons from sample review:
   - they should not be used as current evidence that the hard underlined `vocab` subtypes are fundamentally incompatible with those passages
 - `ResponseFeedbackDump` is still useful for prioritization, but stale as a direct diagnosis because it assumes only a subset of live `vocab` subtypes and treats those old schema failures as subtype-quality evidence
 - the main current signal is live-family quality, not operations:
-  - `paragraph_ordering` is the clearest next hardening target because the sample still shows a concentrated cluster of weak-adjacency rows reaching late `planning_error`
-  - `sentence_insertion` and `underlined_phrase_meaning` still need quality work, but their current sample failures are less concentrated than the `paragraph_ordering` issue
-- the next live-quality pass should therefore harden `paragraph_ordering` adjacency strength and suitability gating first, then return to cross-family explanation quality
+  - the `paragraph_ordering` adjacency/suitability pass is now the landed branch policy, so it is no longer the active next-target note
+  - the next concrete live-quality target is `contextual_vocab_correct_among_4_corrupted_5`, because current review evidence points to accepted bundles that can collapse into "find the only absurd underline" behavior
+- the current live-quality pass should therefore keep `contextual_vocab_correct_among_4_corrupted_5` live while rejecting bundles or draft plans whose four corrupted targets are too semantically loud, too unrelated, or otherwise giveaway-absurd
 - current live families should reject weak items more aggressively before any further family expansion or review-baseline regeneration
 - the current explanation-quality rule for high-pass families is:
   - `fill_in_the_blank`, `vocab`, and `grammar` should anchor explanations in supporting evidence first
@@ -75,6 +75,7 @@ Latest gating lessons from sample review:
   - keep `contextual_vocab_choice_5` as the strongest demonstrated baseline, but push harder against too-local or too-easy blank targets
   - treat the hard underlined `vocab` family as the next highest-value runtime-quality surface now that it is no longer blocked by schema failure
   - review `contextual_vocab_best_paraphrase_choice_5` and especially `contextual_vocab_correct_among_3_corrupted_5` as ambiguity-risk branches rather than as automatically safe extensions of the baseline choice subtype
+  - move subtype-specific ambiguity control earlier into deterministic design whenever a planner-only fix would otherwise leave multiple defensible survivors or weak corruption anchors
 - model-tier specialization is a later optimization problem, not part of the current MVP hardening pass
 
 ## `vocab` vs `grammar` Boundary Policy
@@ -222,11 +223,20 @@ Current recommendation on registry shape:
 - Current live policy:
   - treat the baseline subtype as contextual lexical substitution, not source restoration
   - use the best-paraphrase subtype when the correct answer must be a non-identical closest paraphrase and the unchanged source wording must disappear from the options entirely
+  - best-paraphrase target admission is intentionally stricter than the baseline choice subtype and now rejects weak grammar-heavy anchors such as bare wh-words, discourse markers, and degree markers unless they also carry strong content-bearing evidence
   - use the phrase-choice subtype when the target and all options must remain phrase-level rather than mixing word and phrase slots
+  - phrase-choice admission is intentionally narrow and now rejects weak determiner-led or fragmentary embedded phrases early as `qtype_incompatibility_error`
   - allow the baseline and phrase-choice answers to differ from the original source wording when a stronger contextual replacement exists
   - keep the hard family as five numbered underlined targets rendered in source order
   - use the polarity/scope subtype only when the one corruption is specifically a direction, degree, or scope distortion
+  - polarity/scope design now locks an explicit corruption-eligible subset inside the five-target bundle and rejects generic five-target passages that lack a real directional or scope-bearing anchor
   - use the collocation subtype only when the one corruption is specifically a natural-combination or selectional mismatch
+  - `ResponseFeedbackDump` is review evidence only: phrase-choice rejection and polarity/scope directionality looked healthy there, but collocation still needed a narrower deterministic boundary
+  - collocation design now locks an explicit corruption-eligible subset inside the five-target bundle and rejects generic five-target passages that lack a real local phrase-frame or selectional anchor
+  - collocation also now rejects semantic-frame-adjacent but still natural broad substitutions such as `wealth -> income` as `qtype_incompatibility_error` rather than stretching the subtype
+  - `contextual_vocab_correct_among_4_corrupted_5` and `contextual_vocab_error_1_among_5_5` now use a deterministic stable-bundle selector instead of blindly locking the first five clean hard candidates, and both subtypes lock their answer marker in design
+  - for `contextual_vocab_correct_among_4_corrupted_5`, that stable-bundle policy is not enough by itself: bundles or draft plans that turn the task into spotting one absurd underline should fail as `qtype_incompatibility_error` rather than ship as easy passes
+  - `contextual_vocab_correct_among_3_corrupted_5` now locks both the answer span and the weaker untouched distractor during deterministic design and rejects flat-strength or answer-like extra-survivor bundles rather than letting the planner improvise the survivor pair
   - keep all live subtypes single-answer exports under the broad family key
 - Current deterministic contract:
   - blank-choice vocab stores both original source wording and best-fit answer wording
@@ -238,8 +248,13 @@ Current recommendation on registry shape:
 - Current incompatibility patterns:
   - fewer than 5 clean lexical-slot candidates in the broader hard-candidate inventory for hard subtypes
   - fewer than 1 strong lexical-slot target for the blank-choice subtype
+  - no polarity/scope-eligible corruption anchor inside an otherwise generic five-target hard-vocab bundle
+  - no collocation-eligible corruption anchor inside an otherwise generic five-target hard-vocab bundle
+  - no stable five-target bundle with enough spread across context for the easier hard underlined subtypes
+  - for `contextual_vocab_correct_among_4_corrupted_5`, no five-target bundle whose four corrupted replacements remain plausible enough to avoid a single absurd giveaway
+  - no clear deterministic unique-survivor margin for `contextual_vocab_correct_among_3_corrupted_5`
   - target cue count too weak for stable contextual recovery
-  - extra untouched item not uniquely weaker in `contextual_vocab_correct_among_3_corrupted_5`
+  - extra untouched item not uniquely weaker or still too answer-like in `contextual_vocab_correct_among_3_corrupted_5`
 - Current hard-family planning policy:
   - parser-derived scores, cue counts, and source anchors remain visible in the prompt as ranked hints
   - those parser hints should bias selection, but they are not a strict pre-planning veto once five clean lexical-slot candidates exist

@@ -67,6 +67,8 @@
 - [x] Expose notebook-side `REPO_BRANCH_OPTIONS` under Advanced Settings, default `REPO_BRANCH` to `main`, validate the selection against the allowlist, and clone the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
 - [x] Add notebook-side `BOOTSTRAP_ENV`, `RESET_REPO`, and `RUN_REPO_TESTS` controls so routine reruns can skip package reinstall churn while branch validation can still refresh pushed code safely.
 - [x] Keep third-party dependency bootstrap separate from repo refresh, and keep local repo-code loading on `REPO_DIR / "src"` rather than on routine `%pip install -e ...` reruns.
+- [x] Auto-bootstrap missing third-party runtime dependencies on a clean kernel before the first `questiongen` import, while keeping `BOOTSTRAP_ENV=True` as a force-reinstall path.
+- [x] Probe raw runtime modules before any `questiongen` import in the maintained notebooks, and persist restart-required state across reruns after bootstrap or repo refresh touches an already-imported kernel.
 - [x] Sync an existing Colab runtime clone to the latest pushed commit on the selected branch instead of blindly reusing a stale `/content/QuestionGen` checkout.
 - [x] Fail fast with a restart-required message if the notebook kernel already imported `questiongen` and the user requests a repo refresh or environment bootstrap.
 - [x] Fail fast on missing third-party runtime imports such as `langchain_openai` before starting batch execution or Gradio launch, instead of exporting row-by-row `planning_error` noise.
@@ -169,12 +171,20 @@
   - first-release target: contextual paraphrase / 함축 의미 추론, not literal translation
   - shipped v1 policy: self-select one phrase, prefer abstract or claim-bearing spans, use Korean contextual paraphrase choices, and render `[밑줄]...[/밑줄]` in exports
 - [x] `fill_in_the_blank`
-  - rollout policy: live now for MVP, even if distractor quality and semantic recoverability remain rough
+  - rollout policy: live now, but only when the locked target supports inference-style completion rather than literal source restoration
   - live subtype set:
     - `blank_inference_proposition_5_choices`
     - `blank_connective_relation_5_choices`
     - `blank_summary_completion_5_choices`
   - shipped policy: selected broad-family runs expand to multiple blank subtypes, each with subtype-specific inventories and incompatibility gates
+  - current hardening policy:
+    - design should lock a target whose recovery requires broader passage reasoning, not immediate source restoration
+    - proposition and summary blanks must use a non-identical `correct_choice`
+    - `blank_connective_relation_5_choices` should admit only short connective-style completions; clause stubs or sentence fragments should fail earlier as `qtype_incompatibility_error`
+    - if a weaker blank subtype can only reuse the same restoration-style span, it should fail early as `qtype_incompatibility_error` rather than ship a redundant row
+  - completed structural rescue:
+    - the anti-restoration hardening pass is the completed structural rescue for this family
+    - the next cycle should not reopen blank-family subtype pruning, registry reshaping, or export-schema redesign unless a later deliberate policy decision says otherwise
   - current explanation policy: rewrite exported explanations from supporting evidence plus cleaned Korean meaning notes, and reject malformed memo-style phrasing rather than exporting awkward `...라는 의미` boilerplate
 
 ### Single-span acceptance
@@ -201,6 +211,7 @@
     - `contextual_vocab_correct_among_3_corrupted_5`
   - shipped policy: broad-family runs now produce three blank-choice contextual substitution subtypes plus five underlined multi-target corruption/diagnosis subtypes
   - current hardening policy: the blank-choice branch now distinguishes baseline contextual substitution, strict non-restoration best-paraphrase selection, and phrase-only lexical substitution; renderer choice order remains deterministically shuffled from `BatchRowId` and subtype key; the hard family now uses structured-output-safe ordered `corrupted_replacements` records instead of a dict-shaped field; validators reject weak targets, unchanged-source best-paraphrase answers, phrase-width drift, wrong corruption class, near-synonym drift, rendered-underline collisions, and non-unique remaining answers
+  - current subtype-hardening pass: ambiguity control for four live vocab subtypes now happens earlier in deterministic design rather than relying on the planner to repair weak bundles later
   - current hard-family admission and prompting policy:
     - [x] keep all five hard underlined vocab subtypes live with the structured-output-safe ordered replacement-record collection
     - [x] update planner canonicalization, deterministic validators, renderers, explanation-context assembly, and tests together around that new replacement shape
@@ -208,16 +219,28 @@
     - [x] keep parser-derived scores, cue counts, and source anchors visible to the planner as ranked hints rather than as a hard admission veto
     - [x] keep subtype-specific post-plan checks strict: corruption counts, source-order uniqueness, slot compatibility, no near-synonym corruption, rendered uniqueness, one-best-answer behavior, polarity/scope-only checks, collocation-only checks, and uniquely stronger surviving-answer checks for `contextual_vocab_correct_among_3_corrupted_5`
     - [x] tighten the hard-vocab planner and repair prompts so retries explicitly react to insufficient distinct targets, ambiguity between surviving answers, wrong corruption class, slot-width drift, and duplicate rendered targets
+    - [x] for `contextual_vocab_error_1_among_5_polarity_scope_5`, lock a five-target bundle that includes an explicit polarity/scope-eligible corruption subset and fail early as `qtype_incompatibility_error` when no such anchor exists
+    - [x] for `contextual_vocab_error_1_among_5_collocation_5`, lock one stable collocation target in design rather than letting the planner drift across a wider eligible subset, and fail early as `qtype_incompatibility_error` when no unique local phrase-frame or selectional anchor exists
+    - [x] for `contextual_vocab_correct_among_4_corrupted_5` and `contextual_vocab_error_1_among_5_5`, replace the raw “first five” lock with a stable-bundle selector that penalizes clustered frames and locks the answer marker in design
+    - [x] for `contextual_vocab_correct_among_4_corrupted_5`, require four locally anchored corruption-friendly distractors so the accepted row does not collapse into “spot the absurd one”
+    - [x] for `contextual_vocab_correct_among_3_corrupted_5`, lock both the intended answer span and the weaker untouched distractor in design and reject both flat-strength bundles and answer-like extra survivors as `qtype_incompatibility_error`
     - [x] clean exported `vocab` explanations in the same pass so they do not open with raw quoted English evidence and they strip duplicated Korean memo boilerplate such as repeated `이 자리에는 ...`
     - [x] keep regression coverage that re-audits checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv` source passages and requires every hard `vocab` subtype to produce at least some `validation_passed` rows with no schema-shaped `planning_error`
   - next quality-pass priorities on top of the hard-schema rescue:
     - [x] record the checked-in `2026-06-25` sample-output CSVs and `ResponseFeedbackDump` as review evidence rather than as contract truth
+    - [x] keep treating `ResponseFeedbackDump` as review evidence only: phrase-choice rejection and polarity/scope directionality were healthy signals, while `correct_among_3` survivor ambiguity and broad collocation drift required stricter deterministic gates
     - [x] document that the old `35` hard-family `400` rows in `111945` are stale schema artifacts, not current-code subtype verdicts
     - [x] re-audit current deterministic compatibility on those same `34` checked-in `vocab` source passages to separate post-fix behavior from stale pre-fix CSV evidence
     - [ ] rerun a fresh live `vocab` sample export on current code so artifact review is no longer anchored to pre-fix planner output
-    - [ ] prioritize hard underlined subtype pass/fail quality after the schema fix, especially whether accepted rows still feel exam-natural
-    - [ ] tighten blank-choice target quality against too-local / too-easy targets without regressing subtype coverage
-    - [ ] scrutinize ambiguity risk in `contextual_vocab_best_paraphrase_choice_5` and `contextual_vocab_correct_among_3_corrupted_5` before expanding confidence in those branches
+    - [ ] re-baseline hard `vocab` subtype pass/fail quality on that fresh export, especially whether accepted rows still feel exam-natural rather than like "pick the absurd one"
+    - [ ] harden explanation quality across `vocab`, `fill_in_the_blank`, and `grammar` after the fresh `vocab` review identifies recurring weak-but-valid patterns
+    - [ ] run a fresh mixed-batch audit after those `vocab` plus explanation-quality passes
+    - [x] tighten blank-choice target quality against too-local / too-easy targets without regressing subtype coverage
+    - [x] scrutinize ambiguity risk in `contextual_vocab_best_paraphrase_choice_5` and `contextual_vocab_correct_among_3_corrupted_5` by moving more rejection logic into deterministic design and compatibility gates
+  - immediate next-cycle boundary:
+    - use fresh current-code exports as the truth surface for the next `vocab` review cycle, with older checked-in CSVs and `ResponseFeedbackDump` kept only as historical comparison artifacts
+    - keep the broad-family registry and export contract stable while refining subtype-level design gates, prompts, validators, and explanation writers
+    - do not treat the next cycle as subtype pruning, registry reshaping, or export-schema redesign
 - [x] `grammar`
   - rollout policy: live now with subtype-specific compatibility gates and batch fan-out
   - live subtype set:
@@ -230,6 +253,10 @@
     - `grammar_error_parallel_structure_5`
     - `grammar_error_conjunction_preposition_5`
   - shipped policy: the broad `grammar` family now expands into multiple controlled subtype rows instead of one generic verb-form row
+  - current hardening policy:
+    - keep the live family restricted to controlled structural corruption and reject pseudo-word outputs such as malformed inflectional inventions before they can pass validation
+    - prefer earlier `qtype_incompatibility_error` when a would-be verb-family target is not a real controlled verb-form anchor
+    - keep explanation marker references aligned with the rendered answer numbering
   - current explanation policy: prefer local structural-cue explanations that name the governing evidence, and reject malformed memo-style Korean notes before export
 
 ### Multi-span acceptance
@@ -284,6 +311,7 @@ Landed hardening contract:
   - `underlined_phrase_meaning`
   - `grammar`
 - [x] Move source-owned text selection out of LLM authority for the migrated live families.
+- [x] Treat subtype-critical ambiguity control as design-stage state when a live family cannot safely rely on planner free choice.
 - [x] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
 
 ## Stable Workflow Commitments
@@ -325,4 +353,4 @@ Landed hardening contract:
 - [x] `QUESTION_TYPES` remains the live default-registry surface, while dormant implemented families such as `mood_atmosphere` stay outside it until later reactivation work.
 - [x] Batch execution may short-circuit further LLM attempts after the first `insufficient_quota` failure, but exported result counts must still equal input rows times active question types.
 - [x] Future async exploration, if any, should start at the batch or row/type orchestration layer without changing current question-type semantics or exported row counts.
-- [x] After the current hardening baseline, reopen qtype-specific refinement planning with priority on `grammar` and `vocab`.
+- [x] After the current hardening baseline, reopen qtype-specific refinement planning with priority on fresh `vocab` live-quality re-baselining, then explanation hardening across `vocab`, `fill_in_the_blank`, and `grammar`.

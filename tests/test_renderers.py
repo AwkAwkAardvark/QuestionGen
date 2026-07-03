@@ -269,16 +269,16 @@ class RendererTests(unittest.TestCase):
             selected_span_id=selected_span.id,
             selected_span_text=selected_span.text,
             completion_choices=[
-                selected_span.text,
-                "more confusion among the residents",
-                "a weaker plan for nearby roads",
-                "fewer reasons to expand the system",
-                "higher costs for the city budget",
+                "improve safety while keeping the energy budget unchanged",
+                "create more confusion among the residents",
+                "slow the expansion of nearby neighborhoods",
+                "raise costs without improving crosswalk visibility",
+                "reduce safety to cut the energy budget",
             ],
-            correct_choice=selected_span.text,
-            contextual_meaning_ko="원문의 핵심 설명이 복원되어야 한다는 의미",
-            supporting_evidence=selected_span.text,
-            explanation="문맥상 원문의 핵심 설명이 복원되어야 합니다.",
+            correct_choice="improve safety while keeping the energy budget unchanged",
+            contextual_meaning_ko="이 빈칸은 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과를 복원해야 합니다",
+            supporting_evidence="Because the lights use less electricity",
+            explanation="문맥상 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과를 복원해야 합니다.",
         )
         result = render_fill_in_the_blank(
             {

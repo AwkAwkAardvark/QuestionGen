@@ -141,52 +141,49 @@ UNDERLINED_PHRASE_MEANING_PLANNER_PROMPT = """
 
 FILL_PROPOSITION_PLANNER_PROMPT = """
 - Set `subtype` to `proposition_inference`.
-- Self-select exactly one span candidate from the provided phrase-span inventory.
-- Prefer a proposition-like, clause-level, claim-bearing, reason-bearing, effect-bearing, contrast-bearing, or limitation-bearing span.
-- If no strongly proposition-like span exists, still prefer the most readable clause-sized contextual span rather than falling back to a local phrase fragment.
+- Use the locked blank target from design; do not choose a new span.
+- Treat the blank as a passage-level claim, mechanism, consequence, contrast, or limitation to be recovered by reasoning from the remaining passage.
 - Do not generate a trivial lexical blank or a pure grammar blank.
-- Reject punctuation-crossing chunks unless the selected span remains a complete clause-level unit.
-- Reject blanks that mainly restore a short surface phrase, connective fragment, or mechanically copied wording.
-- Copy the selected span ID into `selected_span_id` and the exact source text into `selected_span_text`.
 - Do not alter the source passage text or generate final student-facing paragraph text.
 - Create exactly five unique English completion choices in `completion_choices`.
-- Set `correct_choice` to the one option that best restores the original passage meaning.
-- Keep distractors readable English and broadly on-topic while changing claim, scope, polarity, or relation.
+- Set `correct_choice` to the one option that best completes the blanked passage meaningfully in context, not to a verbatim source copy.
+- `correct_choice` must differ from `selected_span_text`, and the unchanged source wording must not remain in `completion_choices`.
+- Keep distractors readable English, slot-compatible, and passage-relevant while changing claim, scope, polarity, or relation.
 - Set `contextual_meaning_ko` to a short Korean teacher-facing note describing what idea the blank must convey.
 - Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment. Avoid endings such as `...라는 의미` or bare noun phrases that will sound awkward when inserted into a full explanation sentence.
-- Copy `supporting_evidence` as a short exact snippet from the passage that best supports the correct completion.
+- Copy `supporting_evidence` as a short exact snippet from the broader passage support line, not just the deleted source wording alone.
 - Write the explanation entirely in Korean.
 """.strip()
 
 FILL_CONNECTIVE_PLANNER_PROMPT = """
 - Set `subtype` to `connective_relation`.
-- Self-select exactly one short relation-bearing span from the provided connective-oriented span inventory.
-- Prefer spans whose core work is to restore contrast, cause, concession, condition, consequence, or emphasis between adjacent clauses.
-- Reject long summary-like spans, lexical-only blanks, or blanks that are recoverable without discourse relation reading.
-- Copy the selected span ID into `selected_span_id` and the exact source text into `selected_span_text`.
+- Use the locked blank target from design; do not choose a new span.
+- Treat the blank as a discourse-relation recovery task: contrast, cause, concession, condition, consequence, or emphasis between surrounding clauses.
+- Reject answers that merely restore a local phrase without actually recovering the intended relation.
 - Do not alter the source passage text or generate final student-facing paragraph text.
 - Create exactly five unique English completion choices.
-- Exactly one choice should preserve the original discourse relation; distractors should stay readable but shift relation, polarity, or logical direction.
-- Set `correct_choice` to the one option that restores the intended relation.
+- Exactly one choice should preserve the intended discourse relation; distractors should stay readable, slot-compatible, and shift relation, polarity, or logical direction.
+- Set `correct_choice` to the one option that best restores the intended relation.
+- If `correct_choice` differs from `selected_span_text`, the unchanged source wording must not remain in `completion_choices`.
 - Set `contextual_meaning_ko` to a short Korean note naming the relation the blank must restore.
 - Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment. Avoid endings such as `...라는 의미`.
-- Copy `supporting_evidence` as a short exact snippet from the surrounding passage that reveals that relation.
+- Copy `supporting_evidence` as a short exact snippet from the surrounding passage that reveals that relation, not just the deleted wording alone.
 - Write the explanation entirely in Korean.
 """.strip()
 
 FILL_SUMMARY_PLANNER_PROMPT = """
 - Set `subtype` to `summary_completion`.
-- Self-select exactly one summary-worthy span from the provided summary-oriented span inventory.
-- Prefer conclusion-like, compression-friendly, claim-bearing, or passage-payoff spans, especially near the end of the passage.
-- Reject short connectives, local phrase fragments, or spans that only restore a surface wording detail.
-- Copy the selected span ID into `selected_span_id` and the exact source text into `selected_span_text`.
+- Use the locked blank target from design; do not choose a new span.
+- Treat the blank as a passage-level takeaway or compression task, not as a literal sentence restoration task.
+- Prefer a completion that expresses the passage payoff in fresh contextual wording rather than copying the deleted phrase.
 - Do not alter the source passage text or generate final student-facing paragraph text.
 - Create exactly five unique English completion choices.
-- Exactly one choice should best complete the passage-level takeaway; distractors should stay passage-relevant but distort the main point, scope, or conclusion.
-- Set `correct_choice` to the one option that restores the intended summary/compression.
+- Exactly one choice should best complete the passage-level takeaway; distractors should stay passage-relevant, slot-compatible, and distort the main point, scope, or conclusion.
+- Set `correct_choice` to the one option that best completes the intended summary/compression.
+- `correct_choice` must differ from `selected_span_text`, and the unchanged source wording must not remain in `completion_choices`.
 - Set `contextual_meaning_ko` to a short Korean note describing the passage-level takeaway the blank must complete.
 - Write `contextual_meaning_ko` as natural Korean explanation material, not as a memo fragment. Avoid endings such as `...라는 의미`.
-- Copy `supporting_evidence` as a short exact snippet that anchors that takeaway.
+- Copy `supporting_evidence` as a short exact snippet that anchors that takeaway, not just the deleted wording alone.
 - Write the explanation entirely in Korean.
 """.strip()
 
@@ -322,12 +319,12 @@ VOCAB_ERROR_1_AMONG_5_COLLOCATION_PLANNER_PROMPT = """
 - Select exactly five unique target IDs from the provided lexical-slot vocab inventory.
 - The targets may be English words or short lexical phrases, but each must stay within a single lexical slot rather than a clause.
 - Reject punctuation-crossing chunks, finite-clause chunks, proper nouns, technical labels, low-value factual terms, and grammar-only function words.
-- Prefer targets whose original wording forms a natural local combination that can be made subtly wrong through collocation or selectional-restriction mismatch.
+- Prefer targets whose original wording forms a clear local phrase-frame or selectional pairing with a real neighboring lexical partner.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
 - Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly one of the five selected targets is corrupted.
 - Set `answer_span_id` to that one corrupted underlined item.
-- The corrupted replacement must remain grammatically readable and slot-compatible, but it must become wrong through collocation mismatch or selectional-restriction mismatch.
-- Do not use pure polarity reversal, broad semantic opposites, rare-word difficulty alone, or an ungrammatical replacement.
+- The corrupted replacement must remain grammatically readable and slot-compatible, but it must become wrong through a local phrase-frame or selectional-restriction mismatch.
+- Do not use pure polarity reversal, broad semantic opposites, broad near-domain substitutions, rare-word difficulty alone, or an ungrammatical replacement.
 - Keep the other four underlined items unchanged from the source.
 - Set `selection_basis_ko` to a short Korean teacher-facing note describing why the original wording is the only natural local combination in context.
 - Copy `supporting_evidence` as a short exact passage snippet that supports the diagnosis.
@@ -342,8 +339,9 @@ VOCAB_CORRECT_AMONG_3_CORRUPTED_PLANNER_PROMPT = """
 - Prefer high-centrality targets whose meaning is recoverable from at least two independent contextual cues.
 - Treat `target_span_ids` as the authoritative source-owned contract and let `target_span_texts` mirror those IDs exactly.
 - Build `corrupted_replacements` as an ordered list of `{span_id, replacement_text}` records so exactly three of the five selected targets are contextually corrupted.
-- Exactly two underlined items will remain uncorrupted; set `answer_span_id` to the one that is most strongly and uniquely supported by the passage.
-- Use the extra uncorrupted item only if it is clearly weaker or less central than the answer under the passage evidence.
+- Exactly two underlined items will remain uncorrupted; preserve the locked survivor pair and set `answer_span_id` to the locked item that is most strongly and uniquely supported by the passage.
+- Use the extra uncorrupted item only if it is clearly weaker and more secondary than the answer under the passage evidence.
+- Do not turn the extra untouched item into a second plausible correct answer.
 - Every corrupted replacement must stay locally readable and slot-compatible, while failing semantically by polarity reversal, scope distortion, discourse-role mismatch, collocation mismatch, selectional-restriction mismatch, or evaluative stance drift.
 - Do not use near-synonyms, loose paraphrases, rare-word difficulty alone, or replacements that become ungrammatical instead of semantically wrong.
 - Set `selection_basis_ko` to a short Korean teacher-facing note describing why the answer item alone remains the best contextual fit.

@@ -156,10 +156,11 @@ class ConsoleProgressRenderer:
         update = self._last_update
         spinner = self.spinner_frames[self._spinner_index]
         if update is None:
-            return f"{spinner} 0/0 | waiting | pending | preparing"
+            return f"0/0 | waiting | pending | preparing {spinner}"
         return (
-            f"{spinner} {update.completed_items}/{max(update.total_items, 1)} | "
-            f"{self._row_label(update)} | {self._subtype_label(update)} | {self._status_label(update)}"
+            f"{update.completed_items}/{max(update.total_items, 1)} | "
+            f"{self._row_label(update)} | {self._subtype_label(update)} | "
+            f"{self._status_label(update)} {spinner}"
         )
 
     def _build_final_line(self, *, success: bool, message: str | None) -> str:

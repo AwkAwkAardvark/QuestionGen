@@ -337,6 +337,7 @@ Return only structured data matching the required schema.
 Question type:
 - Key: fill_in_the_blank
 - Label: {type_spec.family_label_ko}
+- Active subtype: {type_spec.subtype_key}
 - Student-facing stem: {type_spec.question_stem}
 
 Planning rules:
@@ -347,6 +348,11 @@ Source paragraph:
 
 Locked blank target:
 {payload["selected_span_line"]}
+
+Locked design facts:
+- Inference test: {payload["inference_test"]}
+- Anti-restoration rule: {payload["anti_restoration_rule"]}
+- Support context: {payload["support_context"]}
 
 Selection reminders:
 - The deterministic design stage already locked the blank target.
@@ -371,7 +377,9 @@ Repair rules:
 - Return a fully corrected answer.
 - Re-check that `completion_choices` contains exactly five unique readable English choices.
 - Re-check that `correct_choice` is one of `completion_choices`.
-- Re-check that `supporting_evidence` is copied as an exact passage snippet.
+- Re-check that proposition and summary blanks use a non-identical `correct_choice`, not verbatim source restoration.
+- Re-check that when `correct_choice` differs from the locked source wording, the unchanged source wording does not remain in `completion_choices` as a second defensible option.
+- Re-check that `supporting_evidence` is copied as an exact broader passage snippet, not just the deleted source wording alone.
 - The deterministic design stage already locked `selected_span_id` and `selected_span_text`; do not change them.
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains what idea the blank must express, without schema fields or mechanics.
@@ -414,16 +422,24 @@ Source paragraph:
 Locked five-target bundle:
 {payload["target_bundle"]}
 
+Locked subtype structure:
+- If `corruptible_subset` is present below, only those locked target IDs may be corrupted.
+{f"- Polarity/scope-eligible subset:\\n{payload['corruptible_subset']}" if payload.get("corruptible_subset") else "- No extra corruption subset beyond the full locked bundle."}
+{f"- Locked answer_span_id: {payload['answer_span_id']}" if payload.get("answer_span_id") else ""}
+{f"- Locked weaker untouched distractor id: {payload['untouched_distractor_span_id']}" if payload.get("untouched_distractor_span_id") else ""}
+
 Selection reminders:
 - Follow the active subtype exactly and keep subtype identity explicit in the returned schema.
 - The deterministic design stage already locked the five targets.
 - Return hard-family corruptions as an ordered `corrupted_replacements` list of records with `span_id` and `replacement_text`, not as a free-form mapping.
 - Every corrupted replacement must stay readable in the same local slot, while becoming semantically wrong.
+- If a locked `answer_span_id` is shown above for this subtype, do not change it; build the corruption pattern around that fixed answer marker.
 - If the active subtype is `contextual_vocab_correct_among_4_corrupted_5`, exactly four items must be corrupted and exactly one item must remain clearly correct.
-- If the active subtype is `contextual_vocab_error_1_among_5_5`, exactly one item must be corrupted and the other four must remain unchanged.
-- If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must fail specifically by polarity, degree, or scope drift.
-- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must fail by collocation or selectional mismatch, not by broad opposite meaning.
-- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, exactly three items must be corrupted, exactly two must remain unchanged, and only one unchanged item may remain the uniquely strongest answer.
+- If the active subtype is `contextual_vocab_error_1_among_5_5`, exactly one item must be corrupted and the other four must remain unchanged. If a locked `answer_span_id` is provided, that is the one item to corrupt.
+- If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, the one wrong item must come from the locked polarity/scope-eligible subset and must fail specifically by polarity, degree, or scope drift.
+- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, the one wrong item must come from the locked collocation-eligible subset and must fail by a local phrase-frame or selectional mismatch, not by a broad same-domain substitution or broad opposite meaning.
+- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, exactly three items must be corrupted and the only unchanged pair allowed is the locked `answer_span_id` plus the locked weaker untouched distractor.
+- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, preserve that locked survivor pair exactly and do not invent a second plausible correct item.
 - If the subtype asks for the correct remaining item, make sure only one answer is defensible from the passage evidence.
 """.strip()
     return f"""
@@ -443,7 +459,7 @@ Planning rules:
 Source paragraph:
 {payload["source_paragraph"]}
 
-Locked target:
+{payload.get("locked_target_label", "Locked target")}:
 {payload["selected_span_line"]}
 
 Selection reminders:
@@ -451,7 +467,9 @@ Selection reminders:
 - The deterministic design stage already locked the lexical slot.
 - Every option must stay readable in the same local slot.
 - `selected_span_text` is the locked original source wording, but `correct_choice` should be the best contextual fit and may differ from the source wording.
+- If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, frame the task as choosing the closest lexical restatement of the locked content target, not as grammar repair or source restoration.
 - If the active subtype is `contextual_vocab_best_paraphrase_choice_5`, `correct_choice` must be a non-identical best paraphrase and the original wording must not appear in `choice_words`.
+- If the active subtype is `contextual_vocab_phrase_choice_5`, frame the task as replacing the locked phrase frame or collocational unit with the best phrase-level alternative, not as generic multiword paraphrase.
 - If the active subtype is `contextual_vocab_phrase_choice_5`, the selected target and every choice must stay phrase-level, never single-word, and should preserve phrase-slot width tightly.
 - Otherwise prefer a strong non-identical contextual replacement when one exists; exact source wording is allowed but not required.
 - The other four options must be contextually wrong, not near-synonymous or jointly defensible.
@@ -480,7 +498,8 @@ Repair rules:
 - If the active subtype is `contextual_vocab_phrase_choice_5`, re-check that `selected_span_text` and every option are multiword phrases with tight slot-width preservation.
 - If the active subtype is an underlined vocab item, do not change the locked target bundle; re-check the corruption count, whether `answer_span_id` matches the stem direction, and whether `corrupted_replacements` is an ordered list of `{{span_id, replacement_text}}` records.
 - If the active subtype is `contextual_vocab_error_1_among_5_polarity_scope_5`, re-check that the one corruption is specifically a polarity, degree, or scope distortion.
-- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, re-check that the one corruption is a collocation or selectional mismatch rather than a broad opposite.
+- If the active subtype is `contextual_vocab_error_1_among_5_collocation_5`, re-check that the one corruption is a local phrase-frame or selectional mismatch rather than a broad same-domain substitution or broad opposite.
+- If the active subtype is `contextual_vocab_correct_among_3_corrupted_5`, preserve the locked answer span and locked weaker untouched distractor exactly; do not leave a second equally plausible survivor.
 - Re-check that every option stays in the same local slot and remains readable in context.
 - Re-check that the wrong options are semantically wrong, not merely rare, ungrammatical, or near-synonymous.
 - If the previous error mentions ambiguity or multiple defensible answers, rebuild all distractors from scratch around clearer polarity, scope, collocation, or discourse-role mismatches.

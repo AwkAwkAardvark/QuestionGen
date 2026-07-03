@@ -80,9 +80,10 @@ Launcher responsibilities:
   - `RESET_REPO`
   - `RUN_REPO_TESTS`
 - validate the selected branch against that allowlist before clone or refresh
-- bootstrap third-party dependencies only when explicitly requested
+- bootstrap third-party dependencies when explicitly requested, and auto-bootstrap missing runtime packages on a clean kernel before the first `questiongen` import when safe
 - clone or refresh the selected allowlisted pushed repo branch
 - prepend `REPO_DIR / "src"` to `sys.path` and invalidate import caches after clone or reuse
+- probe raw runtime modules such as `langchain_openai` and `gradio` before any `questiongen` import needed for batch or UI launch
 - validate required third-party runtime imports before batch execution or Gradio launch, and fail once with bootstrap guidance if they are missing
 - run fresh-subprocess repo tests for pushed-branch validation when requested
 - launch the Gradio UI from `runner_ui.ipynb`
@@ -175,9 +176,11 @@ Supported controls:
 
 Rules:
 
-- `BOOTSTRAP_ENV=True` installs third-party dependencies only. It should not be the normal rerun path.
+- `BOOTSTRAP_ENV=True` forces a third-party dependency reinstall. It should not be the normal rerun path.
+- On a clean kernel with `BOOTSTRAP_ENV=False`, the maintained notebooks may auto-install missing runtime packages before repo-backed `questiongen` execution starts.
 - The normal rerun path should skip both third-party bootstrap and package reinstall.
 - Repo code should be loaded from `REPO_DIR / "src"` on `sys.path`, not by routine editable installs.
+- Missing runtime modules should be checked before importing `questiongen` itself, so a first-run dependency failure does not leave a partially imported package tree in the kernel.
 - `RESET_REPO=True` should remove the existing clone if present, then reclone the selected pushed branch cleanly.
 - `RESET_REPO=False` should still sync the existing clone to the latest remote commit on the selected pushed branch rather than blindly reusing a stale checkout.
 - The notebooks should always call `importlib.invalidate_caches()` after clone or reuse.
@@ -186,6 +189,7 @@ Rules:
 - If `questiongen` is already imported in the notebook kernel and the user requests `RESET_REPO=True` or `BOOTSTRAP_ENV=True`, the notebook should fail fast with a clear restart-required message rather than attempting package-tree reloads.
 - If the existing runtime clone advances to a newer commit on the selected branch, that repo update should also be treated as restart-required before any in-kernel `questiongen` execution continues.
 - That guard should explain that repo refresh succeeded, that fresh-subprocess tests can still validate the updated pushed branch, and that actual in-kernel app or pipeline execution needs a runtime restart for a clean import.
+- The restart-required state should persist across later notebook reruns in the same kernel until the runtime is actually restarted; simply turning `BOOTSTRAP_ENV` or `RESET_REPO` back to `False` must not silently allow stale imports to continue.
 - After the repo source path is prepared, the maintained notebooks and the Gradio batch path should verify required runtime imports such as `langchain_openai` before starting generation work.
 - Missing third-party runtime dependencies should fail once as launcher/setup errors with explicit `BOOTSTRAP_ENV=True` guidance, not degrade into dozens of exported per-row `planning_error` results.
 - Fresh-subprocess tests should set `PYTHONPATH` to `REPO_DIR / "src"` in the child process environment so pushed branch code is evaluated in a clean interpreter.
@@ -229,6 +233,7 @@ Rules:
   - `104227` is `34` source passages expanded across `3` live families for `102` rows
   - `111945` is the same `34` source passages expanded across all `8` live `vocab` subtypes for `272` rows
 - Historical review artifacts may contain stale pre-fix planner failures; for example, the old hard-`vocab` `400` schema failures in `111945` should not be treated as the current runtime contract after the `UnderlinedVocabPlan` schema rescue landed on `2026-06-25`.
+- Review artifacts, including `ResponseFeedbackDump`, never override the live subtype registry, the exported result schema, or the runtime status vocabulary.
 - `QuestionTypeKey` remains the broad family key, while `QuestionFormatKey` and `QuestionSubtypeKey` identify the concrete runnable subtype row.
 - Failed type/passage combinations must remain visible in the exported artifacts.
 - Expected incompatibility between a valid passage and a specific question type should surface as `qtype_incompatibility_error`, not be collapsed into generic source or planner failure.
@@ -242,6 +247,9 @@ Rules:
 - `validation_passed` rows are expected to be structurally intact, including abbreviation-safe sentence preparation and fragment-safe rendered text, not just schema-valid fields.
 - `underlined_phrase_meaning` should preserve the original passage exactly except for wrapping the chosen source span as `[밑줄]...[/밑줄]` in exported `student_paragraph`.
 - `fill_in_the_blank` should preserve the original passage exactly except for replacing one selected source span with the single blank marker `_____` in exported `student_paragraph`.
+- For `fill_in_the_blank`, deterministic design should admit only targets that support inference-style completion rather than immediate local restoration.
+- For `fill_in_the_blank`, proposition and summary subtypes should require a non-identical `correct_choice`, and weaker redundant subtypes should fail as `qtype_incompatibility_error` when they have no distinct non-restoration target.
+- For `fill_in_the_blank`, if `correct_choice` differs from the deleted source wording, the unchanged source wording should not remain in the five choices as a second defensible option.
 - `vocab` now fans out into eight concrete live subtype rows under the broad family key:
   - `contextual_vocab_choice_5`
   - `contextual_vocab_best_paraphrase_choice_5`
@@ -263,6 +271,7 @@ Rules:
 - `mood_atmosphere` remains implemented but dormant. Its current subtype work stays out of default launcher and batch outputs until the other live families and output-quality work stabilize and it is explicitly reactivated later.
 - Explanations should be teacher-facing Korean prose. Exported explanations should not mention internal sentence IDs (`S#`), gap IDs (`G#`), schema field names, or renderer mechanics.
 - For `fill_in_the_blank`, `vocab`, and `grammar`, exported explanations should also avoid malformed memo fragments such as duplicated `...의미` wording and should lead with local supporting evidence rather than generic boilerplate.
+- For `fill_in_the_blank`, the supporting-evidence line used in planning and explanation should come from broader passage support, not just the deleted source wording alone.
 - Teacher-facing explanation writing is now treated as a post-render concern rather than as part of structural planning for the live types.
 - Planner rationale may remain internal, but exported explanations for the live types are now rewritten from rendered item context and textual evidence rather than copied directly from planner-internal IDs or schema fields.
 - The launcher may write JSON directly from `result.model_dump()` payloads until a dedicated package-level JSON exporter is added.
@@ -285,9 +294,10 @@ Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility sur
 2. Load secrets from `api_key.txt`.
 3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to stable `main`, default `REPO_BRANCH` to `main`, and default `BOOTSTRAP_ENV` plus `RESET_REPO` to `False`.
 4. Bootstrap third-party dependencies only when requested.
-5. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
-6. Load repo code from `REPO_DIR / "src"` and apply the import guard.
-7. Launch `questiongen.ui.gradio_app.create_app()` immediately.
+5. Auto-install missing runtime packages on a clean kernel when needed, or force reinstall when `BOOTSTRAP_ENV=True`.
+6. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+7. Load repo code from `REPO_DIR / "src"` and apply the import guard.
+8. Launch `questiongen.ui.gradio_app.create_app()` immediately.
 
 `runner_debug.ipynb` should be limited to these steps:
 
@@ -295,12 +305,13 @@ Only `runner_ui.ipynb` and `runner_debug.ipynb` are maintained compatibility sur
 2. Load secrets from `api_key.txt`.
 3. Expose minimal settings plus Advanced Settings, with `REPO_BRANCH_OPTIONS` currently limited to stable `main`, default `REPO_BRANCH` to `main`, and default `BOOTSTRAP_ENV`, `RESET_REPO`, and `RUN_REPO_TESTS` to `False`.
 4. Bootstrap third-party dependencies only when requested.
-5. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
-6. Load repo code from `REPO_DIR / "src"` and apply the import guard.
-7. Run fresh-subprocess repo tests when branch validation is needed.
-8. Build the runner and run direct batch generation.
-9. Preview JSON artifacts by default, while keeping CSV/Markdown preview and download snippets commented nearby for occasional use.
-10. Keep the optional Gradio add-on present only as a commented reference block unless it is intentionally being used for a debugging pass.
+5. Auto-install missing runtime packages for batch execution on a clean kernel when needed, or force reinstall when `BOOTSTRAP_ENV=True`.
+6. Validate `REPO_BRANCH` against the allowlist, then reuse or refresh the selected pushed branch with `git clone --branch REPO_BRANCH --single-branch ...`.
+7. Load repo code from `REPO_DIR / "src"` and apply the import guard.
+8. Run fresh-subprocess repo tests when branch validation is needed.
+9. Build the runner and run direct batch generation.
+10. Preview JSON artifacts by default, while keeping CSV/Markdown preview and download snippets commented nearby for occasional use.
+11. Keep the optional Gradio add-on present only as a commented reference block unless it is intentionally being used for a debugging pass.
 
 Branch-selection notes:
 

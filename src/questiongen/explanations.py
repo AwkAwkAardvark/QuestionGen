@@ -21,7 +21,13 @@ from .schemas import (
     VocabChoiceDesign,
     VocabPlan,
 )
-from .targeting import grammar_target_inventory, phrase_span_inventory, vocab_choice_inventory, vocab_target_inventory
+from .targeting import (
+    fill_blank_inventory_for_subtype,
+    grammar_target_inventory,
+    phrase_span_inventory,
+    vocab_choice_inventory,
+    vocab_target_inventory,
+)
 
 
 def build_explanation_context(state: QuestionState) -> dict[str, Any]:
@@ -92,7 +98,12 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
                 "errors": ["FillInTheBlankPlan is required before explanation generation."],
             }
         return {
-            "explanation_context": _build_fill_in_the_blank_context(plan, generated),
+            "explanation_context": _build_fill_in_the_blank_context(
+                plan,
+                generated,
+                prepared_source=prepared_source,
+                question_subtype_key=generated.QuestionSubtypeKey or state.get("QuestionSubtypeKey"),
+            ),
             "status": "rendered",
             "errors": [],
         }
@@ -122,7 +133,7 @@ def build_explanation_context(state: QuestionState) -> dict[str, Any]:
                 "errors": ["GrammarPlan is required before explanation generation."],
             }
         return {
-            "explanation_context": _build_grammar_context(prepared_source, plan, design=design),
+            "explanation_context": _build_grammar_context(prepared_source, plan, generated, design=design),
             "status": "rendered",
             "errors": [],
         }
@@ -274,13 +285,25 @@ def _build_underlined_phrase_meaning_context(
 def _build_fill_in_the_blank_context(
     plan: FillInTheBlankPlan,
     generated: GeneratedQuestion,
+    *,
+    prepared_source: PreparedSource,
+    question_subtype_key: str | None = None,
 ) -> dict[str, str]:
     choice_index = MARKER_CHOICES.index(generated.answer)
     correct_choice = generated.choices[choice_index] if generated.choices else plan.correct_choice
+    subtype_key = question_subtype_key or "blank_inference_proposition_5_choices"
+    span_inventory = {span.id: span for span in fill_blank_inventory_for_subtype(prepared_source, subtype_key)}
+    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
+    selected_span = span_inventory.get(plan.selected_span_id)
+    source_sentence = sentence_map.get(selected_span.sentence_unit_id or "", "") if selected_span is not None else ""
+    support_quote = plan.supporting_evidence
+    if selected_span is not None and " ".join(plan.supporting_evidence.split()).lower() == " ".join(plan.selected_span_text.split()).lower():
+        support_quote = source_sentence.replace(plan.selected_span_text, "_____", 1) if source_sentence else plan.supporting_evidence
     return {
+        "subtype_key": subtype_key,
         "selected_span_text": plan.selected_span_text,
         "contextual_meaning_ko": plan.contextual_meaning_ko,
-        "supporting_evidence": plan.supporting_evidence,
+        "supporting_evidence": support_quote,
         "correct_marker": generated.answer,
         "correct_choice": correct_choice,
     }
@@ -343,12 +366,7 @@ def _build_vocab_context(
             "contextual_meaning_ko": plan.contextual_meaning_ko,
         }
 
-    if isinstance(design, UnderlinedVocabDesign):
-        ordered_ids = list(design.target_span_ids)
-        answer_span_text = dict(zip(design.target_span_ids, design.target_span_texts, strict=False))[plan.answer_span_id]
-    else:
-        if prepared_source is None:
-            raise ValueError("PreparedSource is required for underlined vocab explanation fallback.")
+    if prepared_source is not None:
         span_map = {span.id: span for span in prepared_source.span_units}
         ordered_spans = sorted(
             [span_map[span_id] for span_id in plan.target_span_ids if span_id in span_map],
@@ -356,6 +374,11 @@ def _build_vocab_context(
         )
         ordered_ids = [span.id for span in ordered_spans]
         answer_span_text = span_map[plan.answer_span_id].text
+    elif isinstance(design, UnderlinedVocabDesign):
+        ordered_ids = list(design.target_span_ids)
+        answer_span_text = dict(zip(design.target_span_ids, design.target_span_texts, strict=False))[plan.answer_span_id]
+    else:
+        raise ValueError("PreparedSource is required for underlined vocab explanation fallback.")
     answer_marker = MARKER_CHOICES[ordered_ids.index(plan.answer_span_id)]
     replacement_by_span_id = plan.corrupted_replacement_map()
     wrong_markers = [
@@ -377,27 +400,22 @@ def _build_vocab_context(
 def _build_grammar_context(
     prepared_source: PreparedSource,
     plan: GrammarPlan,
+    generated: GeneratedQuestion,
     *,
     design: object | None = None,
 ) -> dict[str, str]:
-    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
-    if isinstance(design, GrammarDesign):
-        ordered_ids = list(design.target_span_ids)
-        corrupted_span_text = dict(zip(design.target_span_ids, design.target_span_texts, strict=False))[plan.corrupted_span_id]
-    else:
-        inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
-        ordered_spans = sorted(
-            [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
-            key=lambda span: (span.char_start, span.char_end),
-        )
-        ordered_ids = [span.id for span in ordered_spans]
-        corrupted_span_text = inventory[plan.corrupted_span_id].text
-    correct_marker = MARKER_CHOICES[ordered_ids.index(plan.corrupted_span_id)]
+    inventory = {span.id: span for span in grammar_target_inventory(prepared_source)}
+    ordered_spans = sorted(
+        [inventory[span_id] for span_id in plan.target_span_ids if span_id in inventory],
+        key=lambda span: (span.char_start, span.char_end),
+    )
+    corrupted_span_text = inventory[plan.corrupted_span_id].text
+    correct_marker = generated.answer
     original_word = corrupted_span_text
     return {
         "original_word": original_word,
         "corrupted_word": plan.corrupted_word,
-        "grammar_cue_ko": _grammar_structure_cue(corrupted_span_text, []),
+        "grammar_cue_ko": _grammar_structure_cue(corrupted_span_text, inventory[plan.corrupted_span_id].heuristic_tags),
         "correction_basis_ko": plan.correction_basis_ko,
         "source_sentence": "",
         "supporting_evidence": plan.supporting_evidence,
@@ -509,11 +527,19 @@ def _write_underlined_phrase_meaning_explanation(context: dict[str, str]) -> str
 
 
 def _write_fill_in_the_blank_explanation(context: dict[str, str]) -> str:
-    idea = _clean_teacher_note(context["contextual_meaning_ko"]) or "글의 핵심 내용을 복원하는 설명"
-    return (
-        f"빈칸 앞뒤를 보면 '{context['supporting_evidence']}'라는 대목이 핵심 단서입니다. "
-        f"따라서 이 자리에는 \"{idea}\"에 해당하는 내용이 들어가야 하므로 "
-        f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+    subtype_key = context.get("subtype_key") or "blank_inference_proposition_5_choices"
+    fallback = "글의 핵심 주장이나 효과"
+    if subtype_key == "blank_connective_relation_5_choices":
+        fallback = "앞뒤 문장의 인과, 대비, 예시 같은 연결 관계"
+    elif subtype_key == "blank_summary_completion_5_choices":
+        fallback = "글의 결론이나 교훈"
+    idea = _prefer_teacher_note(context["contextual_meaning_ko"], fallback)
+    return _polish_teacher_explanation(
+        (
+            f"빈칸 앞뒤를 보면 '{context['supporting_evidence']}'라는 흐름이 핵심 단서입니다. "
+            f"따라서 이 자리에는 \"{idea}\"에 해당하는 내용이 들어가야 하므로 "
+            f"정답은 {context['correct_marker']} {context['correct_choice']}입니다."
+        )
     )
 
 
@@ -628,10 +654,12 @@ def _write_grammar_explanation(context: dict[str, str]) -> str:
         context.get("correction_basis_ko"),
         context["grammar_cue_ko"],
     )
-    return (
-        f"'{context['supporting_evidence']}'라는 구조를 보면 {basis}. "
-        f"따라서 {context['correct_marker']}의 '{context['corrupted_word']}'는 맞지 않고 "
-        f"원래 '{context['original_word']}'가 와야 합니다."
+    return _polish_teacher_explanation(
+        (
+            f"'{context['supporting_evidence']}'라는 구조를 보면 {basis}. "
+            f"따라서 {context['correct_marker']}의 '{context['corrupted_word']}'는 맞지 않고 "
+            f"원래 '{context['original_word']}'가 와야 합니다."
+        )
     )
 
 
@@ -640,6 +668,7 @@ def _clean_teacher_note(note: str | None) -> str:
         return ""
     cleaned = " ".join(note.split()).strip()
     cleaned = cleaned.rstrip(". ")
+    cleaned = re.sub(r"(문맥상)(?:\s+\1)+", r"\1", cleaned)
     cleaned = re.sub(r"(이 자리에는)(?:\s+\1)+", r"\1", cleaned)
     cleaned = re.sub(r"(이 자리는)(?:\s+\1)+", r"\1", cleaned)
     for prefix in ("이 자리에는 ", "이 자리는 ", "빈칸에는 ", "빈칸은 "):
@@ -655,6 +684,7 @@ def _clean_teacher_note(note: str | None) -> str:
 
 def _polish_teacher_explanation(text: str) -> str:
     cleaned = " ".join(text.split()).strip()
+    cleaned = re.sub(r"(문맥상)(?:\s+\1)+", r"\1", cleaned)
     cleaned = re.sub(r"(이 자리에는)(?:\s+\1)+", r"\1", cleaned)
     cleaned = re.sub(r"(이 자리는)(?:\s+\1)+", r"\1", cleaned)
     cleaned = cleaned.replace("이 자리에는 이 자리는", "이 자리는")
@@ -669,7 +699,20 @@ def _prefer_teacher_note(note: str | None, fallback: str) -> str:
         return fallback
 
     lowered = cleaned.lower()
-    if any(fragment in lowered for fragment in ("자유서술", "schema", "renderer", "selected_", "절대 나오면 안 되는")):
+    if any(
+        fragment in lowered
+        for fragment in (
+            "자유서술",
+            "schema",
+            "renderer",
+            "selected_",
+            "절대 나오면 안 되는",
+            "contextual_",
+            "blank_",
+            "grammar_error_",
+            "subtype",
+        )
+    ):
         return fallback
     if cleaned in {
         "문맥상 맞지 않는 단어입니다",
