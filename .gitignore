@@ -5,5 +5,5 @@ __pycache__/
 context.md
 AGENTS.md
 QuestionTypeDump
-ResponseFeedbackDump
+FeedbackDumps/
 sample_data/
