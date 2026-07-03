@@ -35,6 +35,9 @@ It does **not** recommend registry pruning, export-schema redesign, or new ad ho
   - `FeedbackDumps/StructureFeedbackDump`
   - `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_104227.csv`
   - `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv`
+- Last accepted PR baseline:
+  - merged PR `#3` (`Freeze pre-reorchestration baseline`)
+  - durable effect: it already absorbed several response-feedback themes into the handoff docs and live hardening direction, especially anti-restoration blank policy, earlier `vocab` design gating, and stricter explanation-quality expectations
 
 Durable reading of the corpus:
 
@@ -42,6 +45,7 @@ Durable reading of the corpus:
 - `fill_in_the_blank`, `vocab`, and `grammar` now have stronger structural contracts, but their remaining failures are mostly pedagogical rather than schema-shaped.
 - Old hard-`vocab` schema failures in `111945` are stale and should not drive current subtype judgments.
 - `ResponseFeedbackDump` remains valuable for item-quality signals, especially blank-frame fit, vocab subtlety, explanation quality, and grammar realism.
+- The last accepted PR already converted many of the strongest feedback themes into durable baseline policy, so those themes should not be reintroduced here as unsettled architecture questions.
 - `StructureFeedbackDump` correctly identifies orchestration opacity as a separate problem: without explicit stage-level artifacts, some quality failures are hard to assign cleanly to design, prompt, or validation.
 
 ## High-Level Findings
