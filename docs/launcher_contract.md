@@ -83,7 +83,7 @@ Launcher responsibilities:
 - bootstrap third-party dependencies when explicitly requested, and auto-bootstrap missing runtime packages on a clean kernel before the first `questiongen` import when safe
 - clone or refresh the selected allowlisted pushed repo branch
 - prepend `REPO_DIR / "src"` to `sys.path` and invalidate import caches after clone or reuse
-- probe raw runtime modules such as `langchain_openai` and `gradio` before any `questiongen` import needed for batch or UI launch
+- probe raw runtime modules such as `langgraph`, `langchain_openai`, and `gradio` before any `questiongen` import needed for batch or UI launch
 - validate required third-party runtime imports before batch execution or Gradio launch, and fail once with bootstrap guidance if they are missing
 - run fresh-subprocess repo tests for pushed-branch validation when requested
 - launch the Gradio UI from `runner_ui.ipynb`
@@ -150,7 +150,8 @@ Notes:
 - Each selected broad family now expands into one or more live concrete subtype runs inside the batch layer.
 - Exported row counts therefore scale with `input rows x enabled subtype count`, not merely `input rows x broad family count`.
 - This preserves the current backend API while delivering the intended launcher behavior.
-- The public batch/export interface stays unchanged across the internal `v0.2.0` design-layer refactor.
+- The public batch/export interface stays unchanged across the internal `v0.2.0` design-layer refactor and the later LangGraph-backed reorchestration.
+- `compile_question_graph(...)` now returns a LangGraph-backed runner again, but `runner.invoke(state)` and `run_batch_rows(..., runner=...)` remain the public invocation surface.
 - Internally, live subtype execution now runs through a deterministic `design` stage before final planning.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
 - The live registry currently includes `sentence_insertion`, `paragraph_ordering`, `underlined_phrase_meaning`, `fill_in_the_blank`, `vocab`, and `grammar`.
@@ -181,6 +182,7 @@ Rules:
 - The normal rerun path should skip both third-party bootstrap and package reinstall.
 - Repo code should be loaded from `REPO_DIR / "src"` on `sys.path`, not by routine editable installs.
 - Missing runtime modules should be checked before importing `questiongen` itself, so a first-run dependency failure does not leave a partially imported package tree in the kernel.
+- That raw dependency probe now includes `langgraph` because `questiongen.graph` is part of the package import surface again.
 - `RESET_REPO=True` should remove the existing clone if present, then reclone the selected pushed branch cleanly.
 - `RESET_REPO=False` should still sync the existing clone to the latest remote commit on the selected pushed branch rather than blindly reusing a stale checkout.
 - The notebooks should always call `importlib.invalidate_caches()` after clone or reuse.

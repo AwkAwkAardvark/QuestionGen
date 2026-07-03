@@ -19,6 +19,7 @@ class NotebookContractTests(unittest.TestCase):
 
         self.assertIn("# ## 1. Mount Drive And Define Standard Paths", source)
         self.assertIn("# ## 5. Bootstrap, Refresh, And Launch Gradio", source)
+        self.assertIn("langgraph", source)
         self.assertIn("langchain-openai", source)
         self.assertIn("Auto-bootstrapped missing runtime dependencies:", source)
         self.assertIn("missing_runtime_packages(", source)
@@ -40,6 +41,7 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("# files.download(str(OUTPUT_CSV))", source)
         self.assertIn("files.download(str(OUTPUT_JSON))", source)
         self.assertIn("# print(OUTPUT_MD.read_text(encoding=\"utf-8\")[:3000])", source)
+        self.assertIn("langgraph", source)
         self.assertIn("langchain-openai", source)
         self.assertIn("Auto-bootstrapped missing runtime dependencies:", source)
         self.assertIn("missing_runtime_packages(", source)

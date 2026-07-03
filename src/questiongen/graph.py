@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Callable, Mapping, cast
+
+from langgraph.graph import END, START, StateGraph
 
 from .config import (
     resolve_planner_elapsed_log_interval_seconds,
@@ -27,105 +29,242 @@ class LocalQuestionGraphRunner:
     runtime_logger: RuntimeEventLogger | None = None
     planner_timeout_seconds: float | None = None
     planner_elapsed_log_interval_seconds: float = 30.0
+    _graph: Any = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._graph = self._compile_graph()
 
     def invoke(self, state: QuestionState) -> QuestionState:
         working_state: QuestionState = {
             **state,
             "errors": list(state["errors"]),
         }
+        final_state = cast(dict[str, Any], self._graph.invoke(working_state))
+        final_state["errors"] = list(final_state["errors"])
+        return cast(QuestionState, final_state)
 
-        self._log_stage(working_state, "input_check", "start")
-        self._apply_result(working_state, input_check(working_state, self.question_types))
-        self._log_stage(working_state, "input_check", "finish")
-        if working_state["status"] != "input_passed":
-            return working_state
+    def _compile_graph(self) -> Any:
+        workflow = StateGraph(QuestionState)
 
-        self._log_stage(working_state, "prepare_source", "start")
-        prepared = prepare_source(working_state["source_paragraph"])
-        self._apply_result(
-            working_state,
-            {
-                "prepared_source": prepared,
+        workflow.add_node("input_check", self._run_input_check)
+        workflow.add_node("prepare_source", self._run_prepare_source)
+        workflow.add_node("source_check", self._run_source_check)
+        workflow.add_node("design", self._run_design)
+        workflow.add_node("planner", self._run_planner)
+        workflow.add_node("plan_check", self._run_plan_check)
+        workflow.add_node("render", self._run_render)
+        workflow.add_node("build_explanation_context", self._run_build_explanation_context)
+        workflow.add_node("write_explanation", self._run_write_explanation)
+        workflow.add_node("validate_generated_question", self._run_validate_generated_question)
+
+        workflow.add_edge(START, "input_check")
+        workflow.add_conditional_edges(
+            "input_check",
+            lambda state: "prepare_source" if state["status"] == "input_passed" else END,
+        )
+        workflow.add_conditional_edges(
+            "prepare_source",
+            lambda state: "source_check" if state["status"] == "source_prepared" else END,
+        )
+        workflow.add_conditional_edges(
+            "source_check",
+            lambda state: "design" if state["status"] == "source_passed" else END,
+        )
+        workflow.add_conditional_edges(
+            "design",
+            lambda state: "planner" if state["status"] == "source_passed" else END,
+        )
+        workflow.add_conditional_edges(
+            "planner",
+            lambda state: "plan_check" if state["status"] == "planned" else END,
+        )
+        workflow.add_conditional_edges(
+            "plan_check",
+            lambda state: "render" if state["status"] == "planned" else END,
+        )
+        workflow.add_conditional_edges(
+            "render",
+            lambda state: "build_explanation_context" if state["status"] == "rendered" else END,
+        )
+        workflow.add_conditional_edges(
+            "build_explanation_context",
+            lambda state: "write_explanation" if state["status"] == "rendered" else END,
+        )
+        workflow.add_conditional_edges(
+            "write_explanation",
+            lambda state: "validate_generated_question" if state["status"] == "rendered" else END,
+        )
+        workflow.add_edge("validate_generated_question", END)
+
+        return workflow.compile()
+
+    def _run_input_check(self, state: QuestionState) -> NodeResult:
+        return self._run_stage(
+            state,
+            stage_name="input_check",
+            type_spec=None,
+            operation=lambda working_state, _type_spec: input_check(working_state, self.question_types),
+        )
+
+    def _run_prepare_source(self, state: QuestionState) -> NodeResult:
+        return self._run_stage(
+            state,
+            stage_name="prepare_source",
+            type_spec=None,
+            operation=lambda working_state, _type_spec: {
+                "prepared_source": prepare_source(working_state["source_paragraph"]),
                 "status": "source_prepared",
                 "errors": [],
             },
         )
-        self._log_stage(working_state, "prepare_source", "finish")
 
-        question_subtype_key = working_state.get("QuestionSubtypeKey")
-        type_spec = self.question_types.get(question_subtype_key or "")
-        if type_spec is None:
-            resolved = resolve_question_type_spec(
-                working_state["QuestionTypeKey"],
-                question_subtype_key,
+    def _run_source_check(self, state: QuestionState) -> NodeResult:
+        type_spec, error_result = self._resolve_type_spec(state)
+        if error_result is not None:
+            return self._run_stage(
+                state,
+                stage_name="source_check",
+                type_spec=None,
+                operation=lambda _working_state, _resolved_type_spec: error_result,
             )
-            if resolved is None:
-                return {
-                    **working_state,
-                    "status": "input_error",
-                    "errors": [
-                        f"Unknown subtype for {working_state['QuestionTypeKey']}: {question_subtype_key}"
-                    ],
-                }
-            type_spec = resolved
-        self._log_stage(working_state, "source_check", "start", type_spec)
-        self._apply_result(working_state, source_check(working_state, type_spec))
-        self._log_stage(working_state, "source_check", "finish", type_spec)
-        if working_state["status"] != "source_passed":
-            return working_state
+        assert type_spec is not None
+        return self._run_stage(
+            state,
+            stage_name="source_check",
+            type_spec=type_spec,
+            operation=lambda working_state, resolved_type_spec: source_check(working_state, resolved_type_spec),
+        )
 
-        self._log_stage(working_state, "design", "start", type_spec)
-        self._apply_result(working_state, build_design(working_state, type_spec))
-        self._log_stage(working_state, "design", "finish", type_spec)
-        if working_state["status"] != "source_passed":
-            return working_state
+    def _run_design(self, state: QuestionState) -> NodeResult:
+        type_spec, error_result = self._resolve_type_spec(state)
+        if error_result is not None:
+            return error_result
+        assert type_spec is not None
+        return self._run_stage(
+            state,
+            stage_name="design",
+            type_spec=type_spec,
+            operation=lambda working_state, resolved_type_spec: build_design(working_state, resolved_type_spec),
+        )
 
+    def _run_planner(self, state: QuestionState) -> NodeResult:
+        type_spec, error_result = self._resolve_type_spec(state)
+        if error_result is not None:
+            return error_result
+        assert type_spec is not None
         planner = PLANNERS[type_spec.renderer_key]
-        self._log_stage(working_state, "planner", "start", type_spec)
-        self._apply_result(
-            working_state,
-            planner(
+        return self._run_stage(
+            state,
+            stage_name="planner",
+            type_spec=type_spec,
+            operation=lambda working_state, resolved_type_spec: planner(
                 working_state,
-                type_spec,
+                resolved_type_spec,
                 self.structured_llm_factory,
                 self.runtime_logger,
                 self.planner_timeout_seconds,
                 self.planner_elapsed_log_interval_seconds,
             ),
         )
-        self._log_stage(working_state, "planner", "finish", type_spec)
-        if working_state["status"] != "planned":
-            return working_state
 
-        self._log_stage(working_state, "plan_check", "start", type_spec)
-        self._apply_result(working_state, plan_check(working_state, type_spec))
-        self._log_stage(working_state, "plan_check", "finish", type_spec)
-        if working_state["status"] != "planned":
-            return working_state
+    def _run_plan_check(self, state: QuestionState) -> NodeResult:
+        type_spec, error_result = self._resolve_type_spec(state)
+        if error_result is not None:
+            return error_result
+        assert type_spec is not None
+        return self._run_stage(
+            state,
+            stage_name="plan_check",
+            type_spec=type_spec,
+            operation=lambda working_state, resolved_type_spec: plan_check(working_state, resolved_type_spec),
+        )
 
+    def _run_render(self, state: QuestionState) -> NodeResult:
+        type_spec, error_result = self._resolve_type_spec(state)
+        if error_result is not None:
+            return error_result
+        assert type_spec is not None
         renderer = RENDERERS[type_spec.renderer_key]
-        self._log_stage(working_state, "render", "start", type_spec)
-        self._apply_result(working_state, renderer(working_state, type_spec))
-        self._log_stage(working_state, "render", "finish", type_spec)
-        if working_state["status"] != "rendered":
-            return working_state
+        return self._run_stage(
+            state,
+            stage_name="render",
+            type_spec=type_spec,
+            operation=lambda working_state, resolved_type_spec: renderer(working_state, resolved_type_spec),
+        )
 
-        self._log_stage(working_state, "build_explanation_context", "start", type_spec)
-        self._apply_result(working_state, build_explanation_context(working_state))
-        self._log_stage(working_state, "build_explanation_context", "finish", type_spec)
-        if working_state["status"] != "rendered":
-            return working_state
+    def _run_build_explanation_context(self, state: QuestionState) -> NodeResult:
+        type_spec, error_result = self._resolve_type_spec(state)
+        if error_result is not None:
+            return error_result
+        assert type_spec is not None
+        return self._run_stage(
+            state,
+            stage_name="build_explanation_context",
+            type_spec=type_spec,
+            operation=lambda working_state, _resolved_type_spec: build_explanation_context(working_state),
+        )
 
-        self._log_stage(working_state, "write_explanation", "start", type_spec)
-        self._apply_result(working_state, write_teacher_facing_explanation(working_state))
-        self._log_stage(working_state, "write_explanation", "finish", type_spec)
-        if working_state["status"] != "rendered":
-            return working_state
+    def _run_write_explanation(self, state: QuestionState) -> NodeResult:
+        type_spec, error_result = self._resolve_type_spec(state)
+        if error_result is not None:
+            return error_result
+        assert type_spec is not None
+        return self._run_stage(
+            state,
+            stage_name="write_explanation",
+            type_spec=type_spec,
+            operation=lambda working_state, _resolved_type_spec: write_teacher_facing_explanation(working_state),
+        )
 
-        self._log_stage(working_state, "validate_generated_question", "start", type_spec)
-        self._apply_result(working_state, validate_generated_question(working_state, type_spec))
-        self._log_stage(working_state, "validate_generated_question", "finish", type_spec)
-        return working_state
+    def _run_validate_generated_question(self, state: QuestionState) -> NodeResult:
+        type_spec, error_result = self._resolve_type_spec(state)
+        if error_result is not None:
+            return error_result
+        assert type_spec is not None
+        return self._run_stage(
+            state,
+            stage_name="validate_generated_question",
+            type_spec=type_spec,
+            operation=lambda working_state, resolved_type_spec: validate_generated_question(
+                working_state, resolved_type_spec
+            ),
+        )
+
+    def _run_stage(
+        self,
+        state: QuestionState,
+        *,
+        stage_name: str,
+        type_spec: QuestionTypeSpec | None,
+        operation: Callable[[QuestionState, QuestionTypeSpec | None], NodeResult],
+    ) -> NodeResult:
+        working_state: QuestionState = {
+            **state,
+            "errors": list(state["errors"]),
+        }
+        self._log_stage(working_state, stage_name, "start", type_spec)
+        result = operation(working_state, type_spec)
+        self._apply_result(working_state, result)
+        self._log_stage(working_state, stage_name, "finish", type_spec)
+        return result
+
+    def _resolve_type_spec(self, state: QuestionState) -> tuple[QuestionTypeSpec | None, NodeResult | None]:
+        question_subtype_key = state.get("QuestionSubtypeKey")
+        type_spec = self.question_types.get(question_subtype_key or "")
+        if type_spec is not None:
+            return type_spec, None
+
+        resolved = resolve_question_type_spec(
+            state["QuestionTypeKey"],
+            question_subtype_key,
+        )
+        if resolved is not None:
+            return resolved, None
+
+        return None, {
+            "status": "input_error",
+            "errors": [f"Unknown subtype for {state['QuestionTypeKey']}: {question_subtype_key}"],
+        }
 
     @staticmethod
     def _apply_result(state: QuestionState, result: NodeResult) -> None:

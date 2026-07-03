@@ -7,6 +7,7 @@ DEFAULT_PLANNER_TIMEOUT_SECONDS = 180.0
 DEFAULT_PLANNER_ELAPSED_LOG_INTERVAL_SECONDS = 30.0
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 _RUNTIME_DEPENDENCIES = (
+    ("langgraph", "langgraph"),
     ("langchain_openai", "langchain-openai"),
 )
 

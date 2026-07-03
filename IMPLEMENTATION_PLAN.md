@@ -5,6 +5,7 @@
 - [x] Keep the backend centered on `planning -> deterministic rendering -> validation`.
 - [x] Keep `src/questiongen/` notebook-agnostic and Drive-agnostic.
 - [x] Keep model construction outside the batch layer through an injected runner.
+- [x] Keep the public runner and batch contract stable while internal orchestration uses explicit LangGraph-backed stage routing.
 - [x] Treat Colab as the primary user-facing launcher surface.
 - [x] Treat Google Drive as the user-controlled storage layer for inputs, outputs, and `api_key.txt`.
 - [x] Keep `main` as the stable default branch, not as a live implementation branch.
@@ -37,6 +38,7 @@
 - [x] Implement deterministic `sentence_insertion` rendering.
 - [x] Implement final output validation for `sentence_insertion`.
 - [x] Build a generic graph runner driven by question type metadata.
+- [x] Restore explicit graph-backed orchestration while preserving the current runner and batch/export public surface.
 - [x] Expose question graph compilation with injected structured LLM creation.
 
 ### Batch and exports
