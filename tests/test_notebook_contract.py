@@ -27,8 +27,9 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("UI_RUNTIME_DEPENDENCIES", source)
         self.assertIn("QUESTIONGEN_RUNTIME_RESTART_REQUIRED", source)
         self.assertIn("BOOTSTRAP_ENV=True", source)
-        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"fetch\", \"origin\"]", source)
+        self.assertIn("f\"refs/heads/{REPO_BRANCH}:refs/remotes/origin/{REPO_BRANCH}\"", source)
         self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", REPO_BRANCH]", source)
+        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", \"-b\", REPO_BRANCH, f\"origin/{REPO_BRANCH}\"]", source)
         self.assertIn("\"merge\", \"--ff-only\", f\"origin/{REPO_BRANCH}\"", source)
         self.assertIn("existing clone was already at the selected pushed commit", source)
 
@@ -50,8 +51,9 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("QUESTIONGEN_RUNTIME_RESTART_REQUIRED", source)
         self.assertIn("from questiongen.config import create_structured_llm", source)
         self.assertIn("BOOTSTRAP_ENV=True", source)
-        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"fetch\", \"origin\"]", source)
+        self.assertIn("f\"refs/heads/{REPO_BRANCH}:refs/remotes/origin/{REPO_BRANCH}\"", source)
         self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", REPO_BRANCH]", source)
+        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", \"-b\", REPO_BRANCH, f\"origin/{REPO_BRANCH}\"]", source)
         self.assertIn("\"merge\", \"--ff-only\", f\"origin/{REPO_BRANCH}\"", source)
         self.assertIn("RESET_REPO=True for a clean refresh", source)
 
