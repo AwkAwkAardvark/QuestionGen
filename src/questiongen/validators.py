@@ -906,6 +906,9 @@ def _validate_fill_in_the_blank_plan(
     plan: object,
     type_spec: QuestionTypeSpec,
 ) -> list[str]:
+    # Deterministic blank validation remains the primary contract.
+    # Planner-local semantic adjudication is only an extra Tier 1 screen for
+    # underdetermined role/frame judgments on two blank subtypes.
     if not isinstance(plan, FillInTheBlankPlan):
         return ["FillInTheBlankPlan is missing for deterministic plan checks."]
 

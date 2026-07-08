@@ -402,9 +402,10 @@ def _run_from_ui(
         planner_elapsed_log_interval_seconds = resolve_planner_elapsed_log_interval_seconds()
         console_progress.start()
         runner = compile_question_graph(
-            structured_llm_factory=lambda schema: create_structured_llm(
+            structured_llm_factory=lambda schema, model_role="default": create_structured_llm(
                 schema,
                 model_name=model_name.strip() or None,
+                model_role=model_role,
                 temperature=float(temperature),
                 request_timeout_seconds=planner_timeout_seconds,
             ),

@@ -57,6 +57,16 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("\"merge\", \"--ff-only\", f\"origin/{REPO_BRANCH}\"", source)
         self.assertIn("RESET_REPO=True for a clean refresh", source)
 
+    def test_launcher_contract_mentions_tier1_planner_and_light_model_env_vars(self) -> None:
+        source = (REPO_ROOT / "docs" / "launcher_contract.md").read_text(encoding="utf-8")
+
+        self.assertIn("QUESTIONGEN_MODEL_PLANNER", source)
+        self.assertIn("QUESTIONGEN_MODEL_LIGHT", source)
+        self.assertIn("gpt-5-nano", source)
+        self.assertIn("blank_inference_proposition_5_choices", source)
+        self.assertIn("blank_summary_completion_5_choices", source)
+        self.assertIn("not broad per-question-type model routing", source)
+
 
 if __name__ == "__main__":
     unittest.main()

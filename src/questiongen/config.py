@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal
 
+DEFAULT_MODEL_NAME = "gpt-5-mini"
+DEFAULT_LIGHT_MODEL_NAME = "gpt-5-nano"
 DEFAULT_PLANNER_TIMEOUT_SECONDS = 180.0
 DEFAULT_PLANNER_ELAPSED_LOG_INTERVAL_SECONDS = 30.0
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -49,9 +51,48 @@ def resolve_planner_elapsed_log_interval_seconds(interval_seconds: float | None 
     return resolved
 
 
+def resolve_model_name(model_name: str | None = None) -> str:
+    if model_name is not None and model_name.strip():
+        return model_name.strip()
+    return os.getenv("QUESTIONGEN_MODEL", "").strip() or DEFAULT_MODEL_NAME
+
+
+def resolve_planner_model_name(
+    model_name: str | None = None,
+    *,
+    planner_model_name: str | None = None,
+) -> str:
+    if planner_model_name is not None and planner_model_name.strip():
+        return planner_model_name.strip()
+    return os.getenv("QUESTIONGEN_MODEL_PLANNER", "").strip() or resolve_model_name(model_name)
+
+
+def resolve_light_model_name(light_model_name: str | None = None) -> str:
+    if light_model_name is not None and light_model_name.strip():
+        return light_model_name.strip()
+    return os.getenv("QUESTIONGEN_MODEL_LIGHT", "").strip() or DEFAULT_LIGHT_MODEL_NAME
+
+
+def _resolve_model_name_for_role(
+    *,
+    model_role: Literal["default", "planner", "light"],
+    model_name: str | None,
+    planner_model_name: str | None,
+    light_model_name: str | None,
+) -> str:
+    if model_role == "planner":
+        return resolve_planner_model_name(model_name, planner_model_name=planner_model_name)
+    if model_role == "light":
+        return resolve_light_model_name(light_model_name)
+    return resolve_model_name(model_name)
+
+
 def create_llm(
     *,
     model_name: str | None = None,
+    planner_model_name: str | None = None,
+    light_model_name: str | None = None,
+    model_role: Literal["default", "planner", "light"] = "default",
     temperature: float | None = None,
     request_timeout_seconds: float | None = None,
     **kwargs: Any,
@@ -66,7 +107,12 @@ def create_llm(
             kwargs["request_timeout"] = resolved_timeout
 
     return ChatOpenAI(
-        model=model_name or "gpt-5-mini",
+        model=_resolve_model_name_for_role(
+            model_role=model_role,
+            model_name=model_name,
+            planner_model_name=planner_model_name,
+            light_model_name=light_model_name,
+        ),
         temperature=0.0 if temperature is None else temperature,
         **kwargs,
     )
@@ -76,12 +122,18 @@ def create_structured_llm(
     output_schema: type,
     *,
     model_name: str | None = None,
+    planner_model_name: str | None = None,
+    light_model_name: str | None = None,
+    model_role: Literal["default", "planner", "light"] = "default",
     temperature: float | None = None,
     request_timeout_seconds: float | None = None,
     **kwargs: Any,
 ) -> Any:
     llm = create_llm(
         model_name=model_name,
+        planner_model_name=planner_model_name,
+        light_model_name=light_model_name,
+        model_role=model_role,
         temperature=temperature,
         request_timeout_seconds=request_timeout_seconds,
         **kwargs,

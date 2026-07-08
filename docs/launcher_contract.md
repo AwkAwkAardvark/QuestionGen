@@ -48,6 +48,8 @@ Expected `api_key.txt` format:
 ```txt
 OPENAI_API_KEY=sk-...
 QUESTIONGEN_MODEL=gpt-5-mini
+QUESTIONGEN_MODEL_PLANNER=gpt-5-mini
+QUESTIONGEN_MODEL_LIGHT=gpt-5-nano
 QUESTIONGEN_TEMPERATURE=0
 ```
 
@@ -58,7 +60,10 @@ Rules:
 - Environment variables remain the final runtime interface consumed by the LLM client layer.
 - Model and temperature values in the secret file are launcher configuration, not package-owned defaults.
 - The current MVP policy is one shared default model, `gpt-5-mini`; launcher overrides still win through `QUESTIONGEN_MODEL` or explicit `model_name`.
-- Per-question-type model routing is intentionally deferred until after the live pipeline is stable.
+- Limited planner-stage routing now exists only for Tier 1 blank adjudication:
+  - normal planner drafting can use `QUESTIONGEN_MODEL_PLANNER`
+  - the extra adjudication call can use `QUESTIONGEN_MODEL_LIGHT`, defaulting to `gpt-5-nano`
+- This is still not broad per-question-type model routing across the whole runtime.
 
 ## Package and Launcher Boundary
 
@@ -253,6 +258,8 @@ Rules:
 - For `fill_in_the_blank`, deterministic design should admit only targets that support inference-style completion rather than immediate local restoration.
 - For `fill_in_the_blank`, proposition and summary subtypes should require a non-identical `correct_choice`, and weaker redundant subtypes should fail as `qtype_incompatibility_error` when they have no distinct non-restoration target.
 - For `fill_in_the_blank`, if `correct_choice` differs from the deleted source wording, the unchanged source wording should not remain in the five choices as a second defensible option.
+- For `fill_in_the_blank`, only `blank_inference_proposition_5_choices` and `blank_summary_completion_5_choices` add one extra in-node planner semantic adjudication call after draft hydration and deterministic plan checks.
+- That Tier 1 adjudication remains planner-local, uses the lightweight model route, and returns `planning_error` immediately on semantic rejection rather than adding a new graph node or a broad second LLM pass.
 - `vocab` now fans out into eight concrete live subtype rows under the broad family key:
   - `contextual_vocab_choice_5`
   - `contextual_vocab_best_paraphrase_choice_5`

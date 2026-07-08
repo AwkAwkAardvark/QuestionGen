@@ -33,7 +33,11 @@ class StaticStructuredPlanner:
         )
 
 
-def build_structured_llm(output_schema: type[SentenceInsertionPlan]) -> object:
+def build_structured_llm(
+    output_schema: type[SentenceInsertionPlan],
+    *,
+    model_role: str = "default",
+) -> object:
     if os.getenv("QUESTIONGEN_USE_LLM") == "1":
-        return create_structured_llm(output_schema)
+        return create_structured_llm(output_schema, model_role=model_role)
     return StaticStructuredPlanner(output_schema)

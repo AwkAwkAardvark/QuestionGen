@@ -18,6 +18,7 @@
 - [x] Keep Colab repo-code loading separate from one-time third-party dependency bootstrap, and prefer source-path loading plus fresh-subprocess tests over repeated editable reinstalls in the same kernel.
 - [x] Ship one cheaper default model first: `gpt-5-mini`.
 - [x] Defer per-question-type model routing until after the live pipeline is stable.
+- [x] Keep any near-term model routing narrowly planner-local: normal planner drafts may use `QUESTIONGEN_MODEL_PLANNER`, while Tier 1 blank adjudication may use `QUESTIONGEN_MODEL_LIGHT` without turning the runtime into a broad per-type routing matrix.
 - [x] Keep the current batch execution path synchronous and serial; defer async or concurrent orchestration as a later performance-only track.
 - [x] Keep broad family keys as the launcher/UI selection surface while expanding execution into concrete subtype rows underneath each family.
 - [x] Preserve subtype metadata in runtime state and exports through `QuestionFormatKey`, `QuestionSubtypeKey`, and `QuestionSubtype`.
@@ -184,6 +185,8 @@
     - proposition and summary blanks must use a non-identical `correct_choice`
     - `blank_connective_relation_5_choices` should admit only short connective-style completions; clause stubs or sentence fragments should fail earlier as `qtype_incompatibility_error`
     - if a weaker blank subtype can only reuse the same restoration-style span, it should fail early as `qtype_incompatibility_error` rather than ship a redundant row
+    - Tier 1 planner-local semantic adjudication now runs only for `blank_inference_proposition_5_choices` and `blank_summary_completion_5_choices`, after draft hydration plus deterministic plan checks and before the graph leaves `planner`
+    - that extra pass is fail-fast only, uses the lightweight model route by default, and does not add a new graph node, plan rewrite loop, or broad second LLM pass for other subtypes
   - completed structural rescue:
     - the anti-restoration hardening pass is the completed structural rescue for this family
     - the next cycle should not reopen blank-family subtype pruning, registry reshaping, or export-schema redesign unless a later deliberate policy decision says otherwise

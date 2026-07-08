@@ -24,6 +24,9 @@ from tests.test_planners import (
     _InvalidOrderingCoveragePlanner,
     _MoodAtmospherePlanner,
     _ParagraphOrderingPlanner,
+    _RoleAwareStructuredFactory,
+    _SemanticAdjudicator,
+    _SummaryContrastFailurePlanner,
     _UnderlinedPhraseMeaningPlanner,
     _VocabDriftPlanner,
     _VocabPlanner,
@@ -71,6 +74,14 @@ MOOD_SOURCE = (
     "plain old cucumbers became enraged, angrily throwing the previously satisfactory salad vegetable "
     "at its handler. The monkey's economy had grown, since grapes are better than cucumbers. "
     "But the resulting inequality brought only discontent."
+)
+
+SUMMARY_BLANK_SOURCE = (
+    "People often remember the rewards of economic competition and the innovation it can inspire. "
+    "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
+    "Workers who felt excluded from the benefits became less willing to trust public institutions. "
+    "As this distrust spread, even reforms that might have helped were greeted with suspicion. "
+    "The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace."
 )
 
 
@@ -661,12 +672,47 @@ class QuestionGraphBehaviorTests(unittest.TestCase):
         self.assertNotIn("자유서술 문법 해설", explanation)
 
     def test_graph_rewrites_fill_explanation_as_teacher_facing_note(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _FillInTheBlankPlanner())
+        runner = compile_question_graph(
+            structured_llm_factory=_RoleAwareStructuredFactory(
+                planner=_FillInTheBlankPlanner(),
+                light=_SemanticAdjudicator(),
+            )
+        )
         result = runner.invoke(self._make_state("fill_in_the_blank", MVP_SOURCE))
         self.assertEqual(result["status"], "validation_passed")
         explanation = result["generated"].explanation or ""
         self.assertIn("핵심 단서", explanation)
         self.assertNotIn("라는 의미라는 의미", explanation)
+
+    def test_graph_stops_before_render_when_tier1_semantic_adjudication_rejects(self) -> None:
+        render_mock = mock.Mock()
+        runner = compile_question_graph(
+            structured_llm_factory=_RoleAwareStructuredFactory(
+                planner=_SummaryContrastFailurePlanner(),
+                light=_SemanticAdjudicator(
+                    fits_discourse_role=False,
+                    visible_frame_semantically_valid=False,
+                    failure_reason="visible contrast frame is `X, but that Y`, but the selected answer supplies the visible Y side even though the blanked slot requires the rejected X side",
+                ),
+            )
+        )
+        state = self._make_state(
+            "fill_in_the_blank",
+            SUMMARY_BLANK_SOURCE,
+            question_format_key="blank_summary_completion_5_choices",
+            question_subtype_key="blank_summary_completion_5_choices",
+        )
+        with mock.patch.dict("questiongen.graph.RENDERERS", {"fill_in_the_blank": render_mock}):
+            result = runner.invoke(state)
+
+        self.assertEqual(result["status"], "planning_error")
+        self.assertEqual(
+            result["errors"],
+            [
+                "Planner semantic adjudication failed: visible contrast frame is `X, but that Y`, but the selected answer supplies the visible Y side even though the blanked slot requires the rejected X side"
+            ],
+        )
+        render_mock.assert_not_called()
 
 
 if __name__ == "__main__":

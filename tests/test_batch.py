@@ -76,6 +76,12 @@ class _StubPlanner:
         | GrammarPlan
         | GrammarDraft
     ):
+        if self.output_schema.__name__ == "PlannerSemanticAdjudicationResult":
+            return self.output_schema(
+                fits_discourse_role=True,
+                visible_frame_semantically_valid=True,
+                failure_reason=None,
+            )
         if self.output_schema in {SentenceInsertionPlan, SentenceInsertionDraft}:
             return self.output_schema(
                 target_unit_ids=["S2"],
@@ -730,7 +736,9 @@ class BatchTests(unittest.TestCase):
         raise AssertionError(f"Fixture row {question_number} was not found in {fixture_path}.")
 
     def setUp(self) -> None:
-        self.runner = compile_question_graph(structured_llm_factory=lambda schema: _StubPlanner(schema))
+        self.runner = compile_question_graph(
+            structured_llm_factory=lambda schema, model_role="default": _StubPlanner(schema)
+        )
         self.rows = [BatchInputRow(OriginalQuestionNumber="8-Analysis", BatchRowId=0, source_paragraph="A. B. C. D. E. F.")]
         self.mixed_family_row = BatchInputRow(
             OriginalQuestionNumber="MVP-01",
