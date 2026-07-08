@@ -150,7 +150,8 @@ Notes:
 - Each selected broad family now expands into one or more live concrete subtype runs inside the batch layer.
 - Exported row counts therefore scale with `input rows x enabled subtype count`, not merely `input rows x broad family count`.
 - This preserves the current backend API while delivering the intended launcher behavior.
-- The public batch/export interface stays unchanged across the internal `v0.2.0` design-layer refactor and the later LangGraph-backed reorchestration.
+- The public batch/export interface stays unchanged across the internal `v0.3.0` graph-backed orchestration milestone.
+- `v0.3.0` means the shared design layer remains in place, and explicit LangGraph-backed orchestration is now the active internal execution contract for that stage sequence.
 - `compile_question_graph(...)` now returns a LangGraph-backed runner again, but `runner.invoke(state)` and `run_batch_rows(..., runner=...)` remain the public invocation surface.
 - Internally, live subtype execution now runs through a deterministic `design` stage before final planning.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.

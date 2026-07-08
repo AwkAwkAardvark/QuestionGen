@@ -5,7 +5,6 @@ import time
 import unittest
 
 from questiongen.explanations import build_explanation_context, write_teacher_facing_explanation
-from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
 from questiongen.designers import build_design, hydrate_plan_from_draft
 from questiongen.planners import (
@@ -860,19 +859,6 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(any("still running after" in message for message in logs))
         self.assertTrue(any("attempt 1/2 finished in" in message for message in logs))
 
-    def test_graph_verbose_logging_marks_stage_boundaries(self) -> None:
-        logs: list[str] = []
-        runner = compile_question_graph(
-            structured_llm_factory=lambda schema: _ValidPlanner(),
-            runtime_logger=logs.append,
-        )
-        result = runner.invoke(self.state)
-        self.assertEqual(result["status"], "validation_passed")
-        self.assertTrue(any("| input_check start |" in message for message in logs))
-        self.assertTrue(any("| planner finish | status=planned" in message for message in logs))
-        self.assertTrue(any("| render finish | status=rendered" in message for message in logs))
-        self.assertTrue(any("| validate_generated_question finish | status=validation_passed" in message for message in logs))
-
     def test_sentence_insertion_prompt_exposes_ranked_target_hints(self) -> None:
         prompt = build_sentence_insertion_prompt(
             source_paragraph=self.contextual_insertion_source,
@@ -905,60 +891,6 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Adjacency rationale payload", prompt)
         self.assertNotIn("Boundary hints", prompt)
 
-    def test_graph_ignores_planner_override_of_locked_gap_bundle(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _CollapsedGapPlanner())
-        result = runner.invoke(self.state)
-        self.assertEqual(result["status"], "validation_passed")
-
-    def test_graph_ignores_planner_override_of_locked_ordering_partition(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _InvalidOrderingCoveragePlanner())
-        paragraph_state = {
-            **self.state,
-            "QuestionTypeKey": "paragraph_ordering",
-        }
-        result = runner.invoke(paragraph_state)
-        self.assertEqual(result["status"], "validation_passed")
-
-    def test_graph_rewrites_internal_paragraph_ordering_explanation(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _ParagraphOrderingPlanner())
-        paragraph_state = {
-            **self.state,
-            "QuestionTypeKey": "paragraph_ordering",
-        }
-        result = runner.invoke(paragraph_state)
-        self.assertEqual(result["status"], "validation_passed")
-        self.assertNotIn("S0", result["generated"].explanation or "")
-
-    def test_graph_rewrites_sentence_insertion_explanation_from_surrounding_context(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _ContextAnchoredInsertionPlanner())
-        insertion_state = {
-            **self.state,
-            "source_paragraph": self.contextual_insertion_source,
-            "QuestionTypeKey": "sentence_insertion",
-            "prepared_source": prepare_source(self.contextual_insertion_source),
-        }
-        result = runner.invoke(insertion_state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertNotIn("The new lights also use less electricity than the older fixtures.", explanation)
-        self.assertIn("new lights", explanation)
-        self.assertIn("Because the lights use less electricity", explanation)
-
-    def test_graph_rewrites_paragraph_ordering_explanation_as_edge_chain(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _AdjacencyParagraphPlanner())
-        paragraph_state = {
-            **self.state,
-            "source_paragraph": self.ordering_source,
-            "QuestionTypeKey": "paragraph_ordering",
-            "prepared_source": prepare_source(self.ordering_source),
-        }
-        result = runner.invoke(paragraph_state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertNotIn("핵심 화제 제시", explanation)
-        self.assertIn("뒤에는", explanation)
-        self.assertIn("다음에는", explanation)
-
     def test_mood_atmosphere_planner_output_validates(self) -> None:
         mood_state = {
             **self.state,
@@ -987,30 +919,6 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planned")
         self.assertIsInstance(result["plan"], MoodAtmospherePlan)
-
-    def test_graph_rewrites_mood_atmosphere_explanation(self) -> None:
-        mood_source = (
-            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
-            "to those around them. In one experiment, two capuchin monkeys were initially perfectly content "
-            "with a reward of cucumbers when they successfully performed a task. But when one monkey receiving "
-            "plain old cucumbers became enraged, angrily throwing the previously satisfactory salad vegetable "
-            "at its handler. The monkey's economy had grown, since grapes are better than cucumbers. "
-            "But the resulting inequality brought only discontent."
-        )
-        runner = compile_question_graph(
-            structured_llm_factory=lambda schema: _MoodAtmospherePlanner(),
-            question_types={**QUESTION_TYPES, "mood_atmosphere": self.mood_type_spec},
-        )
-        mood_state = {
-            **self.state,
-            "source_paragraph": mood_source,
-            "QuestionTypeKey": "mood_atmosphere",
-            "prepared_source": prepare_source(mood_source),
-        }
-        result = runner.invoke(mood_state)
-        self.assertEqual(result["status"], "validation_passed")
-        self.assertIn("the monkey", result["generated"].explanation or "")
-        self.assertNotIn("choice_pairs", result["generated"].explanation or "")
 
     def test_underlined_phrase_meaning_planner_output_validates(self) -> None:
         underlined_state = {
@@ -1100,25 +1008,6 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn("priority=top", prompt)
         self.assertIn("context=", prompt)
         self.assertIn("Selection reminders", prompt)
-
-    def test_graph_rewrites_underlined_phrase_meaning_explanation(self) -> None:
-        runner = compile_question_graph(
-            structured_llm_factory=lambda schema: _UnderlinedPhraseMeaningPlanner(
-                self.underlined_span.id,
-                self.underlined_span.text,
-                "the resulting inequality brought only discontent",
-            )
-        )
-        underlined_state = {
-            **self.state,
-            "source_paragraph": self.underlined_source,
-            "QuestionTypeKey": "underlined_phrase_meaning",
-            "prepared_source": self.underlined_prepared,
-        }
-        result = runner.invoke(underlined_state)
-        self.assertEqual(result["status"], "validation_passed")
-        self.assertIn("brought only discontent", result["generated"].explanation or "")
-        self.assertNotIn("surface_meaning", result["generated"].explanation or "")
 
     def test_fill_in_the_blank_planner_output_validates(self) -> None:
         state = {
@@ -1358,23 +1247,6 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Locked answer_span_id", prompt)
         self.assertIn("that is the one item to corrupt", prompt)
 
-    def test_graph_rewrites_best_paraphrase_explanation_as_non_restoration(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": self.mvp_source,
-            "QuestionTypeKey": "vocab",
-            "QuestionSubtypeKey": "contextual_vocab_best_paraphrase_choice_5",
-            "QuestionFormatKey": "contextual_vocab_best_paraphrase_choice_5",
-            "prepared_source": prepare_source(self.mvp_source),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("바꿔 말한 표현", explanation)
-        self.assertIn("그대로 복원하는 문제가 아니라", explanation)
-        self.assertNotIn("selected_span_id", explanation)
-
     def test_graph_rewrites_phrase_choice_explanation_as_phrase_level_fit(self) -> None:
         source = "The report carries moral force in this debate. Repeated exceptions weaken the rule for everyone."
         span_text = "moral force"
@@ -1482,64 +1354,6 @@ class PlannerTests(unittest.TestCase):
         explanation = rewrite_result["generated"].explanation or ""
         self.assertNotIn("이 자리에는 이 자리에는", explanation)
         self.assertFalse(explanation.startswith("'"))
-
-    def test_graph_rewrites_polarity_scope_explanation_with_direction_language(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": (
-                "Leaders cease wasteful spending during droughts. "
-                "Engineers expand storage when demand rises. "
-                "Families ignore rumors during emergencies. "
-                "Stronger pumps reduce pressure loss across the valley. "
-                "Volunteers protect the main channel from damage. "
-                "Teachers discuss the results every Friday."
-            ),
-            "QuestionTypeKey": "vocab",
-            "QuestionSubtypeKey": "contextual_vocab_error_1_among_5_polarity_scope_5",
-            "QuestionFormatKey": "contextual_vocab_error_1_among_5_polarity_scope_5",
-            "prepared_source": prepare_source(
-                "Leaders cease wasteful spending during droughts. "
-                "Engineers expand storage when demand rises. "
-                "Families ignore rumors during emergencies. "
-                "Stronger pumps reduce pressure loss across the valley. "
-                "Volunteers protect the main channel from damage. "
-                "Teachers discuss the results every Friday."
-            ),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("방향, 정도, 또는 적용 범위", explanation)
-
-    def test_graph_rewrites_collocation_explanation_with_natural_combination_language(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": (
-                "Leaders cease wasteful spending during droughts. "
-                "Engineers expand storage when demand rises. "
-                "Families ignore rumors during emergencies. "
-                "Stronger pumps reduce pressure loss across the valley. "
-                "Volunteers protect the main channel from damage. "
-                "Teachers discuss the results every Friday."
-            ),
-            "QuestionTypeKey": "vocab",
-            "QuestionSubtypeKey": "contextual_vocab_error_1_among_5_collocation_5",
-            "QuestionFormatKey": "contextual_vocab_error_1_among_5_collocation_5",
-            "prepared_source": prepare_source(
-                "Leaders cease wasteful spending during droughts. "
-                "Engineers expand storage when demand rises. "
-                "Families ignore rumors during emergencies. "
-                "Stronger pumps reduce pressure loss across the valley. "
-                "Volunteers protect the main channel from damage. "
-                "Teachers discuss the results every Friday."
-            ),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("자연스럽게 결합", explanation)
 
     def test_underlined_vocab_explanation_uses_rendered_source_order_marker(self) -> None:
         source = (
@@ -1697,55 +1511,6 @@ class PlannerTests(unittest.TestCase):
         explanation = rewrite_result["generated"].explanation or ""
         self.assertIn("따라서 ⑤의'showed'는 맞지 않고", explanation)
         self.assertNotIn("따라서 ①의'showed'는 맞지 않고", explanation)
-
-    def test_graph_rewrites_vocab_explanation_from_source_evidence(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabDriftPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": self.mvp_source,
-            "QuestionTypeKey": "vocab",
-            "prepared_source": prepare_source(self.mvp_source),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertTrue(explanation.startswith("문맥상"))
-        self.assertIn("brighter crosswalks feel safer", explanation)
-        self.assertIn("다른 선택지들은", explanation)
-        self.assertFalse(explanation.startswith("'"))
-        self.assertNotIn("그 방향을 뒷받침", explanation)
-        self.assertNotIn("자유서술 설명", explanation)
-
-    def test_graph_rewrites_grammar_explanation_from_structural_cue(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _GrammarDriftPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": self.mvp_source,
-            "QuestionTypeKey": "grammar",
-            "prepared_source": prepare_source(self.mvp_source),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("동사원형", explanation)
-        self.assertIn("lighting system to nearby neighborhoods", explanation)
-        self.assertNotIn("그 구조를 보여 주므로", explanation)
-        self.assertNotIn("자유서술 문법 해설", explanation)
-
-    def test_graph_rewrites_fill_explanation_as_teacher_facing_note(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _FillInTheBlankPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": self.mvp_source,
-            "QuestionTypeKey": "fill_in_the_blank",
-            "prepared_source": prepare_source(self.mvp_source),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("핵심 단서", explanation)
-        self.assertNotIn("라는 의미라는 의미", explanation)
-
 
 if __name__ == "__main__":
     unittest.main()

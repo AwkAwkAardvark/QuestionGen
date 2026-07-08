@@ -20,6 +20,8 @@ from .schemas import QuestionState
 from .validators import input_check, plan_check, source_check, validate_generated_question
 
 NodeResult = dict[str, Any]
+_CONTINUE = "continue"
+_STOP = "stop"
 
 
 @dataclass(slots=True)
@@ -35,12 +37,14 @@ class LocalQuestionGraphRunner:
         self._graph = self._compile_graph()
 
     def invoke(self, state: QuestionState) -> QuestionState:
-        working_state: QuestionState = {
+        working_state: dict[str, Any] = {
             **state,
             "errors": list(state["errors"]),
+            "_graph_route": _STOP,
         }
         final_state = cast(dict[str, Any], self._graph.invoke(working_state))
         final_state["errors"] = list(final_state["errors"])
+        final_state.pop("_graph_route", None)
         return cast(QuestionState, final_state)
 
     def _compile_graph(self) -> Any:
@@ -60,39 +64,48 @@ class LocalQuestionGraphRunner:
         workflow.add_edge(START, "input_check")
         workflow.add_conditional_edges(
             "input_check",
-            lambda state: "prepare_source" if state["status"] == "input_passed" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "prepare_source", _STOP: END},
         )
         workflow.add_conditional_edges(
             "prepare_source",
-            lambda state: "source_check" if state["status"] == "source_prepared" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "source_check", _STOP: END},
         )
         workflow.add_conditional_edges(
             "source_check",
-            lambda state: "design" if state["status"] == "source_passed" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "design", _STOP: END},
         )
         workflow.add_conditional_edges(
             "design",
-            lambda state: "planner" if state["status"] == "source_passed" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "planner", _STOP: END},
         )
         workflow.add_conditional_edges(
             "planner",
-            lambda state: "plan_check" if state["status"] == "planned" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "plan_check", _STOP: END},
         )
         workflow.add_conditional_edges(
             "plan_check",
-            lambda state: "render" if state["status"] == "planned" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "render", _STOP: END},
         )
         workflow.add_conditional_edges(
             "render",
-            lambda state: "build_explanation_context" if state["status"] == "rendered" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "build_explanation_context", _STOP: END},
         )
         workflow.add_conditional_edges(
             "build_explanation_context",
-            lambda state: "write_explanation" if state["status"] == "rendered" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "write_explanation", _STOP: END},
         )
         workflow.add_conditional_edges(
             "write_explanation",
-            lambda state: "validate_generated_question" if state["status"] == "rendered" else END,
+            lambda state: state["_graph_route"],
+            {_CONTINUE: "validate_generated_question", _STOP: END},
         )
         workflow.add_edge("validate_generated_question", END)
 
@@ -238,12 +251,13 @@ class LocalQuestionGraphRunner:
         type_spec: QuestionTypeSpec | None,
         operation: Callable[[QuestionState, QuestionTypeSpec | None], NodeResult],
     ) -> NodeResult:
-        working_state: QuestionState = {
+        working_state: dict[str, Any] = {
             **state,
             "errors": list(state["errors"]),
         }
         self._log_stage(working_state, stage_name, "start", type_spec)
         result = operation(working_state, type_spec)
+        result["_graph_route"] = self._route_for_result(stage_name, result)
         self._apply_result(working_state, result)
         self._log_stage(working_state, stage_name, "finish", type_spec)
         return result
@@ -270,6 +284,21 @@ class LocalQuestionGraphRunner:
     def _apply_result(state: QuestionState, result: NodeResult) -> None:
         for key, value in result.items():
             state[key] = value
+
+    @staticmethod
+    def _route_for_result(stage_name: str, result: NodeResult) -> str:
+        status = result.get("status")
+        if stage_name == "input_check":
+            return _CONTINUE if status == "input_passed" else _STOP
+        if stage_name == "prepare_source":
+            return _CONTINUE if status == "source_prepared" else _STOP
+        if stage_name in {"source_check", "design"}:
+            return _CONTINUE if status == "source_passed" else _STOP
+        if stage_name in {"planner", "plan_check"}:
+            return _CONTINUE if status == "planned" else _STOP
+        if stage_name in {"render", "build_explanation_context", "write_explanation"}:
+            return _CONTINUE if status == "rendered" else _STOP
+        return _STOP
 
     def _log_stage(
         self,

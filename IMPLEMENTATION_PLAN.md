@@ -278,7 +278,7 @@
   - dormant policy: keep the implementation code in the repo, but keep `QUESTION_TYPES` and launcher/UI defaults focused on the other live families until their quality work stabilizes
   - reactivation policy: revisit this family only after the active families are hardened further and the user explicitly confirms that the affective family is worth reactivating
 
-## Active `v0.2.0` Work: Shared Design Layer
+## Active `v0.3.0` Work: Graph-Backed Orchestration
 
 ### Planner observability and timeout hardening first
 
@@ -296,11 +296,12 @@ Landed hardening contract:
 - `QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS` now controls periodic "still running" planner logs and defaults to `30` seconds.
 - Planner timeouts now export readable `planning_error` rows instead of presenting as silent spinner stalls.
 
-### Shared intermediate design layer
+### Shared design layer and restored graph runtime
 
-- [x] Treat the shared design layer as a `v0.2.0`-scale internal architectural change.
+- [x] Treat the shared design layer as the foundation for a `v0.3.0`-scale internal architectural change.
 - [x] Use the internal graph shape:
   - `prepare -> source gate -> design -> final planner -> deterministic plan check -> render -> explanation -> final validate`
+- [x] Treat explicit LangGraph-backed orchestration as the active internal execution contract for that stage sequence.
 - [x] Keep the public batch/export/notebook interfaces unchanged while refactoring internal graph stages and planner contracts.
 - [x] Add first-class `QuestionState.design` and deterministic family-specific design builders.
 - [x] Split live-family planning into `design -> draft -> hydrate final plan`.
@@ -314,6 +315,12 @@ Landed hardening contract:
   - `grammar`
 - [x] Move source-owned text selection out of LLM authority for the migrated live families.
 - [x] Treat subtype-critical ambiguity control as design-stage state when a live family cannot safely rely on planner free choice.
+- [x] Keep the public invocation surfaces unchanged while the graph runtime is explicit again:
+  - `compile_question_graph(...)`
+  - `runner.invoke(state)`
+  - `run_batch_rows(..., runner=...)`
+  - `BatchResultRow`
+  - exported status vocabulary
 - [x] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
 
 ## Stable Workflow Commitments

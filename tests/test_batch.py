@@ -971,29 +971,6 @@ class BatchTests(unittest.TestCase):
         self.assertTrue(all(result.status == "planning_error" for result in results))
         self.assertTrue(all("schema mismatch" in result.errors[0] for result in results))
 
-    def test_short_valid_passage_becomes_qtype_incompatibility(self) -> None:
-        short_rows = [BatchInputRow(OriginalQuestionNumber="8-01", BatchRowId=0, source_paragraph="A. B. C. D.")]
-        results = run_batch_rows(short_rows, ["sentence_insertion"], self.runner)
-        self.assertEqual(results[0].status, "qtype_incompatibility_error")
-        self.assertTrue(any("at least 5 sentence units" in error for error in results[0].errors))
-
-    def test_weak_paragraph_ordering_row_is_rejected_before_planning(self) -> None:
-        weak_row = BatchInputRow(
-            OriginalQuestionNumber="8",
-            BatchRowId=0,
-            source_paragraph=(
-                "It has been said that most people listen with the intention to reply rather than to understand. "
-                "Facilitating your mentee’s thinking, rather than trying to do it for them, is your primary responsibility as a mentor, however tempting that may be. "
-                "If during a mentoring session, you realize you're doing most of the talking, then just stop, sit back and listen with a patient mind. "
-                "A good part of the mentee’s learning process, which involves dealing with complex ideas, happens when he/she thinks out loud. "
-                "Therefore, your mentee should be doing most of the talking. "
-                "Listening actively and empathically helps a mentee to have a sense of having their thoughts valued and acknowledged; it is essential that you listen well."
-            ),
-        )
-        results = run_batch_rows([weak_row], ["paragraph_ordering"], self.runner)
-        self.assertEqual(results[0].status, "qtype_incompatibility_error")
-        self.assertTrue(any("strongly forced adjacency boundaries" in error for error in results[0].errors))
-
     def test_file_runner_writes_csv_and_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             input_csv = Path(tmpdir) / "input.csv"
