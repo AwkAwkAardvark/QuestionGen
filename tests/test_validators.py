@@ -24,6 +24,7 @@ from questiongen.schemas import (
 )
 from questiongen.targeting import (
     allowed_verb_form_variants,
+    fill_blank_completion_option_quality_error,
     fill_blank_summary_inventory,
     fill_blank_target_inventory,
     fill_blank_span_quality_error,
@@ -1090,6 +1091,22 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("blank_connective_relation_5_choices" in error for error in errors))
 
+    def test_fill_in_the_blank_completion_quality_accepts_proposition_sentence_with_period(self) -> None:
+        self.assertIsNone(
+            fill_blank_completion_option_quality_error(
+                "the new disparity made them unhappy and resentful.",
+                subtype_key="blank_inference_proposition_5_choices",
+            )
+        )
+
+    def test_fill_in_the_blank_completion_quality_still_rejects_noisy_punctuation(self) -> None:
+        self.assertIsNotNone(
+            fill_blank_completion_option_quality_error(
+                "the new disparity made them unhappy, and resentful.",
+                subtype_key="blank_inference_proposition_5_choices",
+            )
+        )
+
     def test_vocab_and_grammar_source_checks_accept_single_word_targets(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "
@@ -1454,6 +1471,43 @@ class ValidatorTests(unittest.TestCase):
         )
         errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["fill_in_the_blank"])
         self.assertTrue(any("non-identical correct_choice" in error for error in errors))
+
+    def test_fill_in_the_blank_plan_accepts_proposition_completion_with_period(self) -> None:
+        source = (
+            "People often remember the rewards of economic competition and the innovation it can inspire. "
+            "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
+            "Workers who felt excluded from the benefits became less willing to trust public institutions. "
+            "As this distrust spread, even reforms that might have helped were greeted with suspicion. "
+            "The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(
+            span for span in fill_blank_target_inventory(prepared) if span.text == "resulting inequality brought only discontent"
+        )
+        plan = FillInTheBlankPlan(
+            subtype="proposition_inference",
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            completion_choices=[
+                "the new disparity made them unhappy and resentful.",
+                "the rewards naturally increased public trust",
+                "the concentrated gains created broad social harmony",
+                "the reforms quickly removed every public doubt",
+                "the workers welcomed the unequal distribution",
+            ],
+            correct_choice="the new disparity made them unhappy and resentful.",
+            contextual_meaning_ko="이 빈칸은 소수에게 집중된 이익이 어떤 부정적 결과를 낳았는지 문장처럼 완성해야 합니다",
+            supporting_evidence="when the gains are concentrated in only a few hands",
+            explanation="문맥상 이익의 편중이 사람들에게 불만과 원망을 낳았다는 결과 명제가 완성되어야 합니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["blank_inference_proposition_5_choices"],
+            ),
+            [],
+        )
 
     def test_fill_in_the_blank_connective_validator_accepts_non_restoration_completion(self) -> None:
         source = (

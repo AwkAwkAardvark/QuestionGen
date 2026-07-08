@@ -183,6 +183,7 @@
   - current hardening policy:
     - design should lock a target whose recovery requires broader passage reasoning, not immediate source restoration
     - proposition and summary blanks must use a non-identical `correct_choice`
+    - proposition and summary completion readability should stay aligned with schema-level English-choice acceptance, including otherwise readable sentence-final `.`
     - `blank_connective_relation_5_choices` should admit only short connective-style completions; clause stubs or sentence fragments should fail earlier as `qtype_incompatibility_error`
     - if a weaker blank subtype can only reuse the same restoration-style span, it should fail early as `qtype_incompatibility_error` rather than ship a redundant row
     - Tier 1 planner-local semantic adjudication now runs only for `blank_inference_proposition_5_choices` and `blank_summary_completion_5_choices`, after draft hydration plus deterministic plan checks and before the graph leaves `planner`
