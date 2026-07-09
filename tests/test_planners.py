@@ -51,6 +51,58 @@ from questiongen.schemas import (
 from questiongen.targeting import allowed_verb_form_variants, grammar_target_inventory, vocab_choice_inventory
 
 
+def _summary_blank_prepared_source() -> PreparedSource:
+    first_sentence = "During the storm, workers exchanged updates quickly through a shared radio network."
+    second_sentence = "As a final lesson, local agencies must coordinate closely during emergencies to protect residents."
+    source = f"{first_sentence} {second_sentence}"
+    first_span_text = "workers exchanged updates quickly"
+    second_span_text = "local agencies must coordinate closely"
+    first_char_start = source.index(first_span_text)
+    first_char_end = first_char_start + len(first_span_text)
+    second_char_start = source.index(second_span_text)
+    second_char_end = second_char_start + len(second_span_text)
+    return PreparedSource(
+        source_text=source,
+        sentence_units=[
+            SourceUnit(id="S0", text=first_sentence, index=0),
+            SourceUnit(id="S1", text=second_sentence, index=1),
+        ],
+        gap_units=[
+            GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+            GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id="S1"),
+            GapUnit(id="G2", index=2, before_unit_id="S1", after_unit_id=None),
+        ],
+        span_units=[
+            SpanUnit(
+                id="P0",
+                text=first_span_text,
+                normalized_text=first_span_text.lower(),
+                char_start=first_char_start,
+                char_end=first_char_end,
+                sentence_unit_id="S0",
+                sentence_index=0,
+                context_before=first_sentence[: first_sentence.index(first_span_text)],
+                context_after=first_sentence[first_sentence.index(first_span_text) + len(first_span_text) :],
+                heuristic_tags=["claim_bearing", "contextual_cue", "phrase_frame"],
+                priority_score=8,
+            ),
+            SpanUnit(
+                id="P1",
+                text=second_span_text,
+                normalized_text=second_span_text.lower(),
+                char_start=second_char_start,
+                char_end=second_char_end,
+                sentence_unit_id="S1",
+                sentence_index=1,
+                context_before=second_sentence[: second_sentence.index(second_span_text)],
+                context_after=second_sentence[second_sentence.index(second_span_text) + len(second_span_text) :],
+                heuristic_tags=["abstract_term", "claim_bearing", "contextual_cue", "phrase_frame"],
+                priority_score=7,
+            )
+        ],
+    )
+
+
 class _ValidPlanner:
     def invoke(self, prompt: str) -> SentenceInsertionPlan:
         return SentenceInsertionPlan(
@@ -383,22 +435,22 @@ class _SummaryContrastFailurePlanner:
     def invoke(self, prompt: str) -> FillInTheBlankPlan:
         match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
         span_id = match.group(1) if match else "P0"
-        span_text = match.group(2) if match else "opportunity must be shared widely enough to sustain social peace"
+        span_text = match.group(2) if match else "local agencies must coordinate closely"
         return FillInTheBlankPlan(
             subtype="summary_completion",
             selected_span_id=span_id,
             selected_span_text=span_text,
             completion_choices=[
-                "ambition should vanish to preserve social peace",
-                "opportunity must be shared widely to preserve social peace",
-                "innovation matters more than inequality",
-                "public distrust should replace reform",
-                "economic rewards must stay concentrated",
+                "regional teams should compete for credit",
+                "local offices should guard updates separately",
+                "public attention should shift toward slogans",
+                "outside groups should wait for instructions",
+                "temporary praise should replace coordination",
             ],
-            correct_choice="ambition should vanish to preserve social peace",
-            contextual_meaning_ko="이 빈칸은 글의 최종 교훈을 압축해 완성해야 합니다",
-            supporting_evidence="The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace.",
-            explanation="문맥상 글의 최종 교훈을 압축해 완성해야 합니다.",
+            correct_choice="local offices should guard updates separately",
+            contextual_meaning_ko="이 빈칸은 최종 교훈의 요약 방향이 맞는지를 점검해야 합니다",
+            supporting_evidence="As a final lesson, local agencies must coordinate closely during emergencies to protect residents.",
+            explanation="문맥상 글의 최종 교훈을 요약하는 방향이 맞아야 합니다.",
         )
 
 
@@ -406,22 +458,22 @@ class _SummaryAcceptedPlanner:
     def invoke(self, prompt: str) -> FillInTheBlankPlan:
         match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
         span_id = match.group(1) if match else "P0"
-        span_text = match.group(2) if match else "not that ambition should vanish"
+        span_text = match.group(2) if match else "local agencies must coordinate closely"
         return FillInTheBlankPlan(
             subtype="summary_completion",
             selected_span_id=span_id,
             selected_span_text=span_text,
             completion_choices=[
-                "ambition should not disappear entirely",
-                "opportunity must be shared widely to preserve social peace",
-                "innovation matters more than inequality",
-                "public distrust should replace reform",
-                "economic rewards must stay concentrated",
+                "regional teams should share updates quickly",
+                "public attention should shift toward slogans",
+                "temporary praise should replace coordination",
+                "outside groups should wait for instructions",
+                "local offices should compete for credit",
             ],
-            correct_choice="ambition should not disappear entirely",
-            contextual_meaning_ko="이 빈칸은 최종 교훈의 부정된 대비축을 자연스럽게 복원해야 합니다",
-            supporting_evidence="The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace.",
-            explanation="문맥상 글의 최종 교훈에서 부정된 대비축을 먼저 복원해야 합니다.",
+            correct_choice="regional teams should share updates quickly",
+            contextual_meaning_ko="이 빈칸은 최종 교훈의 협력 방향을 요약해야 합니다",
+            supporting_evidence="As a final lesson, local agencies must coordinate closely during emergencies to protect residents.",
+            explanation="문맥상 글의 최종 교훈을 협력 방향으로 요약해야 합니다.",
         )
 
 
@@ -692,32 +744,40 @@ def _extract_locked_untouched_distractor_id(prompt: str) -> str | None:
 
 class _GrammarPlanner:
     def invoke(self, prompt: str) -> GrammarPlan:
-        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
-        target_ids, target_texts = zip(*targets)
-        replacement = next(iter(sorted(allowed_verb_form_variants(target_texts[1]) - {target_texts[1].lower()})))
+        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)
+        chosen_id, chosen_text = next(((span_id, text) for span_id, text in targets if text == "raising"), targets[0])
+        chosen_bundle = targets[:5]
+        target_ids, target_texts = zip(*chosen_bundle)
+        replacement = "raised" if chosen_text == "raising" else next(
+            iter(sorted(allowed_verb_form_variants(chosen_text) - {chosen_text.lower()}))
+        )
         return GrammarPlan(
             target_span_ids=list(target_ids),
             target_span_texts=list(target_texts),
-            corrupted_span_id=target_ids[1],
+            corrupted_span_id=chosen_id,
             corrupted_word=replacement,
             correction_basis_ko="주변 구조에 맞는 동사 형태가 유지되어야 합니다",
-            supporting_evidence="Officials now plan to expand the same lighting system to nearby neighborhoods.",
+            supporting_evidence="Because the lights use less electricity, the city can improve safety without raising its energy budget.",
             explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
         )
 
 
 class _GrammarDriftPlanner:
     def invoke(self, prompt: str) -> GrammarPlan:
-        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)[:5]
-        target_ids, target_texts = zip(*targets)
-        replacement = next(iter(sorted(allowed_verb_form_variants(target_texts[1]) - {target_texts[1].lower()})))
+        targets = re.findall(r"- rank \d+: (P\d+); score=\d+; text='([A-Za-z]+)'", prompt)
+        chosen_id, chosen_text = next(((span_id, text) for span_id, text in targets if text == "raising"), targets[0])
+        chosen_bundle = targets[:5]
+        target_ids, target_texts = zip(*chosen_bundle)
+        replacement = "raised" if chosen_text == "raising" else next(
+            iter(sorted(allowed_verb_form_variants(chosen_text) - {chosen_text.lower()}))
+        )
         return GrammarPlan(
             target_span_ids=list(target_ids),
             target_span_texts=["alpha", "bravo", "charlie", "delta", "echo"],
-            corrupted_span_id=target_ids[1],
+            corrupted_span_id=chosen_id,
             corrupted_word=replacement,
             correction_basis_ko="이 문장은 절대 나오면 안 되는 자유서술 문법 해설입니다",
-            supporting_evidence="Officials now plan to expand the same lighting system to nearby neighborhoods.",
+            supporting_evidence="Because the lights use less electricity, the city can improve safety without raising its energy budget.",
             explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
         )
 
@@ -772,11 +832,13 @@ class PlannerTests(unittest.TestCase):
             "Officials now plan to expand the same lighting system to nearby neighborhoods."
         )
         self.summary_blank_source = (
-            "People often remember the rewards of economic competition and the innovation it can inspire. "
-            "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
-            "Workers who felt excluded from the benefits became less willing to trust public institutions. "
-            "As this distrust spread, even reforms that might have helped were greeted with suspicion. "
-            "The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace."
+            "During the storm, workers exchanged updates quickly through a shared radio network. "
+            "As a final lesson, local agencies must coordinate closely during emergencies to protect residents."
+        )
+        self.correct_among_3_source = (
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods. "
+            "Residents say the brighter crosswalks feel safer at night."
         )
         self.phrase_choice_source = (
             "The report carries moral force in this debate. "
@@ -1155,12 +1217,12 @@ class PlannerTests(unittest.TestCase):
             "QuestionTypeKey": "fill_in_the_blank",
             "QuestionSubtypeKey": "blank_summary_completion_5_choices",
             "QuestionFormatKey": "blank_summary_completion_5_choices",
-            "prepared_source": prepare_source(self.summary_blank_source),
+            "prepared_source": _summary_blank_prepared_source(),
             "design": None,
         }
         adjudicator = _SemanticAdjudicator(
             expected_substrings=(
-                "The lesson is _____, but that opportunity must be shared widely enough to sustain social peace.",
+                "As a final lesson, _____ during emergencies to protect residents.",
                 "Locked original source wording:",
             )
         )
@@ -1187,14 +1249,14 @@ class PlannerTests(unittest.TestCase):
             "QuestionTypeKey": "fill_in_the_blank",
             "QuestionSubtypeKey": "blank_summary_completion_5_choices",
             "QuestionFormatKey": "blank_summary_completion_5_choices",
-            "prepared_source": prepare_source(self.summary_blank_source),
+            "prepared_source": _summary_blank_prepared_source(),
             "design": None,
         }
         adjudicator = _SemanticAdjudicator(
             fits_discourse_role=False,
             visible_frame_semantically_valid=False,
-            failure_reason="visible contrast frame is `X, but that Y`, but the selected answer supplies the visible Y side even though the blanked slot requires the rejected X side",
-            expected_substrings=("The lesson is _____, but that opportunity must be shared widely enough to sustain social peace.",),
+            failure_reason="the selected answer stays readable English but narrows the concluding lesson into isolated offices rather than a coordinated summary claim",
+            expected_substrings=("As a final lesson, _____ during emergencies to protect residents.",),
         )
         result = plan_fill_in_the_blank(
             state,
@@ -1208,7 +1270,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(
             result["errors"],
             [
-                "Planner semantic adjudication failed: visible contrast frame is `X, but that Y`, but the selected answer supplies the visible Y side even though the blanked slot requires the rejected X side"
+                "Planner semantic adjudication failed: the selected answer stays readable English but narrows the concluding lesson into isolated offices rather than a coordinated summary claim"
             ],
         )
 
@@ -1537,9 +1599,9 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result["design"].selected_span_id, "P1")
 
     def test_correct_among_3_prompt_exposes_locked_survivor_pair(self) -> None:
-        prepared = prepare_source(self.mvp_source)
+        prepared = prepare_source(self.correct_among_3_source)
         prompt = build_vocab_prompt(
-            source_paragraph=self.mvp_source,
+            source_paragraph=self.correct_among_3_source,
             prepared_source=prepared,
             type_spec=QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
         )

@@ -43,6 +43,13 @@ class ParserTests(unittest.TestCase):
         sentence = "The old-timers said it was the loudest, most exciting game they’d ever been to."
         self.assertFalse(looks_fragmentary_sentence(sentence))
 
+    def test_fragment_detector_accepts_introductory_phrase_sentence_with_and_so_on_tail(self) -> None:
+        sentence = (
+            "In these periods we exchange information and feelings in both conversational "
+            "and non-verbal forms (facial expressions, eye contact, gestures, touching, and so on)."
+        )
+        self.assertFalse(looks_fragmentary_sentence(sentence))
+
     def test_fragment_detector_still_rejects_real_terminal_fragment(self) -> None:
         sentence = "The book I was looking for."
         self.assertTrue(looks_fragmentary_sentence(sentence))

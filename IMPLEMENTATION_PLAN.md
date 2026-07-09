@@ -124,6 +124,7 @@
 - [x] Harden `paragraph_ordering` so weakly forced or parallel-example block splits fail deterministically and explanations justify adjacency edge by edge.
 - [x] Harden `underlined_phrase_meaning` so literal, fragmentary, and weakly central spans fail earlier in the pipeline.
 - [x] Refine fragment detection so complete finite clauses with terminal stranded prepositions do not surface as false `source_error` rows.
+- [x] Keep `source_error` narrow during preparation: introductory prepositional phrases, long modifiers, and idiomatic tails such as `and so on` should not hard-fail unless the sentence truly lacks a viable clause core.
 - [x] Recalibrate live planner prompt surfaces for `gpt-5-mini` so inventories expose ranked evidence rather than raw IDs alone.
 - [x] Keep upstream LLM service failures, including `insufficient_quota`, under `planning_error` without adding a new exported status.
 - [x] Stop further batch-wide LLM planning attempts after the first detected `insufficient_quota` while still exporting every row/type combination.
@@ -184,6 +185,8 @@
     - design should lock a target whose recovery requires broader passage reasoning, not immediate source restoration
     - proposition and summary blanks must use a non-identical `correct_choice`
     - proposition and summary completion readability should stay aligned with schema-level English-choice acceptance, including otherwise readable sentence-final `.`
+    - proposition and summary blanks must also pass a full rendered-sentence fit gate, not just stand-alone choice readability
+    - duplicated visible frame content, malformed modal/infinitive attachment, and awkward summary-frame reuse should fail deterministically once the choice is inserted back into the exact sentence
     - `blank_connective_relation_5_choices` should admit only short connective-style completions; clause stubs or sentence fragments should fail earlier as `qtype_incompatibility_error`
     - if a weaker blank subtype can only reuse the same restoration-style span, it should fail early as `qtype_incompatibility_error` rather than ship a redundant row
     - Tier 1 planner-local semantic adjudication now runs only for `blank_inference_proposition_5_choices` and `blank_summary_completion_5_choices`, after draft hydration plus deterministic plan checks and before the graph leaves `planner`
@@ -230,6 +233,7 @@
     - [x] for `contextual_vocab_correct_among_4_corrupted_5` and `contextual_vocab_error_1_among_5_5`, replace the raw “first five” lock with a stable-bundle selector that penalizes clustered frames and locks the answer marker in design
     - [x] for `contextual_vocab_correct_among_4_corrupted_5`, require four locally anchored corruption-friendly distractors so the accepted row does not collapse into “spot the absurd one”
     - [x] for `contextual_vocab_correct_among_3_corrupted_5`, lock both the intended answer span and the weaker untouched distractor in design and reject both flat-strength bundles and answer-like extra survivors as `qtype_incompatibility_error`
+    - [x] for `contextual_vocab_correct_among_3_corrupted_5`, treat the fully rendered five-option set as a one-answer contract: grammar-functional untouched survivors, full lexical survivors, or multiple still-defensible survivors must fail deterministically rather than pass as ambiguous items
     - [x] clean exported `vocab` explanations in the same pass so they do not open with raw quoted English evidence and they strip duplicated Korean memo boilerplate such as repeated `이 자리에는 ...`
     - [x] keep regression coverage that re-audits checked-in `sample_data/output/Olymforce_cleaned_spellchecked_nobom_20260625_111945.csv` source passages and requires every hard `vocab` subtype to produce at least some `validation_passed` rows with no schema-shaped `planning_error`
   - next quality-pass priorities on top of the hard-schema rescue:
@@ -262,6 +266,8 @@
   - current hardening policy:
     - keep the live family restricted to controlled structural corruption and reject pseudo-word outputs such as malformed inflectional inventions before they can pass validation
     - prefer earlier `qtype_incompatibility_error` when a would-be verb-family target is not a real controlled verb-form anchor
+    - keep “valid grammar corruption” separate from “correct requested subtype”: finite/nonfinite, participle/voice, and parallel-structure rows must prove subtype identity rather than silently borrowing a generic verb-family error
+    - noun-number, countability, lexical-category, or other non-verb-family drifts should fail subtype validation rather than be relabeled as controlled verb-family grammar items
     - keep explanation marker references aligned with the rendered answer numbering
   - current explanation policy: prefer local structural-cue explanations that name the governing evidence, and reject malformed memo-style Korean notes before export
 

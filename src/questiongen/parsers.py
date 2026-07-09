@@ -953,6 +953,8 @@ def _has_finite_verb(tokens: list[str]) -> bool:
 
 def _looks_terminal_fragment(tokens: list[str]) -> bool:
     last_token = tokens[-1]
+    if len(tokens) >= 3 and tokens[-3:] == ["and", "so", "on"]:
+        return False
     if last_token in _SENTENCE_TERMINAL_FRAGMENT_WORDS:
         return True
     if last_token not in _HANGING_EDGE_WORDS:

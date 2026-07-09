@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import re
 from typing import Iterable
 
-from .parsers import normalize_text
+from .parsers import looks_fragmentary_sentence, normalize_text
 from .schemas import PreparedSource, SpanUnit
 
 BLANK_MARKER = "_____"
@@ -861,6 +861,48 @@ def fill_blank_completion_option_quality_error(
     return None
 
 
+def fill_blank_rendered_completion_error(
+    span: SpanUnit,
+    value: str,
+    *,
+    subtype_key: str = "blank_inference_proposition_5_choices",
+) -> str | None:
+    normalized = " ".join(value.split())
+    choice_tokens = _span_tokens(normalized)
+    before_tokens = _span_tokens(span.context_before or "")
+    after_tokens = _span_tokens(span.context_after or "")
+    left_neighbor = _neighbor_last_token(span.context_before)
+
+    if _boundary_overlap_token_count(before_tokens, choice_tokens):
+        return "duplicates visible frame wording at the left boundary when rendered into the sentence."
+    if _boundary_overlap_token_count(choice_tokens, after_tokens):
+        return "duplicates visible frame wording at the right boundary when rendered into the sentence."
+    if _boundary_window_repeats_choice_head(choice_tokens, before_tokens, reverse=True):
+        return "repeats nearby frame content instead of supplying a distinct completion."
+    if _boundary_window_repeats_choice_head(choice_tokens, after_tokens):
+        return "repeats nearby frame content instead of supplying a distinct completion."
+
+    first_token = choice_tokens[0] if choice_tokens else ""
+    if left_neighbor in {"can", "could", "may", "might", "must", "should", "will", "would"} and first_token == "to":
+        return "creates a malformed modal-plus-infinitive sequence when rendered into the sentence."
+    if left_neighbor == "to" and (
+        first_token == "to"
+        or first_token.endswith(("ed", "en", "ing"))
+        or first_token in _FINITE_AUXILIARIES
+    ):
+        return "does not fit the infinitive slot created by the surrounding sentence."
+
+    rendered = normalize_text(f"{span.context_before or ''}{normalized}{span.context_after or ''}")
+    if looks_fragmentary_sentence(rendered):
+        return "becomes a fragment or malformed local clause when rendered into the sentence."
+
+    if subtype_key == "blank_summary_completion_5_choices":
+        if _summary_completion_shape_error(span, choice_tokens):
+            return "does not fit the summary frame cleanly once inserted into the sentence."
+
+    return None
+
+
 def fill_blank_connective_allows_source_near_completion(span: SpanUnit) -> bool:
     return (
         fill_blank_connective_quality_error(span) is None
@@ -1461,15 +1503,75 @@ _NONVERBIAL_VERB_FAMILY_BLOCKLIST = {
 
 def grammar_target_supports_controlled_verb_family(span: SpanUnit) -> bool:
     token = normalize_english_word(span.text)
+    tags = set(span.heuristic_tags)
+    left_neighbor = _neighbor_last_token(span.context_before)
+    right_neighbor = _neighbor_first_token(span.context_after)
     if not token or len(_span_tokens(span.text)) != 1:
         return False
     if token in _NONVERBIAL_VERB_FAMILY_BLOCKLIST:
+        return False
+    if {
+        "relative_clause_candidate",
+        "noun_clause_candidate",
+        "conjunction_preposition_candidate",
+    } & tags:
         return False
     if token.endswith("ly") and token not in _NONVERBIAL_LY_EXCEPTIONS:
         return False
     if token.endswith(("er", "est")) and token not in _IRREGULAR_VARIANT_INDEX:
         return False
-    return True
+    if token in _FINITE_VERB_CUES or token in _IRREGULAR_VARIANT_INDEX:
+        return True
+    if token.endswith(("ing", "ed", "en")) and len(token) > 4:
+        return True
+    if left_neighbor in _FINITE_AUXILIARIES | {"to", "he", "it", "she", "that", "this"}:
+        return True
+    if left_neighbor in {"and", "or", "than"} or right_neighbor in {"and", "or", "than"}:
+        return token.endswith(("ing", "ed", "en")) or len(token) >= 4 and not token.endswith("s")
+    return False
+
+
+def _boundary_overlap_token_count(left_tokens: list[str], right_tokens: list[str], *, limit: int = 3) -> int:
+    max_width = min(limit, len(left_tokens), len(right_tokens))
+    for width in range(max_width, 0, -1):
+        if left_tokens[-width:] == right_tokens[:width]:
+            if width == 1 and left_tokens[-1] in _FUNCTION_WORDS:
+                continue
+            return width
+    return 0
+
+
+def _boundary_window_repeats_choice_head(
+    choice_tokens: list[str],
+    neighbor_tokens: list[str],
+    *,
+    reverse: bool = False,
+    width: int = 3,
+    scan: int = 6,
+) -> bool:
+    if len(choice_tokens) < width or len(neighbor_tokens) < width:
+        return False
+    phrase = choice_tokens[-width:] if reverse else choice_tokens[:width]
+    window = neighbor_tokens[-scan:] if reverse else neighbor_tokens[:scan]
+    for start in range(0, len(window) - width + 1):
+        if window[start : start + width] == phrase:
+            return True
+    return False
+
+
+def _summary_completion_shape_error(span: SpanUnit, choice_tokens: list[str]) -> bool:
+    left_neighbor = _neighbor_last_token(span.context_before)
+    right_tokens = _span_tokens(span.context_after or "")
+    if left_neighbor in {"a", "an", "the", "this", "that", "these", "those"}:
+        return True
+    if choice_tokens and choice_tokens[0] in {"and", "but", "or"}:
+        return True
+    if right_tokens[:2] == ["but", "that"] and len(choice_tokens) >= 3:
+        repeated_head = choice_tokens[:3]
+        for start in range(0, min(5, len(right_tokens) - 2)):
+            if right_tokens[start : start + 3] == repeated_head:
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1781,10 +1883,19 @@ def vocab_correct_among_3_survivor_pair_error(
 ) -> str | None:
     answer_cues, _ = vocab_target_strength(answer_span)
     distractor_cues, _ = vocab_target_strength(untouched_distractor_span)
+    distractor_tags = set(untouched_distractor_span.heuristic_tags)
     if answer_cues <= distractor_cues:
         return "must lock an answer_span_id with clearly stronger contextual cue support than the untouched distractor."
     if answer_span.priority_score <= untouched_distractor_span.priority_score:
         return "must lock an answer_span_id with a stronger priority profile than the untouched distractor."
+    if _looks_grammarish_choice_text(untouched_distractor_span.text) or {
+        "relative_clause_candidate",
+        "noun_clause_candidate",
+        "conjunction_preposition_candidate",
+    } & distractor_tags:
+        return "must not leave a second untouched option that still works as a grammar-functional survivor in context."
+    if grammar_target_supports_controlled_verb_family(untouched_distractor_span):
+        return "must not leave a second untouched option that still reads as a full lexical survivor in context."
     if _correct_among_3_answer_like_profile_count(untouched_distractor_span) >= 2:
         return "must not leave an extra untouched distractor that is still too central or answer-like under the passage heuristics."
     return None

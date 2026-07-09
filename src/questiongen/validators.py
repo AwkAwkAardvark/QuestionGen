@@ -56,6 +56,7 @@ from .targeting import (
     BLANK_MARKER,
     allowed_verb_form_variants,
     fill_blank_completion_option_quality_error,
+    fill_blank_rendered_completion_error,
     fill_blank_connective_allows_source_near_completion,
     fill_blank_connective_quality_error,
     fill_blank_design_target,
@@ -933,6 +934,14 @@ def _validate_fill_in_the_blank_plan(
         choice_error = fill_blank_completion_option_quality_error(choice, subtype_key=type_spec.subtype_key)
         if choice_error is not None:
             errors.append(f"FillInTheBlankPlan completion choice {choice!r} {choice_error.lower()}")
+            continue
+        rendered_choice_error = fill_blank_rendered_completion_error(
+            selected_span,
+            choice,
+            subtype_key=type_spec.subtype_key,
+        )
+        if rendered_choice_error is not None:
+            errors.append(f"FillInTheBlankPlan completion choice {choice!r} {rendered_choice_error.lower()}")
     if normalize_text(plan.supporting_evidence) not in normalize_text(prepared_source.source_text):
         errors.append("FillInTheBlankPlan supporting_evidence must be copied from the source passage.")
     if normalize_text(plan.supporting_evidence) == normalize_text(plan.selected_span_text):
@@ -1422,6 +1431,17 @@ def _validate_underlined_vocab_plan(
                 errors.append(
                     "UnderlinedVocabPlan contextual_correct_among_3_corrupted " + pair_error
                 )
+        for span in ordered_spans:
+            if span.id in corrupted_ids:
+                replacement = replacement_by_span_id.get(span.id)
+                if replacement is None:
+                    continue
+                profile_error = vocab_correct_among_4_corruption_error(span, replacement)
+                if profile_error is not None:
+                    errors.append(
+                        "UnderlinedVocabPlan contextual_correct_among_3_corrupted replacement "
+                        f"for {span.id} {profile_error}"
+                    )
 
     return errors
 
@@ -2349,6 +2369,8 @@ def _validate_single_word_error_plan(
                 errors.append("grammar corrupted_word must stay within a controlled verb-form variant family.")
             if "grammar_candidate" not in getattr(corrupted_span, "heuristic_tags", []):
                 errors.append("grammar corrupted target must come from the grammar-target inventory.")
+            if grammar_subtype_key is not None:
+                errors.extend(_validate_verb_family_subtype_match(corrupted_span, corrupted_word, grammar_subtype_key))
         else:
             if question_type_key == "grammar":
                 errors.extend(_validate_non_verb_grammar_corruption(corrupted_span.text, corrupted_word, grammar_subtype_key))
@@ -2362,6 +2384,28 @@ def _validate_single_word_error_plan(
                 )
 
     return errors
+
+
+def _validate_verb_family_subtype_match(
+    corrupted_span: object,
+    corrupted_word: str,
+    grammar_subtype_key: str,
+) -> list[str]:
+    matches_finite_nonfinite = _matches_finite_nonfinite_subtype(corrupted_span, corrupted_word)
+    matches_participle_voice = _matches_participle_voice_subtype(corrupted_span, corrupted_word)
+    matches_parallel = _matches_parallel_structure_subtype(corrupted_span, corrupted_word)
+
+    if grammar_subtype_key == "grammar_error_finite_nonfinite_5" and not matches_finite_nonfinite:
+        return ["grammar finite_nonfinite subtype must use a true finite/nonfinite mismatch, not a generic verb-family change."]
+    if grammar_subtype_key == "grammar_error_participle_voice_5" and not matches_participle_voice:
+        return ["grammar participle_voice subtype must use a true participle/voice mismatch, not a generic verb-family change."]
+    if grammar_subtype_key == "grammar_error_parallel_structure_5" and not matches_parallel:
+        return ["grammar parallel_structure subtype must use a true coordination mismatch, not a generic verb-family change."]
+    if grammar_subtype_key == "grammar_error_verb_form_5" and (
+        matches_finite_nonfinite or matches_participle_voice or matches_parallel
+    ):
+        return ["grammar verb_form subtype must not relabel a narrower finite/nonfinite, participle/voice, or parallel-structure error."]
+    return []
 
 
 def _validate_non_verb_grammar_corruption(
@@ -2403,6 +2447,87 @@ def _validate_non_verb_grammar_corruption(
         return []
 
     return []
+
+
+def _matches_finite_nonfinite_subtype(corrupted_span: object, corrupted_word: str) -> bool:
+    left_neighbor = normalize_english_word(_last_token(getattr(corrupted_span, "context_before", "")))
+    original_form = _verb_family_form_label(getattr(corrupted_span, "text", ""))
+    corrupted_form = _verb_family_form_label(corrupted_word)
+    if left_neighbor in {"to", "can", "could", "may", "might", "must", "should", "will", "would"}:
+        return corrupted_form != "base"
+    if left_neighbor in {"is", "are", "was", "were", "am", "be", "been", "being"}:
+        return original_form in {"base", "third_person_s", "gerund", "participle"} and corrupted_form in {
+            "base",
+            "third_person_s",
+        }
+    return False
+
+
+def _matches_participle_voice_subtype(corrupted_span: object, corrupted_word: str) -> bool:
+    left_neighbor = normalize_english_word(_last_token(getattr(corrupted_span, "context_before", "")))
+    original_form = _verb_family_form_label(getattr(corrupted_span, "text", ""))
+    corrupted_form = _verb_family_form_label(corrupted_word)
+    if left_neighbor in {"is", "are", "was", "were", "am", "be", "been", "being", "has", "have", "had"}:
+        return corrupted_form not in {"gerund", "participle"}
+    return original_form in {"gerund", "participle"} and corrupted_form not in {"gerund", "participle"}
+
+
+def _matches_parallel_structure_subtype(corrupted_span: object, corrupted_word: str) -> bool:
+    left_neighbor = normalize_english_word(_last_token(getattr(corrupted_span, "context_before", "")))
+    right_neighbor = normalize_english_word(_first_token(getattr(corrupted_span, "context_after", "")))
+    if left_neighbor not in {"and", "or", "than"} and right_neighbor not in {"and", "or", "than"}:
+        return False
+    return _verb_family_form_label(getattr(corrupted_span, "text", "")) != _verb_family_form_label(corrupted_word)
+
+
+def _verb_family_form_label(word: str) -> str:
+    normalized = normalize_english_word(word)
+    if not normalized:
+        return ""
+    if normalized.endswith("ing"):
+        return "gerund"
+    if normalized.endswith(("ed", "en")) or normalized in {
+        "been",
+        "done",
+        "felt",
+        "found",
+        "gone",
+        "grown",
+        "known",
+        "left",
+        "made",
+        "read",
+        "run",
+        "seen",
+        "shown",
+        "spoken",
+        "taken",
+        "thought",
+        "understood",
+        "written",
+    }:
+        return "participle"
+    if normalized.endswith("s") and len(normalized) > 3:
+        return "third_person_s"
+    return "base"
+
+
+def _first_token(text: str | None) -> str:
+    if not text:
+        return ""
+    match = re.search(r"[A-Za-z]+(?:[-'’][A-Za-z]+)*", text)
+    if match is None:
+        return ""
+    return match.group(0)
+
+
+def _last_token(text: str | None) -> str:
+    if not text:
+        return ""
+    matches = re.findall(r"[A-Za-z]+(?:[-'’][A-Za-z]+)*", text)
+    if not matches:
+        return ""
+    return matches[-1]
 
 
 def _validate_single_word_error_output(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from .paragraph_ordering import paragraph_candidate_is_stable, paragraph_ordering_candidates
@@ -40,6 +41,7 @@ from .targeting import (
     fill_blank_design_target,
     fill_blank_inventory_for_subtype,
     grammar_subtype_inventory,
+    normalize_english_word,
     vocab_hard_bundle,
     underlined_phrase_inventory,
     vocab_choice_inventory,
@@ -489,8 +491,16 @@ def build_grammar_design(
     inventory = grammar_subtype_inventory(prepared_source, type_spec.subtype_key)
     if len(inventory) < 5:
         raise ValueError(f"Passage does not contain five workable grammar targets for {type_spec.subtype_key}.")
-    selected_spans = inventory[:5]
-    corrupted_span = selected_spans[1]
+    selected_spans = list(inventory[:5])
+    corrupted_span = _select_grammar_corruption_anchor(selected_spans, type_spec.subtype_key)
+    if corrupted_span is None:
+        for span in inventory[5:]:
+            if _grammar_span_matches_subtype(span, type_spec.subtype_key):
+                selected_spans[-1] = span
+                corrupted_span = span
+                break
+    if corrupted_span is None:
+        raise ValueError(f"Passage does not contain a stable corruption anchor for {type_spec.subtype_key}.")
     allowed_variants = sorted(allowed_verb_form_variants(corrupted_span.text) - {corrupted_span.text.lower()})
     return GrammarDesign(
         family_key=type_spec.renderer_key,
@@ -513,6 +523,57 @@ def build_grammar_design(
             "allowed_variants": ", ".join(allowed_variants) or "none",
         },
     )
+
+
+def _select_grammar_corruption_anchor(
+    selected_spans: list[Any],
+    subtype_key: str,
+) -> Any | None:
+    for span in selected_spans:
+        if _grammar_span_matches_subtype(span, subtype_key):
+            return span
+    return None
+
+
+def _grammar_span_matches_subtype(span: Any, subtype_key: str) -> bool:
+    left_neighbor = _last_token(span.context_before)
+    right_neighbor = _first_token(span.context_after)
+    normalized = normalize_english_word(span.text)
+    modal_like = {"can", "could", "may", "might", "must", "should", "will", "would", "to"}
+    be_have_like = {"am", "are", "be", "been", "being", "has", "had", "have", "is", "was", "were"}
+    parallel_like = {"and", "or", "than"}
+
+    if subtype_key == "grammar_error_verb_form_5":
+        return (
+            left_neighbor not in modal_like | be_have_like | parallel_like
+            and right_neighbor not in parallel_like
+            and normalized not in {"nearby"}
+        )
+    if subtype_key == "grammar_error_finite_nonfinite_5":
+        return left_neighbor in modal_like
+    if subtype_key == "grammar_error_participle_voice_5":
+        return left_neighbor in be_have_like
+    if subtype_key == "grammar_error_parallel_structure_5":
+        return left_neighbor in parallel_like or right_neighbor in parallel_like
+    return True
+
+
+def _first_token(text: str | None) -> str:
+    if not text:
+        return ""
+    match = re.search(r"[A-Za-z]+(?:[-'’][A-Za-z]+)*", text)
+    if match is None:
+        return ""
+    return normalize_english_word(match.group(0))
+
+
+def _last_token(text: str | None) -> str:
+    if not text:
+        return ""
+    matches = re.findall(r"[A-Za-z]+(?:[-'’][A-Za-z]+)*", text)
+    if not matches:
+        return ""
+    return normalize_english_word(matches[-1])
 
 
 DESIGNERS: dict[str, DesignBuilder] = {

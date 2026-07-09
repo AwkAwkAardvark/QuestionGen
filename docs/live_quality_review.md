@@ -241,6 +241,7 @@ Resolved failure classes from the sample-driven rescue pass:
 - those easier hard subtypes now also lock their answer marker in design so the planner cannot silently drift to a different survivor or corrupted target
 - `contextual_vocab_correct_among_3_corrupted_5` now locks both the intended answer span and the weaker untouched distractor during design
 - flat-strength, near-flat, or answer-like extra-survivor bundles for that subtype should now fail as `qtype_incompatibility_error` instead of reaching late ambiguity or survivor-selection `planning_error`
+- the accepted contract for that subtype is now stricter than “two untouched survivors”: the rendered five-item set must leave exactly one defensible survivor, so grammar-functional or fully lexical second survivors should fail early rather than pass ambiguously
 - `contextual_vocab_best_paraphrase_choice_5` now rejects weak grammar-heavy anchors earlier and reranks toward stronger content-bearing targets
 - `contextual_vocab_phrase_choice_5` remains intentionally narrow and now rejects fragmentary determiner-led phrase targets earlier
 
@@ -267,6 +268,7 @@ Current acceptance boundary for this rescue:
 
 - keep the live `grammar` registry shape unchanged in this cycle; the task is hardening, not subtype expansion
 - current quality problem to harden: reject malformed pseudo-words such as adverb-plus-`-ing` inventions or non-verb comparative drift before they reach `validation_passed`
+- current repo-truth boundary: finite/nonfinite, participle/voice, and parallel-structure rows now need subtype-specific proof, not just any reusable verb-family corruption
 - current repo-truth boundary: explanation rewrites must cite the same rendered marker as `answer`, even when design target order differs from source order
 
 ## Explanation Quality Policy For High-Pass Families

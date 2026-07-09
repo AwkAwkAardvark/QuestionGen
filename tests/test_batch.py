@@ -291,16 +291,29 @@ class _StubPlanner:
             )
         if self.output_schema in {GrammarPlan, GrammarDraft}:
             targets = _extract_ranked_single_word_targets(prompt)
-            target_ids, target_texts = zip(*targets[:5])
-            original_word = target_texts[1]
-            replacement = next(iter(sorted(allowed_verb_form_variants(original_word) - {original_word.lower()})))
+            subtype_match = re.search(r"Set `subtype` to `([a-z_]+)`", prompt)
+            active_subtype = subtype_match.group(1) if subtype_match else "verb_form"
+            if active_subtype == "finite_nonfinite":
+                chosen_id, chosen_text = next(((span_id, text) for span_id, text in targets if text == "improve"), targets[0])
+                replacement = "improved" if chosen_text == "improve" else next(
+                    iter(sorted(allowed_verb_form_variants(chosen_text) - {chosen_text.lower()}))
+                )
+                supporting_evidence = "Because the lights use less electricity, the city can improve safety without raising its energy budget."
+            else:
+                chosen_id, chosen_text = next(((span_id, text) for span_id, text in targets if text == "raising"), targets[0])
+                replacement = "raised" if chosen_text == "raising" else next(
+                    iter(sorted(allowed_verb_form_variants(chosen_text) - {chosen_text.lower()}))
+                )
+                supporting_evidence = "Because the lights use less electricity, the city can improve safety without raising its energy budget."
+            chosen_bundle = targets[:5]
+            target_ids, target_texts = zip(*chosen_bundle)
             return self.output_schema(
                 target_span_ids=list(target_ids),
                 target_span_texts=list(target_texts),
-                corrupted_span_id=target_ids[1],
+                corrupted_span_id=chosen_id,
                 corrupted_word=replacement,
                 correction_basis_ko="이 자리에는 주변 구조에 맞는 원래의 동사 형태가 필요합니다",
-                supporting_evidence="Officials now plan to expand the same lighting system to nearby neighborhoods.",
+                supporting_evidence=supporting_evidence,
                 explanation="문맥상 이 자리의 동사 형태가 구조와 맞지 않습니다.",
             )
         match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
@@ -720,6 +733,20 @@ class BatchTests(unittest.TestCase):
                 "contextual_vocab_error_1_among_5_collocation_5",
             ],
         },
+        {
+            "row": BatchInputRow(
+                OriginalQuestionNumber="VOC-HARD-03",
+                BatchRowId=2,
+                source_paragraph=(
+                    "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+                    "Officials now plan to expand the same lighting system to nearby neighborhoods. "
+                    "Residents say the brighter crosswalks feel safer at night."
+                ),
+            ),
+            "subtypes": [
+                "contextual_vocab_correct_among_3_corrupted_5",
+            ],
+        },
     ]
 
     @staticmethod
@@ -790,7 +817,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_5"].status, "validation_passed")
         self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_polarity_scope_5"].status, "validation_passed")
         self.assertEqual(by_subtype["contextual_vocab_error_1_among_5_collocation_5"].status, "qtype_incompatibility_error")
-        self.assertEqual(by_subtype["contextual_vocab_correct_among_3_corrupted_5"].status, "validation_passed")
+        self.assertEqual(by_subtype["contextual_vocab_correct_among_3_corrupted_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["grammar_error_verb_form_5"].status, "validation_passed")
         self.assertEqual(by_subtype["grammar_error_subject_verb_agreement_5"].status, "qtype_incompatibility_error")
         self.assertEqual(by_subtype["grammar_error_finite_nonfinite_5"].status, "validation_passed")

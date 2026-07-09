@@ -108,6 +108,40 @@ def _manual_prepared_source_with_vocab_spans(
     )
 
 
+def _manual_prepared_source_with_phrase_span(
+    sentence: str,
+    span_text: str,
+    *,
+    heuristic_tags: list[str],
+    priority_score: int,
+) -> PreparedSource:
+    char_start = sentence.index(span_text)
+    char_end = char_start + len(span_text)
+    return PreparedSource(
+        source_text=sentence,
+        sentence_units=[SourceUnit(id="S0", text=sentence, index=0)],
+        gap_units=[
+            GapUnit(id="G0", index=0, before_unit_id=None, after_unit_id="S0"),
+            GapUnit(id="G1", index=1, before_unit_id="S0", after_unit_id=None),
+        ],
+        span_units=[
+            SpanUnit(
+                id="P0",
+                text=span_text,
+                normalized_text=span_text.lower(),
+                char_start=char_start,
+                char_end=char_end,
+                sentence_unit_id="S0",
+                sentence_index=0,
+                context_before=sentence[:char_start],
+                context_after=sentence[char_end:],
+                heuristic_tags=heuristic_tags,
+                priority_score=priority_score,
+            )
+        ],
+    )
+
+
 class ValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.type_spec = QUESTION_TYPES["sentence_insertion"]
@@ -234,6 +268,15 @@ class ValidatorTests(unittest.TestCase):
         )
         errors = validate_prepared_source(prepared)
         self.assertTrue(any("fragmentary" in error for error in errors))
+
+    def test_prepared_source_accepts_introductory_phrase_sentence_with_and_so_on_tail(self) -> None:
+        source = (
+            "In these periods we exchange information and feelings in both conversational and non-verbal forms "
+            "(facial expressions, eye contact, gestures, touching, and so on). "
+            "These exchanges shape how people understand one another."
+        )
+        prepared = prepare_source(source)
+        self.assertEqual(validate_prepared_source(prepared), [])
 
     def test_mood_atmosphere_source_check_rejects_neutral_passage(self) -> None:
         neutral_source = "Markets respond to prices over time. Producers adjust output when costs rise. Consumers compare alternatives before buying. Public policy can influence incentives in different sectors. Long-term trends often depend on resource allocation."
@@ -1509,6 +1552,40 @@ class ValidatorTests(unittest.TestCase):
             [],
         )
 
+    def test_fill_in_the_blank_plan_rejects_rendered_modal_attachment_error(self) -> None:
+        source = (
+            "City planners recently tested brighter LED lights on several downtown blocks. "
+            "The new lights make crosswalks easier to see after sunset. "
+            "They also use less electricity than the older lights. "
+            "Because the lights use less electricity, the city can improve safety without raising its energy budget. "
+            "Residents say the brighter crosswalks feel safer at night. "
+            "Officials now plan to expand the same lighting system to nearby neighborhoods."
+        )
+        prepared = prepare_source(source)
+        selected_span = next(span for span in fill_blank_target_inventory(prepared) if "improve safety" in span.text)
+        plan = FillInTheBlankPlan(
+            subtype="proposition_inference",
+            selected_span_id=selected_span.id,
+            selected_span_text=selected_span.text,
+            completion_choices=[
+                "to improve safety quickly enough",
+                "reduce confusion across the district",
+                "delay repairs during the cold spell",
+                "raise costs throughout the region",
+                "weaken trust in local planning",
+            ],
+            correct_choice="to improve safety quickly enough",
+            contextual_meaning_ko="이 빈칸은 문장 속 동사구 자리에 자연스럽게 들어가야 합니다",
+            supporting_evidence="Because the lights use less electricity",
+            explanation="문맥상 이 자리는 조동사 뒤의 자연스러운 동사구가 와야 합니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["blank_inference_proposition_5_choices"],
+        )
+        self.assertTrue(any("modal-plus-infinitive" in error for error in errors))
+
     def test_fill_in_the_blank_connective_validator_accepts_non_restoration_completion(self) -> None:
         source = (
             "The bridge sensors kept warning about hidden ice. "
@@ -1605,6 +1682,41 @@ class ValidatorTests(unittest.TestCase):
         self.assertTrue(any("non-identical correct_choice" in error for error in errors))
 
     def test_fill_in_the_blank_summary_validator_accepts_non_restoration_completion(self) -> None:
+        sentence = (
+            "As a final lesson, local agencies must coordinate closely during emergencies to protect residents."
+        )
+        prepared = _manual_prepared_source_with_phrase_span(
+            sentence,
+            "local agencies must coordinate closely",
+            heuristic_tags=["abstract_term", "claim_bearing", "contextual_cue", "phrase_frame"],
+            priority_score=7,
+        )
+        plan = FillInTheBlankPlan(
+            subtype="summary_completion",
+            selected_span_id="P0",
+            selected_span_text="local agencies must coordinate closely",
+            completion_choices=[
+                "regional teams should share updates quickly",
+                "a narrow focus on symbolic gestures",
+                "short-term praise from visiting officials",
+                "several isolated reactions from residents",
+                "an expensive return to older systems",
+            ],
+            correct_choice="regional teams should share updates quickly",
+            contextual_meaning_ko="이 빈칸은 글의 요지를 요약하는 명사구가 자연스럽게 들어가야 합니다",
+            supporting_evidence=sentence,
+            explanation="문맥상 이 자리는 핵심 교훈을 요약하는 명사구가 와야 합니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["blank_summary_completion_5_choices"],
+            ),
+            [],
+        )
+
+    def test_fill_in_the_blank_summary_validator_rejects_duplicated_frame_content(self) -> None:
         source = (
             "People often remember the rewards of economic competition and the innovation it can inspire. "
             "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
@@ -1630,14 +1742,12 @@ class ValidatorTests(unittest.TestCase):
             supporting_evidence="The lesson is",
             explanation="문맥상 글의 최종 교훈을 압축해 완성해야 합니다.",
         )
-        self.assertEqual(
-            validate_plan_against_prepared_source(
-                prepared,
-                plan,
-                QUESTION_SUBTYPE_SPECS["blank_summary_completion_5_choices"],
-            ),
-            [],
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["blank_summary_completion_5_choices"],
         )
+        self.assertTrue(any("repeats nearby frame content" in error for error in errors))
 
     def test_fill_in_the_blank_connective_compatibility_rejects_clause_stub_target(self) -> None:
         source = (
@@ -3073,6 +3183,54 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertTrue(any("locked untouched survivor pair" in error for error in errors))
 
+    def test_correct_among_3_compatibility_rejects_grammar_function_survivor(self) -> None:
+        prepared = _manual_prepared_source_with_vocab_spans(
+            [
+                "Teachers ask what students can grow through regular reflection.",
+                "Mentors provide calm support during weekly practice.",
+                "Coaches improve routines across the district.",
+                "Leaders allocate extra time for revision.",
+                "Families celebrate the steady progress together.",
+            ],
+            [
+                (0, "grow", ["single_word", "vocab_candidate", "contextual_cue", "claim_bearing"], 9),
+                (1, "provide", ["single_word", "vocab_candidate", "contextual_cue"], 6),
+                (2, "improve", ["single_word", "vocab_candidate", "contextual_cue"], 6),
+                (3, "allocate", ["single_word", "vocab_candidate", "contextual_cue"], 6),
+                (0, "what", ["single_word", "vocab_candidate", "noun_clause_candidate"], 4),
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            prepared.source_text,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
+        )
+        self.assertTrue(any("clear unique-survivor vocab bundle" in error for error in errors))
+
+    def test_correct_among_3_compatibility_rejects_full_lexical_survivor(self) -> None:
+        prepared = _manual_prepared_source_with_vocab_spans(
+            [
+                "Workers feel unwilling to ignore repeated safety warnings.",
+                "Team leaders plan to find better routes during storms.",
+                "Students develop stronger habits after guided practice.",
+                "Families value lifelong learning in daily routines.",
+                "New mentors keep becoming trusted guides each month.",
+            ],
+            [
+                (0, "unwilling", ["single_word", "vocab_candidate", "abstract_term", "claim_bearing"], 9),
+                (1, "find", ["single_word", "vocab_candidate", "grammar_candidate", "verb_form_candidate"], 5),
+                (2, "develop", ["single_word", "vocab_candidate", "contextual_cue"], 6),
+                (3, "learning", ["single_word", "vocab_candidate", "contextual_cue"], 6),
+                (4, "becoming", ["single_word", "vocab_candidate", "contextual_cue"], 6),
+            ],
+        )
+        errors = validate_question_type_compatibility(
+            prepared.source_text,
+            prepared,
+            QUESTION_SUBTYPE_SPECS["contextual_vocab_correct_among_3_corrupted_5"],
+        )
+        self.assertTrue(any("clear unique-survivor vocab bundle" in error for error in errors))
+
     def test_grammar_validator_accepts_valid_output(self) -> None:
         source = (
             "The city can reduce energy use without raising taxes. "
@@ -3205,6 +3363,184 @@ class ValidatorTests(unittest.TestCase):
         errors = validate_plan_against_prepared_source(prepared, plan, QUESTION_TYPES["grammar"])
 
         self.assertTrue(any("malformed pseudo-word" in error for error in errors))
+
+    def test_grammar_verb_form_accepts_generic_family_mismatch(self) -> None:
+        prepared = _manual_prepared_source_with_vocab_spans(
+            [
+                "Officials responded quickly after the warning.",
+                "Teachers reported calmly after the drill.",
+                "Leaders managed carefully during the outage.",
+                "Workers repaired safely after the storm.",
+                "Students reflected quietly after the meeting.",
+            ],
+            [
+                (0, "responded", ["single_word", "grammar_candidate", "verb_form_candidate"], 7),
+                (1, "reported", ["single_word", "grammar_candidate", "verb_form_candidate"], 7),
+                (2, "managed", ["single_word", "grammar_candidate", "verb_form_candidate"], 7),
+                (3, "repaired", ["single_word", "grammar_candidate", "verb_form_candidate"], 7),
+                (4, "reflected", ["single_word", "grammar_candidate", "verb_form_candidate"], 7),
+            ],
+        )
+        targets = prepared.span_units
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=targets[0].id,
+            corrupted_word="responding",
+            correction_basis_ko="이 자리는 일반적인 동사 형태 오류를 묻습니다.",
+            supporting_evidence=prepared.sentence_units[0].text,
+            explanation="문맥상 일반적인 동사 형태 오류입니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["grammar_error_verb_form_5"],
+            ),
+            [],
+        )
+
+    def test_grammar_verb_form_rejects_finite_nonfinite_mismatch(self) -> None:
+        prepared = _manual_prepared_source_with_vocab_spans(
+            [
+                "Teams plan to reduce delays soon.",
+                "Teachers aim to support students daily.",
+                "Leaders hope to expand access regionally.",
+                "Writers try to explain ideas clearly.",
+                "Volunteers intend to organize neighbors weekly.",
+            ],
+            [
+                (0, "reduce", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+                (1, "support", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+                (2, "expand", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+                (3, "explain", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+                (4, "organize", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+            ],
+        )
+        targets = prepared.span_units
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=targets[0].id,
+            corrupted_word="reduced",
+            correction_basis_ko="이 자리는 부정사 문맥의 오류를 묻습니다.",
+            supporting_evidence=prepared.sentence_units[0].text,
+            explanation="문맥상 정형/비정형 오류입니다.",
+        )
+        errors = validate_plan_against_prepared_source(
+            prepared,
+            plan,
+            QUESTION_SUBTYPE_SPECS["grammar_error_verb_form_5"],
+        )
+        self.assertTrue(any("must not relabel a narrower" in error for error in errors))
+
+    def test_grammar_finite_nonfinite_accepts_true_subtype_mismatch(self) -> None:
+        prepared = _manual_prepared_source_with_vocab_spans(
+            [
+                "Teams plan to reduce delays soon.",
+                "Teachers aim to support students daily.",
+                "Leaders hope to expand access regionally.",
+                "Writers try to explain ideas clearly.",
+                "Volunteers intend to organize neighbors weekly.",
+            ],
+            [
+                (0, "reduce", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+                (1, "support", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+                (2, "expand", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+                (3, "explain", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+                (4, "organize", ["single_word", "grammar_candidate", "verb_form_candidate", "finite_nonfinite_candidate"], 7),
+            ],
+        )
+        targets = prepared.span_units
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=targets[0].id,
+            corrupted_word="reduced",
+            correction_basis_ko="이 자리는 부정사 문맥의 오류를 묻습니다.",
+            supporting_evidence=prepared.sentence_units[0].text,
+            explanation="문맥상 정형/비정형 오류입니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["grammar_error_finite_nonfinite_5"],
+            ),
+            [],
+        )
+
+    def test_grammar_participle_voice_accepts_true_subtype_mismatch(self) -> None:
+        prepared = _manual_prepared_source_with_vocab_spans(
+            [
+                "The guide was showing visitors calmly today.",
+                "The crew was repairing cables carefully overnight.",
+                "The nurse was checking records closely at dawn.",
+                "The coach was leading drills steadily that morning.",
+                "The guard was monitoring doors quietly throughout lunch.",
+            ],
+            [
+                (0, "showing", ["single_word", "grammar_candidate", "verb_form_candidate", "participle_voice_candidate"], 7),
+                (1, "repairing", ["single_word", "grammar_candidate", "verb_form_candidate", "participle_voice_candidate"], 7),
+                (2, "checking", ["single_word", "grammar_candidate", "verb_form_candidate", "participle_voice_candidate"], 7),
+                (3, "leading", ["single_word", "grammar_candidate", "verb_form_candidate", "participle_voice_candidate"], 7),
+                (4, "monitoring", ["single_word", "grammar_candidate", "verb_form_candidate", "participle_voice_candidate"], 7),
+            ],
+        )
+        targets = prepared.span_units
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=targets[0].id,
+            corrupted_word="show",
+            correction_basis_ko="이 자리는 분사/태 오류를 묻습니다.",
+            supporting_evidence=prepared.sentence_units[0].text,
+            explanation="문맥상 분사/태 오류입니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["grammar_error_participle_voice_5"],
+            ),
+            [],
+        )
+
+    def test_grammar_parallel_structure_accepts_true_subtype_mismatch(self) -> None:
+        prepared = _manual_prepared_source_with_vocab_spans(
+            [
+                "Good teams keep reflecting on and learning from small mistakes.",
+                "Smart crews keep planning and building with steady patience.",
+                "Careful mentors keep listening and adapting during each lesson.",
+                "Alert nurses keep watching and responding throughout the night.",
+                "Strong leaders keep sharing and revising across the project.",
+            ],
+            [
+                (0, "learning", ["single_word", "grammar_candidate", "verb_form_candidate", "parallel_structure_candidate"], 7),
+                (1, "building", ["single_word", "grammar_candidate", "verb_form_candidate", "parallel_structure_candidate"], 7),
+                (2, "adapting", ["single_word", "grammar_candidate", "verb_form_candidate", "parallel_structure_candidate"], 7),
+                (3, "responding", ["single_word", "grammar_candidate", "verb_form_candidate", "parallel_structure_candidate"], 7),
+                (4, "revising", ["single_word", "grammar_candidate", "verb_form_candidate", "parallel_structure_candidate"], 7),
+            ],
+        )
+        targets = prepared.span_units
+        plan = GrammarPlan(
+            target_span_ids=[span.id for span in targets],
+            target_span_texts=[span.text for span in targets],
+            corrupted_span_id=targets[0].id,
+            corrupted_word="learned",
+            correction_basis_ko="이 자리는 병렬 구조 오류를 묻습니다.",
+            supporting_evidence=prepared.sentence_units[0].text,
+            explanation="문맥상 병렬 구조 오류입니다.",
+        )
+        self.assertEqual(
+            validate_plan_against_prepared_source(
+                prepared,
+                plan,
+                QUESTION_SUBTYPE_SPECS["grammar_error_parallel_structure_5"],
+            ),
+            [],
+        )
 
     def test_grammar_compatibility_filters_nonverbial_verb_family_targets(self) -> None:
         source = "Initially, teams moved carefully. Gradually, workers responded quickly. Finally, crews acted calmly."

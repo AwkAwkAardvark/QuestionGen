@@ -26,6 +26,7 @@ from tests.test_planners import (
     _ParagraphOrderingPlanner,
     _RoleAwareStructuredFactory,
     _SemanticAdjudicator,
+    _summary_blank_prepared_source,
     _SummaryContrastFailurePlanner,
     _UnderlinedPhraseMeaningPlanner,
     _VocabDriftPlanner,
@@ -77,11 +78,8 @@ MOOD_SOURCE = (
 )
 
 SUMMARY_BLANK_SOURCE = (
-    "People often remember the rewards of economic competition and the innovation it can inspire. "
-    "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
-    "Workers who felt excluded from the benefits became less willing to trust public institutions. "
-    "As this distrust spread, even reforms that might have helped were greeted with suspicion. "
-    "The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace."
+    "During the storm, workers exchanged updates quickly through a shared radio network. "
+    "As a final lesson, local agencies must coordinate closely during emergencies to protect residents."
 )
 
 
@@ -666,8 +664,8 @@ class QuestionGraphBehaviorTests(unittest.TestCase):
         result = runner.invoke(self._make_state("grammar", MVP_SOURCE))
         self.assertEqual(result["status"], "validation_passed")
         explanation = result["generated"].explanation or ""
-        self.assertIn("동사원형", explanation)
-        self.assertIn("lighting system to nearby neighborhoods", explanation)
+        self.assertIn("동사 형태", explanation)
+        self.assertIn("raising", explanation)
         self.assertNotIn("그 구조를 보여 주므로", explanation)
         self.assertNotIn("자유서술 문법 해설", explanation)
 
@@ -692,7 +690,7 @@ class QuestionGraphBehaviorTests(unittest.TestCase):
                 light=_SemanticAdjudicator(
                     fits_discourse_role=False,
                     visible_frame_semantically_valid=False,
-                    failure_reason="visible contrast frame is `X, but that Y`, but the selected answer supplies the visible Y side even though the blanked slot requires the rejected X side",
+                    failure_reason="the selected answer stays readable English but narrows the concluding lesson into isolated offices rather than a coordinated summary claim",
                 ),
             )
         )
@@ -702,14 +700,17 @@ class QuestionGraphBehaviorTests(unittest.TestCase):
             question_format_key="blank_summary_completion_5_choices",
             question_subtype_key="blank_summary_completion_5_choices",
         )
-        with mock.patch.dict("questiongen.graph.RENDERERS", {"fill_in_the_blank": render_mock}):
+        with (
+            mock.patch("questiongen.graph.prepare_source", return_value=_summary_blank_prepared_source()),
+            mock.patch.dict("questiongen.graph.RENDERERS", {"fill_in_the_blank": render_mock}),
+        ):
             result = runner.invoke(state)
 
         self.assertEqual(result["status"], "planning_error")
         self.assertEqual(
             result["errors"],
             [
-                "Planner semantic adjudication failed: visible contrast frame is `X, but that Y`, but the selected answer supplies the visible Y side even though the blanked slot requires the rejected X side"
+                "Planner semantic adjudication failed: the selected answer stays readable English but narrows the concluding lesson into isolated offices rather than a coordinated summary claim"
             ],
         )
         render_mock.assert_not_called()
