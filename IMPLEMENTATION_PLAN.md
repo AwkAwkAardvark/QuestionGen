@@ -357,8 +357,17 @@ Landed hardening contract:
 ## Working-Memory and Naming Policy
 
 - [x] Keep `context.md` as local volatile working memory, not as a durable history log.
+- [x] Keep local-only long-form history in `docs/archive/local/context_history.md`, not in `context.md` and not in pushed docs.
 - [x] Update `context.md` after each completed user prompt and again after each `git push`.
+- [x] Update `docs/archive/local/context_history.md` after each `git push` with either a new entry or a compression pass.
 - [x] Keep `context.md` limited to current branch state, latest pushed commit, active focus, blockers, `3` to `7` recent durable facts, open risks, and short handoff notes.
+- [x] Keep `docs/archive/local/context_history.md` as a single append-only local-only history log under an ignored `docs/archive/local/` path.
+- [x] Use push-count-driven local-only history compression:
+  - newest `3` pushes stay `short`
+  - pushes `4` through `10` compress to `mid`
+  - pushes older than `10` compress to `long`
+  - after `30` pushes, consolidate again so only milestones, durable decisions, rollback anchors, and major review outcomes remain
+- [x] Preserve fuller local-only history entries for PRs, merges, direct merges, version milestones, architecture restores, and other rollback-worthy milestones even after compression.
 - [x] Compact `context.md` before handoff and whenever any soft threshold is crossed:
   - more than `60` lines total
   - more than `12` bullets in any one section
@@ -369,6 +378,7 @@ Landed hardening contract:
   - more than `5` completed work cycles retained
   - any section drifting into diary-style chronology instead of handoff memory
 - [x] Promote any note that should still matter after branch merge into a durable doc, or delete it from `context.md`.
+- [x] If a note matters only for local recovery, rollback recall, or handoff continuity, move it into local-only history instead of promoting it into a tracked durable doc.
 - [x] Keep `IMPLEMENTATION_PLAN.md` focused on durable product policy, architecture direction, and acceptance criteria rather than long campaign history.
 - [x] Preserve longer-lived rationale only in scoped review or audit docs when the history itself has future decision value.
 - [x] Use prefixed work branches named `<prefix>/<short-kebab-scope>`.
