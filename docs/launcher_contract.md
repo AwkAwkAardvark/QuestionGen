@@ -109,9 +109,9 @@ Hard constraints:
 ## Branch Workflow
 
 - `main` is the stable default branch and the default Colab target.
-- New implementation work must start on a feature branch rather than directly on `main`.
+- New implementation work must start on a prefixed work branch rather than directly on `main`.
 - Colab can validate only branches that have already been pushed to the remote repository.
-- The notebook-side branch allowlist is intentionally conservative. Keep only `main` by default, and add a feature branch temporarily only when you intentionally want Colab to validate that pushed branch.
+- The notebook-side branch allowlist is intentionally conservative. Keep only `main` by default, and add another prefixed work branch temporarily only when you intentionally want Colab to validate that pushed branch.
 
 ## Current Package Contract
 
@@ -332,8 +332,8 @@ Branch-selection notes:
 - Colab cannot automatically pull unpushed local-only workspace changes.
 - `main` remains the stable default branch and default launcher target.
 - The active launcher notebooks currently expose only `main` through `REPO_BRANCH_OPTIONS`.
-- Expand that allowlist only when there is an intentional need to test another pushed feature branch from Colab.
-- A typical branch-validation flow is: push the feature branch, temporarily add it to the allowlist, set `REPO_BRANCH`, set `RESET_REPO=True`, run fresh-subprocess tests, and restart the runtime only if you want in-kernel app or pipeline execution against that refreshed code.
+- Expand that allowlist only when there is an intentional need to test another pushed prefixed work branch from Colab.
+- A typical branch-validation flow is: push the work branch, temporarily add it to the allowlist, set `REPO_BRANCH`, set `RESET_REPO=True`, run fresh-subprocess tests, and restart the runtime only if you want in-kernel app or pipeline execution against that refreshed code.
 - Broad family selection still starts from `QUESTION_TYPES`, while actual execution expands into subtype rows underneath each selected family.
 
 The notebooks should not define:

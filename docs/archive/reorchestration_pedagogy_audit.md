@@ -1,5 +1,11 @@
 # Reorchestration Pedagogy Audit
 
+Archived historical note:
+
+- This document is preserved for transition-stage rationale only.
+- Its durable stage-ownership guidance has been promoted into `IMPLEMENTATION_PLAN.md`.
+- Do not treat this file as a live contract or current implementation checklist.
+
 Historical note:
 
 - This audit was written before the restored graph runtime became the active internal contract.

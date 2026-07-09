@@ -1,5 +1,11 @@
 # Reorchestration Validation Test Audit
 
+Archived historical note:
+
+- This document is preserved for transition-stage rationale only.
+- Its durable test-suite ownership guidance has been promoted into `IMPLEMENTATION_PLAN.md`.
+- Do not treat this file as a live contract or current implementation checklist.
+
 Historical note:
 
 - This audit was written before explicit LangGraph-backed orchestration returned as the active runtime contract.

@@ -9,7 +9,7 @@
 - [x] Treat Colab as the primary user-facing launcher surface.
 - [x] Treat Google Drive as the user-controlled storage layer for inputs, outputs, and `api_key.txt`.
 - [x] Keep `main` as the stable default branch, not as a live implementation branch.
-- [x] Start all new mutating work from a feature branch cut from `main`, and push that branch before using Colab to validate it.
+- [x] Start all new mutating work from a prefixed work branch cut from `main`, and push that branch before using Colab to validate it.
 - [x] Keep `questiongen.ui.gradio_app` as the single source of truth for UI behavior while keeping notebooks thin launcher/debug surfaces.
 - [x] Design the user-facing flow around "run all registered question types" rather than manual type selection.
 - [x] Preserve failed type/passage combinations as exported results with readable `status` and `errors`.
@@ -332,12 +332,49 @@ Landed hardening contract:
   - exported status vocabulary
 - [x] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
 
+### Stage ownership and test ownership
+
+- [x] Keep stage ownership explicit for quality work:
+  - reject passage or item-shape mismatches in `source gate` or `design`
+  - fix wrong LLM content inside an already locked shape in `planner prompt`
+  - reject draft-internal contract violations in deterministic `plan_check`
+  - fix weak but otherwise valid teacher-facing reasoning in `explanation`
+  - reject final-item-visible ambiguity, local absurdity, frame-fit failure, or answer non-uniqueness in final validation
+- [x] Keep earlier deterministic rejection preferable to late rescue when a weaker item can be ruled out before planning or rendering.
+- [x] Keep explanation quality repair primarily in the post-render explanation layer rather than by growing planner schema or prompt burden.
+- [x] Keep test ownership split by contract surface:
+  - `tests/test_validators.py` owns deterministic rule and compatibility checks
+  - `tests/test_batch.py` owns batch fan-out, adapters, exports, and batch-level fail-fast or progress behavior
+  - `tests/test_graph.py` owns node visitation, transition routing, retry behavior, and stage placement
+
 ## Stable Workflow Commitments
 
 - [x] `main` remains the stable default branch for notebooks, not the branch where new implementation work is performed.
-- [x] New implementation work starts on a feature branch before any mutating repo changes.
+- [x] New implementation work starts on a prefixed work branch before any mutating repo changes.
 - [x] Colab can validate only pushed branches; unpushed local workspace changes are never part of the Colab contract.
 - [x] Branch validation in Colab should prefer repo refresh plus fresh-subprocess tests over repeated editable package reinstalls in the active kernel.
+
+## Working-Memory and Naming Policy
+
+- [x] Keep `context.md` as local volatile working memory, not as a durable history log.
+- [x] Update `context.md` after each completed user prompt and again after each `git push`.
+- [x] Keep `context.md` limited to current branch state, latest pushed commit, active focus, blockers, `3` to `7` recent durable facts, open risks, and short handoff notes.
+- [x] Compact `context.md` before handoff and whenever any soft threshold is crossed:
+  - more than `60` lines total
+  - more than `12` bullets in any one section
+  - more than `2` dated day-blocks
+  - more than `3` completed work cycles retained
+- [x] Treat the following as hard compaction cutoffs for `context.md`:
+  - more than `100` lines total
+  - more than `5` completed work cycles retained
+  - any section drifting into diary-style chronology instead of handoff memory
+- [x] Promote any note that should still matter after branch merge into a durable doc, or delete it from `context.md`.
+- [x] Keep `IMPLEMENTATION_PLAN.md` focused on durable product policy, architecture direction, and acceptance criteria rather than long campaign history.
+- [x] Preserve longer-lived rationale only in scoped review or audit docs when the history itself has future decision value.
+- [x] Use prefixed work branches named `<prefix>/<short-kebab-scope>`.
+- [x] Allowed default branch prefixes are `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `chore/`, `spike/`, and `release/`.
+- [x] Use short action-led commit subjects such as `Add`, `Fix`, `Harden`, `Refactor`, `Clarify`, `Update`, `Remove`, `Rename`, `Rework`, `Consolidate`, `Document`, and `Test`.
+- [x] Reserve git tags for meaningful milestones such as releases rather than routine branch or commit classification.
 
 ## Acceptance Checklist
 
