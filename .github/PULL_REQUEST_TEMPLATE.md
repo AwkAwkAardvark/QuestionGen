@@ -1,42 +1,50 @@
 ## Summary
 
-What this branch changes in one short paragraph.
+One short paragraph describing what this branch changed.
 
 ## Why Now
 
-Why this branch exists now and why the work belongs in this branch rather than as unrelated follow-up.
+Why this work belongs in this branch now.
+
+## Current Graph Shape
+
+Show the current graph or stage path when this PR touches graph-backed or staged runtime flow. Use plain ASCII and mark impacted nodes inline.
+
+Examples:
+
+```text
+input_check -> prepare_source -> source_check -> design -> [changed] planner -> plan_check -> render -> build_explanation_context -> write_explanation -> validate_generated_question
+```
+
+```text
+N/A - this PR does not change graph or staged runtime flow.
+```
+
+If graph shape is unchanged but logic inside an existing node changed, say that directly and name the node.
 
 ## Runtime / Contract Changes
 
-State user-facing or operator-facing behavior changes clearly.
+Call out user-visible behavior, APIs, statuses, exports, launcher behavior, or say `None`.
 
-- Public APIs, statuses, or export-shape changes:
-- Internal-only implementation changes:
-- Durable docs updated in the same work cycle:
+## Docs Updated
+
+List durable docs updated in this work cycle, or say `None`.
 
 ## Verification
 
-List the exact commands you ran and the result.
+List the exact commands you ran, what they covered, and any gaps.
 
 ```text
-python -m unittest ...
+python -m unittest tests.test_graph
 python -m unittest discover -s tests
 ```
 
-Notes:
-- Include focused suites separately from full-suite runs when both were used.
-- If something was not run, say so directly.
+If something relevant was not run, say so directly.
 
-## Colab Validation
+## Colab / Notebook Validation
 
-Record real Colab validation status as facts.
+Record factual notebook validation details when relevant: branch used, date, notebook used, artifacts reviewed, restart or bootstrap implications, or `N/A`.
 
-- Branch used:
-- Validation date:
-- Notebook used:
-- Output artifact(s) reviewed:
-- Result summary:
+## Known Risks / Follow-Ups
 
-## Known Follow-Ups
-
-List intentionally deferred issues that are known but non-blocking for this PR.
+List intentional non-blocking follow-ups or known risks, or say `None`.
