@@ -1,8 +1,14 @@
 # Reorchestration Validation Test Audit
 
+Historical note:
+
+- This audit was written before explicit LangGraph-backed orchestration returned as the active runtime contract.
+- It is retained as a transition document explaining what graph-level test coverage was missing at that time.
+- Read future-tense references here as historical planning language, not as the current repo status.
+
 ## Purpose
 
-This audit reviews the current validation and batch test surfaces with one assumption: exported statuses and result/export shapes stay stable, while the internal orchestration implementation changes again when LangGraph is restored.
+This audit reviews the validation and batch test surfaces with one assumption from that planning window: exported statuses and result/export shapes stay stable while the internal orchestration implementation changes again when LangGraph is restored.
 
 This document is intentionally prescriptive and future-facing. It does not propose status-policy changes, registry changes, or export-schema changes.
 

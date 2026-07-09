@@ -2,13 +2,15 @@
 
 This document records durable review findings from checked-in sample artifacts. It is about logic quality and gating policy, not about redefining the export contract.
 
+This file is a dated review log. Some sections intentionally preserve the branch, artifact, or audit context they were written under; do not read older branch labels as claims about the current checkout.
+
 ## Current Review Corpus
 
 - Active review artifact: `sample_data/generated_questions.json`
 - Review role: logic-quality baseline for the current branch
 - Non-role: authoritative export-shape specification
 
-Current branch snapshot reviewed on `hail-mary-finish-everything`:
+Historical snapshot reviewed on branch `hail-mary-finish-everything`:
 
 - total rows: `78`
 - status mix:

@@ -198,7 +198,6 @@
 
 ### Single-span acceptance
 
-- [ ] Each family has explicit incompatibility gates beyond raw sentence count.
 - [x] Each family has explicit incompatibility gates beyond raw sentence count.
 - [x] Each family has one clearly scoped v1 format before any subtype expansion.
 - [ ] Each family can pass real mixed-batch review without collapsing into generic planner failures or low-quality choice sets.
@@ -288,7 +287,7 @@
   - dormant policy: keep the implementation code in the repo, but keep `QUESTION_TYPES` and launcher/UI defaults focused on the other live families until their quality work stabilizes
   - reactivation policy: revisit this family only after the active families are hardened further and the user explicitly confirms that the affective family is worth reactivating
 
-## Active `v0.3.0` Work: Graph-Backed Orchestration
+## Completed `v0.3.0` Milestone: Graph-Backed Orchestration
 
 ### Planner observability and timeout hardening first
 

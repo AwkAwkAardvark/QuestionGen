@@ -1,8 +1,14 @@
 # Reorchestration Pedagogy Audit
 
+Historical note:
+
+- This audit was written before the restored graph runtime became the active internal contract.
+- It is retained as a transition-stage pedagogy audit, not as an open architectural proposal.
+- References to post-reorchestration stage ownership should be read as historical planning rationale for the now-landed graph shape.
+
 ## Purpose
 
-This audit reviews the current live families against the durable review corpus and recent feedback artifacts, then assigns the next pedagogical fixes to explicit post-reorchestration stages.
+This audit reviews the live families against the durable review corpus and recent feedback artifacts, then assigns pedagogical fixes to explicit post-reorchestration stages.
 
 It assumes the future runtime is organized around visible stage boundaries:
 
