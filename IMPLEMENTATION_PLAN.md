@@ -5,6 +5,7 @@
 - [x] Keep the backend centered on `planning -> deterministic rendering -> validation`.
 - [x] Keep `src/questiongen/` notebook-agnostic and Drive-agnostic.
 - [x] Keep model construction outside the batch layer through an injected runner.
+- [x] Keep the public runner and batch contract stable while internal orchestration uses explicit LangGraph-backed stage routing.
 - [x] Treat Colab as the primary user-facing launcher surface.
 - [x] Treat Google Drive as the user-controlled storage layer for inputs, outputs, and `api_key.txt`.
 - [x] Keep `main` as the stable default branch, not as a live implementation branch.
@@ -17,6 +18,7 @@
 - [x] Keep Colab repo-code loading separate from one-time third-party dependency bootstrap, and prefer source-path loading plus fresh-subprocess tests over repeated editable reinstalls in the same kernel.
 - [x] Ship one cheaper default model first: `gpt-5-mini`.
 - [x] Defer per-question-type model routing until after the live pipeline is stable.
+- [x] Keep any near-term model routing narrowly planner-local: normal planner drafts may use `QUESTIONGEN_MODEL_PLANNER`, while Tier 1 blank adjudication may use `QUESTIONGEN_MODEL_LIGHT` without turning the runtime into a broad per-type routing matrix.
 - [x] Keep the current batch execution path synchronous and serial; defer async or concurrent orchestration as a later performance-only track.
 - [x] Keep broad family keys as the launcher/UI selection surface while expanding execution into concrete subtype rows underneath each family.
 - [x] Preserve subtype metadata in runtime state and exports through `QuestionFormatKey`, `QuestionSubtypeKey`, and `QuestionSubtype`.
@@ -37,6 +39,7 @@
 - [x] Implement deterministic `sentence_insertion` rendering.
 - [x] Implement final output validation for `sentence_insertion`.
 - [x] Build a generic graph runner driven by question type metadata.
+- [x] Restore explicit graph-backed orchestration while preserving the current runner and batch/export public surface.
 - [x] Expose question graph compilation with injected structured LLM creation.
 
 ### Batch and exports
@@ -180,8 +183,11 @@
   - current hardening policy:
     - design should lock a target whose recovery requires broader passage reasoning, not immediate source restoration
     - proposition and summary blanks must use a non-identical `correct_choice`
+    - proposition and summary completion readability should stay aligned with schema-level English-choice acceptance, including otherwise readable sentence-final `.`
     - `blank_connective_relation_5_choices` should admit only short connective-style completions; clause stubs or sentence fragments should fail earlier as `qtype_incompatibility_error`
     - if a weaker blank subtype can only reuse the same restoration-style span, it should fail early as `qtype_incompatibility_error` rather than ship a redundant row
+    - Tier 1 planner-local semantic adjudication now runs only for `blank_inference_proposition_5_choices` and `blank_summary_completion_5_choices`, after draft hydration plus deterministic plan checks and before the graph leaves `planner`
+    - that extra pass is fail-fast only, uses the lightweight model route by default, and does not add a new graph node, plan rewrite loop, or broad second LLM pass for other subtypes
   - completed structural rescue:
     - the anti-restoration hardening pass is the completed structural rescue for this family
     - the next cycle should not reopen blank-family subtype pruning, registry reshaping, or export-schema redesign unless a later deliberate policy decision says otherwise
@@ -276,7 +282,7 @@
   - dormant policy: keep the implementation code in the repo, but keep `QUESTION_TYPES` and launcher/UI defaults focused on the other live families until their quality work stabilizes
   - reactivation policy: revisit this family only after the active families are hardened further and the user explicitly confirms that the affective family is worth reactivating
 
-## Active `v0.2.0` Work: Shared Design Layer
+## Active `v0.3.0` Work: Graph-Backed Orchestration
 
 ### Planner observability and timeout hardening first
 
@@ -294,11 +300,12 @@ Landed hardening contract:
 - `QUESTIONGEN_PLANNER_ELAPSED_LOG_SECONDS` now controls periodic "still running" planner logs and defaults to `30` seconds.
 - Planner timeouts now export readable `planning_error` rows instead of presenting as silent spinner stalls.
 
-### Shared intermediate design layer
+### Shared design layer and restored graph runtime
 
-- [x] Treat the shared design layer as a `v0.2.0`-scale internal architectural change.
+- [x] Treat the shared design layer as the foundation for a `v0.3.0`-scale internal architectural change.
 - [x] Use the internal graph shape:
   - `prepare -> source gate -> design -> final planner -> deterministic plan check -> render -> explanation -> final validate`
+- [x] Treat explicit LangGraph-backed orchestration as the active internal execution contract for that stage sequence.
 - [x] Keep the public batch/export/notebook interfaces unchanged while refactoring internal graph stages and planner contracts.
 - [x] Add first-class `QuestionState.design` and deterministic family-specific design builders.
 - [x] Split live-family planning into `design -> draft -> hydrate final plan`.
@@ -312,6 +319,12 @@ Landed hardening contract:
   - `grammar`
 - [x] Move source-owned text selection out of LLM authority for the migrated live families.
 - [x] Treat subtype-critical ambiguity control as design-stage state when a live family cannot safely rely on planner free choice.
+- [x] Keep the public invocation surfaces unchanged while the graph runtime is explicit again:
+  - `compile_question_graph(...)`
+  - `runner.invoke(state)`
+  - `run_batch_rows(..., runner=...)`
+  - `BatchResultRow`
+  - exported status vocabulary
 - [x] Keep final runtime integration, doc reconciliation, and commit/push responsibility with the lead agent even when subagents assist.
 
 ## Stable Workflow Commitments

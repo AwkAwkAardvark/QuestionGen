@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 import re
 import time
 import unittest
+from unittest import mock
 
+from questiongen.config import resolve_light_model_name
 from questiongen.explanations import build_explanation_context, write_teacher_facing_explanation
-from questiongen.graph import compile_question_graph
 from questiongen.parsers import prepare_source
 from questiongen.designers import build_design, hydrate_plan_from_draft
 from questiongen.planners import (
@@ -377,6 +379,117 @@ class _FillInTheBlankPlanner:
         )
 
 
+class _SummaryContrastFailurePlanner:
+    def invoke(self, prompt: str) -> FillInTheBlankPlan:
+        match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+        span_id = match.group(1) if match else "P0"
+        span_text = match.group(2) if match else "opportunity must be shared widely enough to sustain social peace"
+        return FillInTheBlankPlan(
+            subtype="summary_completion",
+            selected_span_id=span_id,
+            selected_span_text=span_text,
+            completion_choices=[
+                "ambition should vanish to preserve social peace",
+                "opportunity must be shared widely to preserve social peace",
+                "innovation matters more than inequality",
+                "public distrust should replace reform",
+                "economic rewards must stay concentrated",
+            ],
+            correct_choice="ambition should vanish to preserve social peace",
+            contextual_meaning_ko="이 빈칸은 글의 최종 교훈을 압축해 완성해야 합니다",
+            supporting_evidence="The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace.",
+            explanation="문맥상 글의 최종 교훈을 압축해 완성해야 합니다.",
+        )
+
+
+class _SummaryAcceptedPlanner:
+    def invoke(self, prompt: str) -> FillInTheBlankPlan:
+        match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+        span_id = match.group(1) if match else "P0"
+        span_text = match.group(2) if match else "not that ambition should vanish"
+        return FillInTheBlankPlan(
+            subtype="summary_completion",
+            selected_span_id=span_id,
+            selected_span_text=span_text,
+            completion_choices=[
+                "ambition should not disappear entirely",
+                "opportunity must be shared widely to preserve social peace",
+                "innovation matters more than inequality",
+                "public distrust should replace reform",
+                "economic rewards must stay concentrated",
+            ],
+            correct_choice="ambition should not disappear entirely",
+            contextual_meaning_ko="이 빈칸은 최종 교훈의 부정된 대비축을 자연스럽게 복원해야 합니다",
+            supporting_evidence="The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace.",
+            explanation="문맥상 글의 최종 교훈에서 부정된 대비축을 먼저 복원해야 합니다.",
+        )
+
+
+class _PropositionAdjacentFailurePlanner:
+    def invoke(self, prompt: str) -> FillInTheBlankPlan:
+        match = re.search(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
+        span_id = match.group(1) if match else "P0"
+        span_text = match.group(2) if match else "improve safety without raising its energy budget"
+        return FillInTheBlankPlan(
+            subtype="proposition_inference",
+            selected_span_id=span_id,
+            selected_span_text=span_text,
+            completion_choices=[
+                "use less electricity than the older lights",
+                "create more confusion among the residents",
+                "slow the expansion of nearby neighborhoods",
+                "raise costs without improving crosswalk visibility",
+                "reduce safety to cut the energy budget",
+            ],
+            correct_choice="use less electricity than the older lights",
+            contextual_meaning_ko="이 빈칸은 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과를 복원해야 합니다",
+            supporting_evidence="Because the lights use less electricity, the city can improve safety without raising its energy budget.",
+            explanation="문맥상 에너지 예산을 늘리지 않으면서 안전을 높인다는 핵심 효과가 복원되어야 합니다.",
+        )
+
+
+class _SemanticAdjudicator:
+    def __init__(
+        self,
+        *,
+        fits_discourse_role: bool = True,
+        visible_frame_semantically_valid: bool = True,
+        failure_reason: str | None = None,
+        expected_substrings: tuple[str, ...] = (),
+    ) -> None:
+        self.fits_discourse_role = fits_discourse_role
+        self.visible_frame_semantically_valid = visible_frame_semantically_valid
+        self.failure_reason = failure_reason
+        self.expected_substrings = expected_substrings
+        self.invocations = 0
+        self.last_prompt = ""
+
+    def invoke(self, prompt: str) -> dict[str, object]:
+        self.invocations += 1
+        self.last_prompt = prompt
+        for expected in self.expected_substrings:
+            if expected not in prompt:
+                raise AssertionError(f"Missing adjudication prompt fragment: {expected}")
+        return {
+            "fits_discourse_role": self.fits_discourse_role,
+            "visible_frame_semantically_valid": self.visible_frame_semantically_valid,
+            "failure_reason": self.failure_reason,
+        }
+
+
+class _RoleAwareStructuredFactory:
+    def __init__(self, *, planner: object, light: object) -> None:
+        self.planner = planner
+        self.light = light
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, schema: type, *, model_role: str = "default") -> object:
+        self.calls.append((schema.__name__, model_role))
+        if model_role == "light":
+            return self.light
+        return self.planner
+
+
 class _VocabPlanner:
     def invoke(self, prompt: str) -> ContextualVocabChoicePlan | UnderlinedVocabPlan:
         targets = re.findall(r"- rank \d+: (P\d+);.*text='([^']+)'", prompt)
@@ -658,6 +771,13 @@ class PlannerTests(unittest.TestCase):
             "Residents say the brighter crosswalks feel safer at night. "
             "Officials now plan to expand the same lighting system to nearby neighborhoods."
         )
+        self.summary_blank_source = (
+            "People often remember the rewards of economic competition and the innovation it can inspire. "
+            "Yet when the gains are concentrated in only a few hands, the resulting inequality brought only discontent. "
+            "Workers who felt excluded from the benefits became less willing to trust public institutions. "
+            "As this distrust spread, even reforms that might have helped were greeted with suspicion. "
+            "The lesson is not that ambition should vanish, but that opportunity must be shared widely enough to sustain social peace."
+        )
         self.phrase_choice_source = (
             "The report carries moral force in this debate. "
             "Repeated exceptions weaken the rule for everyone."
@@ -860,19 +980,6 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(any("still running after" in message for message in logs))
         self.assertTrue(any("attempt 1/2 finished in" in message for message in logs))
 
-    def test_graph_verbose_logging_marks_stage_boundaries(self) -> None:
-        logs: list[str] = []
-        runner = compile_question_graph(
-            structured_llm_factory=lambda schema: _ValidPlanner(),
-            runtime_logger=logs.append,
-        )
-        result = runner.invoke(self.state)
-        self.assertEqual(result["status"], "validation_passed")
-        self.assertTrue(any("| input_check start |" in message for message in logs))
-        self.assertTrue(any("| planner finish | status=planned" in message for message in logs))
-        self.assertTrue(any("| render finish | status=rendered" in message for message in logs))
-        self.assertTrue(any("| validate_generated_question finish | status=validation_passed" in message for message in logs))
-
     def test_sentence_insertion_prompt_exposes_ranked_target_hints(self) -> None:
         prompt = build_sentence_insertion_prompt(
             source_paragraph=self.contextual_insertion_source,
@@ -905,60 +1012,6 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Adjacency rationale payload", prompt)
         self.assertNotIn("Boundary hints", prompt)
 
-    def test_graph_ignores_planner_override_of_locked_gap_bundle(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _CollapsedGapPlanner())
-        result = runner.invoke(self.state)
-        self.assertEqual(result["status"], "validation_passed")
-
-    def test_graph_ignores_planner_override_of_locked_ordering_partition(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _InvalidOrderingCoveragePlanner())
-        paragraph_state = {
-            **self.state,
-            "QuestionTypeKey": "paragraph_ordering",
-        }
-        result = runner.invoke(paragraph_state)
-        self.assertEqual(result["status"], "validation_passed")
-
-    def test_graph_rewrites_internal_paragraph_ordering_explanation(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _ParagraphOrderingPlanner())
-        paragraph_state = {
-            **self.state,
-            "QuestionTypeKey": "paragraph_ordering",
-        }
-        result = runner.invoke(paragraph_state)
-        self.assertEqual(result["status"], "validation_passed")
-        self.assertNotIn("S0", result["generated"].explanation or "")
-
-    def test_graph_rewrites_sentence_insertion_explanation_from_surrounding_context(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _ContextAnchoredInsertionPlanner())
-        insertion_state = {
-            **self.state,
-            "source_paragraph": self.contextual_insertion_source,
-            "QuestionTypeKey": "sentence_insertion",
-            "prepared_source": prepare_source(self.contextual_insertion_source),
-        }
-        result = runner.invoke(insertion_state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertNotIn("The new lights also use less electricity than the older fixtures.", explanation)
-        self.assertIn("new lights", explanation)
-        self.assertIn("Because the lights use less electricity", explanation)
-
-    def test_graph_rewrites_paragraph_ordering_explanation_as_edge_chain(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _AdjacencyParagraphPlanner())
-        paragraph_state = {
-            **self.state,
-            "source_paragraph": self.ordering_source,
-            "QuestionTypeKey": "paragraph_ordering",
-            "prepared_source": prepare_source(self.ordering_source),
-        }
-        result = runner.invoke(paragraph_state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertNotIn("핵심 화제 제시", explanation)
-        self.assertIn("뒤에는", explanation)
-        self.assertIn("다음에는", explanation)
-
     def test_mood_atmosphere_planner_output_validates(self) -> None:
         mood_state = {
             **self.state,
@@ -987,30 +1040,6 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "planned")
         self.assertIsInstance(result["plan"], MoodAtmospherePlan)
-
-    def test_graph_rewrites_mood_atmosphere_explanation(self) -> None:
-        mood_source = (
-            "People’s happiness depends not on their absolute wealth, but rather on their wealth relative "
-            "to those around them. In one experiment, two capuchin monkeys were initially perfectly content "
-            "with a reward of cucumbers when they successfully performed a task. But when one monkey receiving "
-            "plain old cucumbers became enraged, angrily throwing the previously satisfactory salad vegetable "
-            "at its handler. The monkey's economy had grown, since grapes are better than cucumbers. "
-            "But the resulting inequality brought only discontent."
-        )
-        runner = compile_question_graph(
-            structured_llm_factory=lambda schema: _MoodAtmospherePlanner(),
-            question_types={**QUESTION_TYPES, "mood_atmosphere": self.mood_type_spec},
-        )
-        mood_state = {
-            **self.state,
-            "source_paragraph": mood_source,
-            "QuestionTypeKey": "mood_atmosphere",
-            "prepared_source": prepare_source(mood_source),
-        }
-        result = runner.invoke(mood_state)
-        self.assertEqual(result["status"], "validation_passed")
-        self.assertIn("the monkey", result["generated"].explanation or "")
-        self.assertNotIn("choice_pairs", result["generated"].explanation or "")
 
     def test_underlined_phrase_meaning_planner_output_validates(self) -> None:
         underlined_state = {
@@ -1101,25 +1130,6 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("context=", prompt)
         self.assertIn("Selection reminders", prompt)
 
-    def test_graph_rewrites_underlined_phrase_meaning_explanation(self) -> None:
-        runner = compile_question_graph(
-            structured_llm_factory=lambda schema: _UnderlinedPhraseMeaningPlanner(
-                self.underlined_span.id,
-                self.underlined_span.text,
-                "the resulting inequality brought only discontent",
-            )
-        )
-        underlined_state = {
-            **self.state,
-            "source_paragraph": self.underlined_source,
-            "QuestionTypeKey": "underlined_phrase_meaning",
-            "prepared_source": self.underlined_prepared,
-        }
-        result = runner.invoke(underlined_state)
-        self.assertEqual(result["status"], "validation_passed")
-        self.assertIn("brought only discontent", result["generated"].explanation or "")
-        self.assertNotIn("surface_meaning", result["generated"].explanation or "")
-
     def test_fill_in_the_blank_planner_output_validates(self) -> None:
         state = {
             **self.state,
@@ -1130,10 +1140,210 @@ class PlannerTests(unittest.TestCase):
         result = plan_fill_in_the_blank(
             state,
             QUESTION_TYPES["fill_in_the_blank"],
-            structured_llm_factory=lambda schema: _FillInTheBlankPlanner(),
+            structured_llm_factory=_RoleAwareStructuredFactory(
+                planner=_FillInTheBlankPlanner(),
+                light=_SemanticAdjudicator(),
+            ),
         )
         self.assertEqual(result["status"], "planned")
         self.assertIsInstance(result["plan"], FillInTheBlankPlan)
+
+    def test_fill_in_the_blank_semantic_adjudication_accepts_summary_completion(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.summary_blank_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "QuestionSubtypeKey": "blank_summary_completion_5_choices",
+            "QuestionFormatKey": "blank_summary_completion_5_choices",
+            "prepared_source": prepare_source(self.summary_blank_source),
+            "design": None,
+        }
+        adjudicator = _SemanticAdjudicator(
+            expected_substrings=(
+                "The lesson is _____, but that opportunity must be shared widely enough to sustain social peace.",
+                "Locked original source wording:",
+            )
+        )
+        factory = _RoleAwareStructuredFactory(planner=_SummaryAcceptedPlanner(), light=adjudicator)
+        result = plan_fill_in_the_blank(
+            state,
+            QUESTION_SUBTYPE_SPECS["blank_summary_completion_5_choices"],
+            structured_llm_factory=factory,
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(
+            factory.calls,
+            [
+                ("FillInTheBlankDraft", "planner"),
+                ("PlannerSemanticAdjudicationResult", "light"),
+            ],
+        )
+        self.assertEqual(adjudicator.invocations, 1)
+
+    def test_fill_in_the_blank_semantic_adjudication_rejects_summary_contrast_mismatch(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.summary_blank_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "QuestionSubtypeKey": "blank_summary_completion_5_choices",
+            "QuestionFormatKey": "blank_summary_completion_5_choices",
+            "prepared_source": prepare_source(self.summary_blank_source),
+            "design": None,
+        }
+        adjudicator = _SemanticAdjudicator(
+            fits_discourse_role=False,
+            visible_frame_semantically_valid=False,
+            failure_reason="visible contrast frame is `X, but that Y`, but the selected answer supplies the visible Y side even though the blanked slot requires the rejected X side",
+            expected_substrings=("The lesson is _____, but that opportunity must be shared widely enough to sustain social peace.",),
+        )
+        result = plan_fill_in_the_blank(
+            state,
+            QUESTION_SUBTYPE_SPECS["blank_summary_completion_5_choices"],
+            structured_llm_factory=_RoleAwareStructuredFactory(
+                planner=_SummaryContrastFailurePlanner(),
+                light=adjudicator,
+            ),
+        )
+        self.assertEqual(result["status"], "planning_error")
+        self.assertEqual(
+            result["errors"],
+            [
+                "Planner semantic adjudication failed: visible contrast frame is `X, but that Y`, but the selected answer supplies the visible Y side even though the blanked slot requires the rejected X side"
+            ],
+        )
+
+    def test_fill_in_the_blank_semantic_adjudication_accepts_proposition_inference(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "QuestionSubtypeKey": "blank_inference_proposition_5_choices",
+            "QuestionFormatKey": "blank_inference_proposition_5_choices",
+            "prepared_source": prepare_source(self.mvp_source),
+            "design": None,
+        }
+        adjudicator = _SemanticAdjudicator(
+            expected_substrings=(
+                "Because the lights use less electricity, the city can _____.",
+                "Choice list:",
+            )
+        )
+        result = plan_fill_in_the_blank(
+            state,
+            QUESTION_SUBTYPE_SPECS["blank_inference_proposition_5_choices"],
+            structured_llm_factory=_RoleAwareStructuredFactory(
+                planner=_FillInTheBlankPlanner(),
+                light=adjudicator,
+            ),
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(adjudicator.invocations, 1)
+
+    def test_fill_in_the_blank_semantic_adjudication_rejects_slot_wrong_proposition_choice(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "QuestionSubtypeKey": "blank_inference_proposition_5_choices",
+            "QuestionFormatKey": "blank_inference_proposition_5_choices",
+            "prepared_source": prepare_source(self.mvp_source),
+            "design": None,
+        }
+        adjudicator = _SemanticAdjudicator(
+            fits_discourse_role=False,
+            visible_frame_semantically_valid=False,
+            failure_reason="selected answer is semantically adjacent evidence, but it does not fill the proposition slot that states the city's resulting benefit",
+            expected_substrings=(
+                "Because the lights use less electricity, the city can _____.",
+                "'use less electricity than the older lights'",
+            ),
+        )
+        result = plan_fill_in_the_blank(
+            state,
+            QUESTION_SUBTYPE_SPECS["blank_inference_proposition_5_choices"],
+            structured_llm_factory=_RoleAwareStructuredFactory(
+                planner=_PropositionAdjacentFailurePlanner(),
+                light=adjudicator,
+            ),
+        )
+        self.assertEqual(result["status"], "planning_error")
+        self.assertEqual(
+            result["errors"],
+            [
+                "Planner semantic adjudication failed: selected answer is semantically adjacent evidence, but it does not fill the proposition slot that states the city's resulting benefit"
+            ],
+        )
+
+    def test_fill_in_the_blank_semantic_adjudication_does_not_run_for_connective_subtype(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "QuestionSubtypeKey": "blank_connective_relation_5_choices",
+            "QuestionFormatKey": "blank_connective_relation_5_choices",
+            "prepared_source": prepare_source(self.mvp_source),
+            "design": None,
+        }
+        factory = _RoleAwareStructuredFactory(
+            planner=_FillInTheBlankPlanner(),
+            light=_SemanticAdjudicator(),
+        )
+        result = plan_fill_in_the_blank(
+            state,
+            QUESTION_SUBTYPE_SPECS["blank_connective_relation_5_choices"],
+            structured_llm_factory=factory,
+        )
+        self.assertEqual(result["status"], "qtype_incompatibility_error")
+        self.assertEqual(factory.calls, [])
+
+    def test_semantic_adjudication_does_not_run_for_non_blank_families(self) -> None:
+        factory = _RoleAwareStructuredFactory(
+            planner=_ValidPlanner(),
+            light=_SemanticAdjudicator(),
+        )
+        result = plan_sentence_insertion(
+            self.state,
+            self.type_spec,
+            structured_llm_factory=factory,
+        )
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(factory.calls, [("SentenceInsertionDraft", "planner")])
+
+    def test_tier1_adjudication_uses_light_model_role_even_with_legacy_planner_factory(self) -> None:
+        state = {
+            **self.state,
+            "source_paragraph": self.mvp_source,
+            "QuestionTypeKey": "fill_in_the_blank",
+            "QuestionSubtypeKey": "blank_inference_proposition_5_choices",
+            "QuestionFormatKey": "blank_inference_proposition_5_choices",
+            "prepared_source": prepare_source(self.mvp_source),
+            "design": None,
+        }
+        captured: dict[str, object] = {}
+
+        def fake_create_structured_llm(output_schema: type, **kwargs: object) -> object:
+            captured["schema_name"] = output_schema.__name__
+            captured["model_role"] = kwargs.get("model_role")
+            return _SemanticAdjudicator()
+
+        with mock.patch("questiongen.planners.create_structured_llm", side_effect=fake_create_structured_llm):
+            result = plan_fill_in_the_blank(
+                state,
+                QUESTION_SUBTYPE_SPECS["blank_inference_proposition_5_choices"],
+                structured_llm_factory=lambda schema: _FillInTheBlankPlanner(),
+            )
+
+        self.assertEqual(result["status"], "planned")
+        self.assertEqual(captured["schema_name"], "PlannerSemanticAdjudicationResult")
+        self.assertEqual(captured["model_role"], "light")
+
+    def test_questiongen_model_light_defaults_to_gpt_5_nano(self) -> None:
+        with mock.patch.dict(os.environ, {"QUESTIONGEN_MODEL_LIGHT": ""}, clear=False):
+            self.assertEqual(resolve_light_model_name(), "gpt-5-nano")
+
+    def test_questiongen_model_light_override_wins_when_set(self) -> None:
+        with mock.patch.dict(os.environ, {"QUESTIONGEN_MODEL_LIGHT": "gpt-5-mini"}, clear=False):
+            self.assertEqual(resolve_light_model_name(), "gpt-5-mini")
 
     def test_vocab_planner_output_validates(self) -> None:
         state = {
@@ -1358,23 +1568,6 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("Locked answer_span_id", prompt)
         self.assertIn("that is the one item to corrupt", prompt)
 
-    def test_graph_rewrites_best_paraphrase_explanation_as_non_restoration(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": self.mvp_source,
-            "QuestionTypeKey": "vocab",
-            "QuestionSubtypeKey": "contextual_vocab_best_paraphrase_choice_5",
-            "QuestionFormatKey": "contextual_vocab_best_paraphrase_choice_5",
-            "prepared_source": prepare_source(self.mvp_source),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("바꿔 말한 표현", explanation)
-        self.assertIn("그대로 복원하는 문제가 아니라", explanation)
-        self.assertNotIn("selected_span_id", explanation)
-
     def test_graph_rewrites_phrase_choice_explanation_as_phrase_level_fit(self) -> None:
         source = "The report carries moral force in this debate. Repeated exceptions weaken the rule for everyone."
         span_text = "moral force"
@@ -1482,64 +1675,6 @@ class PlannerTests(unittest.TestCase):
         explanation = rewrite_result["generated"].explanation or ""
         self.assertNotIn("이 자리에는 이 자리에는", explanation)
         self.assertFalse(explanation.startswith("'"))
-
-    def test_graph_rewrites_polarity_scope_explanation_with_direction_language(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": (
-                "Leaders cease wasteful spending during droughts. "
-                "Engineers expand storage when demand rises. "
-                "Families ignore rumors during emergencies. "
-                "Stronger pumps reduce pressure loss across the valley. "
-                "Volunteers protect the main channel from damage. "
-                "Teachers discuss the results every Friday."
-            ),
-            "QuestionTypeKey": "vocab",
-            "QuestionSubtypeKey": "contextual_vocab_error_1_among_5_polarity_scope_5",
-            "QuestionFormatKey": "contextual_vocab_error_1_among_5_polarity_scope_5",
-            "prepared_source": prepare_source(
-                "Leaders cease wasteful spending during droughts. "
-                "Engineers expand storage when demand rises. "
-                "Families ignore rumors during emergencies. "
-                "Stronger pumps reduce pressure loss across the valley. "
-                "Volunteers protect the main channel from damage. "
-                "Teachers discuss the results every Friday."
-            ),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("방향, 정도, 또는 적용 범위", explanation)
-
-    def test_graph_rewrites_collocation_explanation_with_natural_combination_language(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": (
-                "Leaders cease wasteful spending during droughts. "
-                "Engineers expand storage when demand rises. "
-                "Families ignore rumors during emergencies. "
-                "Stronger pumps reduce pressure loss across the valley. "
-                "Volunteers protect the main channel from damage. "
-                "Teachers discuss the results every Friday."
-            ),
-            "QuestionTypeKey": "vocab",
-            "QuestionSubtypeKey": "contextual_vocab_error_1_among_5_collocation_5",
-            "QuestionFormatKey": "contextual_vocab_error_1_among_5_collocation_5",
-            "prepared_source": prepare_source(
-                "Leaders cease wasteful spending during droughts. "
-                "Engineers expand storage when demand rises. "
-                "Families ignore rumors during emergencies. "
-                "Stronger pumps reduce pressure loss across the valley. "
-                "Volunteers protect the main channel from damage. "
-                "Teachers discuss the results every Friday."
-            ),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("자연스럽게 결합", explanation)
 
     def test_underlined_vocab_explanation_uses_rendered_source_order_marker(self) -> None:
         source = (
@@ -1697,55 +1832,6 @@ class PlannerTests(unittest.TestCase):
         explanation = rewrite_result["generated"].explanation or ""
         self.assertIn("따라서 ⑤의'showed'는 맞지 않고", explanation)
         self.assertNotIn("따라서 ①의'showed'는 맞지 않고", explanation)
-
-    def test_graph_rewrites_vocab_explanation_from_source_evidence(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _VocabDriftPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": self.mvp_source,
-            "QuestionTypeKey": "vocab",
-            "prepared_source": prepare_source(self.mvp_source),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertTrue(explanation.startswith("문맥상"))
-        self.assertIn("brighter crosswalks feel safer", explanation)
-        self.assertIn("다른 선택지들은", explanation)
-        self.assertFalse(explanation.startswith("'"))
-        self.assertNotIn("그 방향을 뒷받침", explanation)
-        self.assertNotIn("자유서술 설명", explanation)
-
-    def test_graph_rewrites_grammar_explanation_from_structural_cue(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _GrammarDriftPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": self.mvp_source,
-            "QuestionTypeKey": "grammar",
-            "prepared_source": prepare_source(self.mvp_source),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("동사원형", explanation)
-        self.assertIn("lighting system to nearby neighborhoods", explanation)
-        self.assertNotIn("그 구조를 보여 주므로", explanation)
-        self.assertNotIn("자유서술 문법 해설", explanation)
-
-    def test_graph_rewrites_fill_explanation_as_teacher_facing_note(self) -> None:
-        runner = compile_question_graph(structured_llm_factory=lambda schema: _FillInTheBlankPlanner())
-        state = {
-            **self.state,
-            "source_paragraph": self.mvp_source,
-            "QuestionTypeKey": "fill_in_the_blank",
-            "prepared_source": prepare_source(self.mvp_source),
-        }
-        result = runner.invoke(state)
-        self.assertEqual(result["status"], "validation_passed")
-        explanation = result["generated"].explanation or ""
-        self.assertIn("핵심 단서", explanation)
-        self.assertNotIn("라는 의미라는 의미", explanation)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -347,7 +347,7 @@ This is safer than thinking in terms of question-type names alone because the ne
 
 Current planning stance:
 
-- the shared intermediate design layer is now the active internal `v0.2.0` contract
+- the shared intermediate design layer remains the foundation, and explicit graph-backed orchestration is now the active internal `v0.3.0` contract
 - planner observability and timeout hardening remain in place as the diagnostics baseline around that refactor
 - the architecture shift is internal: batch/export/notebook interfaces stay stable while graph stages, planner inputs, and design-aware validation change underneath
 

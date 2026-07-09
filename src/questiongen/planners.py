@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import inspect
 import threading
 import time
 from typing import Any, Callable, Iterable, Literal
 
+from .config import create_structured_llm
 from .designers import build_design, hydrate_plan_from_draft
 from .prompts import (
+    build_fill_in_the_blank_semantic_adjudication_prompt,
     build_fill_in_the_blank_prompt,
     build_fill_in_the_blank_repair_prompt,
     build_grammar_prompt,
@@ -24,14 +27,25 @@ from .prompts import (
 from .question_types import QuestionTypeSpec
 from .schemas import (
     BaseModel,
+    FillInTheBlankDesign,
+    FillInTheBlankPlan,
+    PreparedSource,
     QuestionState,
     coerce_model,
 )
 from .validators import validate_plan_against_prepared_source
 
-StructuredLLMFactory = Callable[[type[BaseModel]], Any]
+StructuredLLMFactory = Callable[..., Any]
 RuntimeEventLogger = Callable[[str], None]
 MAX_PLANNER_ATTEMPTS = 2
+PLANNER_MODEL_ROLE = "planner"
+LIGHT_MODEL_ROLE = "light"
+_TIER1_SEMANTIC_ADJUDICATION_SUBTYPE_KEYS = frozenset(
+    {
+        "blank_inference_proposition_5_choices",
+        "blank_summary_completion_5_choices",
+    }
+)
 PLANNER_QUOTA_EXHAUSTED_ERROR = "Planner service failed: upstream LLM quota exhausted (insufficient_quota)."
 PLANNER_QUOTA_EXHAUSTED_BATCH_ERROR = (
     "Planner service failed: upstream LLM quota exhausted (insufficient_quota); "
@@ -59,6 +73,12 @@ class PlannerTimeoutError(TimeoutError):
             f"Planner timed out after {timeout_seconds:.1f}s for {context_label} "
             f"on attempt {attempt_number}."
         )
+
+
+class PlannerSemanticAdjudicationResult(BaseModel):
+    fits_discourse_role: bool
+    visible_frame_semantically_valid: bool
+    failure_reason: str | None = None
 
 
 def classify_planner_error(exc: BaseException) -> Literal["service_quota", "service", "planner"]:
@@ -114,7 +134,12 @@ def _run_planner_with_repair(
     planner_timeout_seconds: float | None = None,
     planner_elapsed_log_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
-    planner = structured_llm_factory(type_spec.draft_schema)
+    planner = _build_structured_llm(
+        structured_llm_factory=structured_llm_factory,
+        output_schema=type_spec.draft_schema,
+        model_role=PLANNER_MODEL_ROLE,
+        request_timeout_seconds=planner_timeout_seconds,
+    )
     current_prompt = base_prompt
     last_exc: Exception | None = None
     context_label = _planner_context_label(state, type_spec)
@@ -215,6 +240,35 @@ def _run_planner_with_repair(
     }
 
 
+def _structured_llm_factory_supports_model_role(structured_llm_factory: StructuredLLMFactory) -> bool:
+    try:
+        signature = inspect.signature(structured_llm_factory)
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD or name == "model_role"
+        for name, parameter in signature.parameters.items()
+    )
+
+
+def _build_structured_llm(
+    *,
+    structured_llm_factory: StructuredLLMFactory,
+    output_schema: type[BaseModel],
+    model_role: Literal["planner", "light"],
+    request_timeout_seconds: float | None,
+) -> Any:
+    if _structured_llm_factory_supports_model_role(structured_llm_factory):
+        return structured_llm_factory(output_schema, model_role=model_role)
+    if model_role == LIGHT_MODEL_ROLE:
+        return create_structured_llm(
+            output_schema,
+            model_role=LIGHT_MODEL_ROLE,
+            request_timeout_seconds=request_timeout_seconds,
+        )
+    return structured_llm_factory(output_schema)
+
+
 def _invoke_planner_with_timeout(
     *,
     planner: Any,
@@ -302,6 +356,95 @@ def _ensure_design(state: QuestionState, type_spec: QuestionTypeSpec) -> dict[st
         state["design"] = result["design"]
         return None
     return result
+
+
+def should_run_semantic_planner_adjudication(type_spec: QuestionTypeSpec) -> bool:
+    return type_spec.subtype_key in _TIER1_SEMANTIC_ADJUDICATION_SUBTYPE_KEYS
+
+
+def run_semantic_planner_adjudication(
+    *,
+    state: QuestionState,
+    type_spec: QuestionTypeSpec,
+    plan: FillInTheBlankPlan,
+    structured_llm_factory: StructuredLLMFactory,
+    runtime_logger: RuntimeEventLogger | None = None,
+    planner_timeout_seconds: float | None = None,
+    planner_elapsed_log_interval_seconds: float = 30.0,
+) -> list[str]:
+    prepared_source = state.get("prepared_source")
+    if not isinstance(prepared_source, PreparedSource):
+        return ["PreparedSource is required before planner semantic adjudication."]
+    design = state.get("design")
+    if not isinstance(design, FillInTheBlankDesign):
+        return ["FillInTheBlankDesign is required before planner semantic adjudication."]
+
+    adjudicator = _build_structured_llm(
+        structured_llm_factory=structured_llm_factory,
+        output_schema=PlannerSemanticAdjudicationResult,
+        model_role=LIGHT_MODEL_ROLE,
+        request_timeout_seconds=planner_timeout_seconds,
+    )
+    try:
+        prompt = build_fill_in_the_blank_semantic_adjudication_prompt(
+            design=design,
+            plan=plan,
+            prepared_source=prepared_source,
+            type_spec=type_spec,
+        )
+    except Exception as exc:
+        return [normalize_planner_error(exc)]
+    context_label = f"{_planner_context_label(state, type_spec)} / semantic_adjudication"
+    _log_runtime_event(runtime_logger, f"[planner] {context_label} | attempt 1/1 start")
+    attempt_started_at = time.monotonic()
+    try:
+        raw_result = _invoke_planner_with_timeout(
+            planner=adjudicator,
+            prompt=prompt,
+            timeout_seconds=planner_timeout_seconds,
+            elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
+            runtime_logger=runtime_logger,
+            context_label=context_label,
+            attempt_number=1,
+        )
+    except Exception as exc:
+        attempt_elapsed = time.monotonic() - attempt_started_at
+        _log_runtime_event(
+            runtime_logger,
+            f"[planner] {context_label} | attempt 1/1 failed in {attempt_elapsed:.1f}s: "
+            f"{_single_line_summary(_normalized_exception_text(exc))}",
+        )
+        return [normalize_planner_error(exc)]
+
+    attempt_elapsed = time.monotonic() - attempt_started_at
+    decision = coerce_model(raw_result, PlannerSemanticAdjudicationResult)
+    if decision.fits_discourse_role and decision.visible_frame_semantically_valid:
+        _log_runtime_event(
+            runtime_logger,
+            f"[planner] {context_label} | attempt 1/1 accepted in {attempt_elapsed:.1f}s",
+        )
+        return []
+
+    failure_reason = _semantic_adjudication_failure_reason(decision)
+    _log_runtime_event(
+        runtime_logger,
+        f"[planner] {context_label} | attempt 1/1 rejected in {attempt_elapsed:.1f}s: "
+        f"{_single_line_summary(failure_reason)}",
+    )
+    return [failure_reason]
+
+
+def _semantic_adjudication_failure_reason(decision: PlannerSemanticAdjudicationResult) -> str:
+    normalized_reason = " ".join((decision.failure_reason or "").split())
+    if normalized_reason:
+        return normalized_reason
+
+    failures: list[str] = []
+    if not decision.fits_discourse_role:
+        failures.append("selected correct_choice does not fit the blank's discourse or proposition role")
+    if not decision.visible_frame_semantically_valid:
+        failures.append("the visible sentence frame makes the selected correct_choice semantically wrong")
+    return "; ".join(failures) or "selected correct_choice failed semantic adjudication"
 
 
 def plan_sentence_insertion(
@@ -482,7 +625,7 @@ def plan_fill_in_the_blank(
         design=state["design"],
         type_spec=type_spec,
     )
-    return _run_planner_with_repair(
+    result = _run_planner_with_repair(
         state=state,
         type_spec=type_spec,
         structured_llm_factory=structured_llm_factory,
@@ -492,6 +635,31 @@ def plan_fill_in_the_blank(
         planner_timeout_seconds=planner_timeout_seconds,
         planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
     )
+    if result.get("status") != "planned" or not should_run_semantic_planner_adjudication(type_spec):
+        return result
+
+    plan = result.get("plan")
+    if not isinstance(plan, FillInTheBlankPlan):
+        return {
+            "status": "planning_error",
+            "errors": ["Planner semantic adjudication requires a hydrated FillInTheBlankPlan."],
+        }
+
+    semantic_errors = run_semantic_planner_adjudication(
+        state=state,
+        type_spec=type_spec,
+        plan=plan,
+        structured_llm_factory=structured_llm_factory,
+        runtime_logger=runtime_logger,
+        planner_timeout_seconds=planner_timeout_seconds,
+        planner_elapsed_log_interval_seconds=planner_elapsed_log_interval_seconds,
+    )
+    if semantic_errors:
+        return {
+            "status": "planning_error",
+            "errors": [f"Planner semantic adjudication failed: {'; '.join(semantic_errors)}"],
+        }
+    return result
 
 
 def plan_vocab(

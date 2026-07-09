@@ -12,6 +12,7 @@ from .parsers import content_tokens, normalize_text
 from .question_types import QuestionTypeSpec
 from .schemas import (
     FillInTheBlankDesign,
+    FillInTheBlankPlan,
     GrammarDesign,
     MoodAtmosphereDesign,
     ParagraphOrderingDesign,
@@ -24,9 +25,11 @@ from .schemas import (
     VocabPlan,
 )
 from .targeting import (
+    BLANK_MARKER,
     allowed_verb_form_variants,
     fill_blank_connective_inventory,
     fill_blank_summary_inventory,
+    fill_blank_inventory_for_subtype,
     fill_blank_target_inventory,
     grammar_subtype_inventory,
     grammar_target_inventory,
@@ -384,6 +387,85 @@ Repair rules:
 - Keep the explanation in Korean.
 - Rewrite the explanation as teacher-facing Korean prose that explains what idea the blank must express, without schema fields or mechanics.
 - Return only structured data matching the schema.
+""".strip()
+
+
+def build_fill_in_the_blank_semantic_adjudication_prompt(
+    *,
+    design: FillInTheBlankDesign,
+    plan: FillInTheBlankPlan,
+    prepared_source: PreparedSource,
+    type_spec: QuestionTypeSpec,
+) -> str:
+    inventory = {span.id: span for span in fill_blank_inventory_for_subtype(prepared_source, type_spec.subtype_key)}
+    selected_span = inventory.get(plan.selected_span_id)
+    if selected_span is None:
+        raise ValueError(f"Unknown selected span ID for semantic adjudication: {plan.selected_span_id}")
+    if design.selected_span_id != plan.selected_span_id:
+        raise ValueError("Semantic adjudication requires the locked design span and planned span to match.")
+
+    sentence_map = {unit.id: unit.text for unit in prepared_source.sentence_units}
+    source_sentence = sentence_map.get(selected_span.sentence_unit_id or "", "")
+    visible_sentence = source_sentence.replace(selected_span.text, BLANK_MARKER, 1) if source_sentence else ""
+    left_local_context = (selected_span.context_before or "").strip() or "(none)"
+    right_local_context = (selected_span.context_after or "").strip() or "(none)"
+
+    choice_list_block = ""
+    if type_spec.subtype_key == "blank_inference_proposition_5_choices":
+        choice_list_block = "\nChoice list:\n" + "\n".join(
+            f"- {choice!r}" for choice in plan.completion_choices
+        )
+
+    subtype_checks = [
+        "- `fits_discourse_role` is true only if the selected `correct_choice` fills the blank's intended semantic role, not a nearby or redundant idea.",
+        "- `visible_frame_semantically_valid` is true only if the visible sentence with `_____` still makes the selected `correct_choice` semantically correct.",
+    ]
+    if type_spec.subtype_key == "blank_summary_completion_5_choices":
+        subtype_checks.extend(
+            [
+                "- For visible contrast frames such as `not X, but rather Y`, the blank must supply the missing side of the contrast rather than restate the visible side.",
+                "- Reject one-sided contrast errors where the selected answer is grammatically plausible but semantically fills the wrong half of the visible frame.",
+            ]
+        )
+    else:
+        subtype_checks.extend(
+            [
+                "- Confirm the selected answer completes the intended proposition slot, not just a semantically adjacent statement from elsewhere in the passage.",
+                "- Reject answers that repeat a nearby idea while missing the causal, result, or claim role required by the blanked sentence frame.",
+            ]
+        )
+
+    return f"""
+You are checking a locked fill-in-the-blank planner answer.
+
+Return only structured data matching the required schema.
+
+Locked subtype:
+- {type_spec.subtype_key}
+
+Visible sentence with blank:
+{visible_sentence!r}
+
+Left local context:
+- {left_local_context!r}
+
+Right local context:
+- {right_local_context!r}
+
+Locked original source wording:
+- {design.selected_span_text!r}
+
+Selected correct_choice:
+- {plan.correct_choice!r}
+{choice_list_block}
+
+Decision rules:
+{chr(10).join(subtype_checks)}
+
+Output rules:
+- If either boolean is false, provide a short plain-English `failure_reason`.
+- Do not rewrite the answer or score all options.
+- Judge only whether the currently selected `correct_choice` should be accepted or rejected.
 """.strip()
 
 

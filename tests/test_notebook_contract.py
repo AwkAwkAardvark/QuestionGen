@@ -19,6 +19,7 @@ class NotebookContractTests(unittest.TestCase):
 
         self.assertIn("# ## 1. Mount Drive And Define Standard Paths", source)
         self.assertIn("# ## 5. Bootstrap, Refresh, And Launch Gradio", source)
+        self.assertIn("langgraph", source)
         self.assertIn("langchain-openai", source)
         self.assertIn("Auto-bootstrapped missing runtime dependencies:", source)
         self.assertIn("missing_runtime_packages(", source)
@@ -26,8 +27,9 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("UI_RUNTIME_DEPENDENCIES", source)
         self.assertIn("QUESTIONGEN_RUNTIME_RESTART_REQUIRED", source)
         self.assertIn("BOOTSTRAP_ENV=True", source)
-        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"fetch\", \"origin\"]", source)
+        self.assertIn("f\"refs/heads/{REPO_BRANCH}:refs/remotes/origin/{REPO_BRANCH}\"", source)
         self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", REPO_BRANCH]", source)
+        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", \"-b\", REPO_BRANCH, f\"origin/{REPO_BRANCH}\"]", source)
         self.assertIn("\"merge\", \"--ff-only\", f\"origin/{REPO_BRANCH}\"", source)
         self.assertIn("existing clone was already at the selected pushed commit", source)
 
@@ -40,6 +42,7 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("# files.download(str(OUTPUT_CSV))", source)
         self.assertIn("files.download(str(OUTPUT_JSON))", source)
         self.assertIn("# print(OUTPUT_MD.read_text(encoding=\"utf-8\")[:3000])", source)
+        self.assertIn("langgraph", source)
         self.assertIn("langchain-openai", source)
         self.assertIn("Auto-bootstrapped missing runtime dependencies:", source)
         self.assertIn("missing_runtime_packages(", source)
@@ -48,10 +51,21 @@ class NotebookContractTests(unittest.TestCase):
         self.assertIn("QUESTIONGEN_RUNTIME_RESTART_REQUIRED", source)
         self.assertIn("from questiongen.config import create_structured_llm", source)
         self.assertIn("BOOTSTRAP_ENV=True", source)
-        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"fetch\", \"origin\"]", source)
+        self.assertIn("f\"refs/heads/{REPO_BRANCH}:refs/remotes/origin/{REPO_BRANCH}\"", source)
         self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", REPO_BRANCH]", source)
+        self.assertIn("[\"git\", \"-C\", str(REPO_DIR), \"checkout\", \"-b\", REPO_BRANCH, f\"origin/{REPO_BRANCH}\"]", source)
         self.assertIn("\"merge\", \"--ff-only\", f\"origin/{REPO_BRANCH}\"", source)
         self.assertIn("RESET_REPO=True for a clean refresh", source)
+
+    def test_launcher_contract_mentions_tier1_planner_and_light_model_env_vars(self) -> None:
+        source = (REPO_ROOT / "docs" / "launcher_contract.md").read_text(encoding="utf-8")
+
+        self.assertIn("QUESTIONGEN_MODEL_PLANNER", source)
+        self.assertIn("QUESTIONGEN_MODEL_LIGHT", source)
+        self.assertIn("gpt-5-nano", source)
+        self.assertIn("blank_inference_proposition_5_choices", source)
+        self.assertIn("blank_summary_completion_5_choices", source)
+        self.assertIn("not broad per-question-type model routing", source)
 
 
 if __name__ == "__main__":

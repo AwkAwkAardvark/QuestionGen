@@ -48,6 +48,8 @@ Expected `api_key.txt` format:
 ```txt
 OPENAI_API_KEY=sk-...
 QUESTIONGEN_MODEL=gpt-5-mini
+QUESTIONGEN_MODEL_PLANNER=gpt-5-mini
+QUESTIONGEN_MODEL_LIGHT=gpt-5-nano
 QUESTIONGEN_TEMPERATURE=0
 ```
 
@@ -58,7 +60,10 @@ Rules:
 - Environment variables remain the final runtime interface consumed by the LLM client layer.
 - Model and temperature values in the secret file are launcher configuration, not package-owned defaults.
 - The current MVP policy is one shared default model, `gpt-5-mini`; launcher overrides still win through `QUESTIONGEN_MODEL` or explicit `model_name`.
-- Per-question-type model routing is intentionally deferred until after the live pipeline is stable.
+- Limited planner-stage routing now exists only for Tier 1 blank adjudication:
+  - normal planner drafting can use `QUESTIONGEN_MODEL_PLANNER`
+  - the extra adjudication call can use `QUESTIONGEN_MODEL_LIGHT`, defaulting to `gpt-5-nano`
+- This is still not broad per-question-type model routing across the whole runtime.
 
 ## Package and Launcher Boundary
 
@@ -83,7 +88,7 @@ Launcher responsibilities:
 - bootstrap third-party dependencies when explicitly requested, and auto-bootstrap missing runtime packages on a clean kernel before the first `questiongen` import when safe
 - clone or refresh the selected allowlisted pushed repo branch
 - prepend `REPO_DIR / "src"` to `sys.path` and invalidate import caches after clone or reuse
-- probe raw runtime modules such as `langchain_openai` and `gradio` before any `questiongen` import needed for batch or UI launch
+- probe raw runtime modules such as `langgraph`, `langchain_openai`, and `gradio` before any `questiongen` import needed for batch or UI launch
 - validate required third-party runtime imports before batch execution or Gradio launch, and fail once with bootstrap guidance if they are missing
 - run fresh-subprocess repo tests for pushed-branch validation when requested
 - launch the Gradio UI from `runner_ui.ipynb`
@@ -150,7 +155,9 @@ Notes:
 - Each selected broad family now expands into one or more live concrete subtype runs inside the batch layer.
 - Exported row counts therefore scale with `input rows x enabled subtype count`, not merely `input rows x broad family count`.
 - This preserves the current backend API while delivering the intended launcher behavior.
-- The public batch/export interface stays unchanged across the internal `v0.2.0` design-layer refactor.
+- The public batch/export interface stays unchanged across the internal `v0.3.0` graph-backed orchestration milestone.
+- `v0.3.0` means the shared design layer remains in place, and explicit LangGraph-backed orchestration is now the active internal execution contract for that stage sequence.
+- `compile_question_graph(...)` now returns a LangGraph-backed runner again, but `runner.invoke(state)` and `run_batch_rows(..., runner=...)` remain the public invocation surface.
 - Internally, live subtype execution now runs through a deterministic `design` stage before final planning.
 - Internal deterministic behavior such as display shuffling should rely on `BatchRowId`, which is generated from input row order inside the batch layer.
 - The live registry currently includes `sentence_insertion`, `paragraph_ordering`, `underlined_phrase_meaning`, `fill_in_the_blank`, `vocab`, and `grammar`.
@@ -181,6 +188,7 @@ Rules:
 - The normal rerun path should skip both third-party bootstrap and package reinstall.
 - Repo code should be loaded from `REPO_DIR / "src"` on `sys.path`, not by routine editable installs.
 - Missing runtime modules should be checked before importing `questiongen` itself, so a first-run dependency failure does not leave a partially imported package tree in the kernel.
+- That raw dependency probe now includes `langgraph` because `questiongen.graph` is part of the package import surface again.
 - `RESET_REPO=True` should remove the existing clone if present, then reclone the selected pushed branch cleanly.
 - `RESET_REPO=False` should still sync the existing clone to the latest remote commit on the selected pushed branch rather than blindly reusing a stale checkout.
 - The notebooks should always call `importlib.invalidate_caches()` after clone or reuse.
@@ -250,6 +258,8 @@ Rules:
 - For `fill_in_the_blank`, deterministic design should admit only targets that support inference-style completion rather than immediate local restoration.
 - For `fill_in_the_blank`, proposition and summary subtypes should require a non-identical `correct_choice`, and weaker redundant subtypes should fail as `qtype_incompatibility_error` when they have no distinct non-restoration target.
 - For `fill_in_the_blank`, if `correct_choice` differs from the deleted source wording, the unchanged source wording should not remain in the five choices as a second defensible option.
+- For `fill_in_the_blank`, only `blank_inference_proposition_5_choices` and `blank_summary_completion_5_choices` add one extra in-node planner semantic adjudication call after draft hydration and deterministic plan checks.
+- That Tier 1 adjudication remains planner-local, uses the lightweight model route, and returns `planning_error` immediately on semantic rejection rather than adding a new graph node or a broad second LLM pass.
 - `vocab` now fans out into eight concrete live subtype rows under the broad family key:
   - `contextual_vocab_choice_5`
   - `contextual_vocab_best_paraphrase_choice_5`
